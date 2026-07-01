@@ -3,188 +3,151 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MOHA PRO - Trading Dashboard</title>
+    <title>MOHA PRO - Admin Panel</title>
     <style>
         *{margin:0;padding:0;box-sizing:border-box}
-        body{background:#0a0e17;color:#fff;font-family:'Segoe UI',Arial,sans-serif;padding:12px;max-width:480px;margin:0 auto}
+        body{background:#0a0e17;color:#fff;font-family:Arial,sans-serif;padding:12px;max-width:500px;margin:0 auto}
+        .header{background:linear-gradient(145deg,#1a1f2e,#232a3b);padding:15px;border-radius:12px;text-align:center;margin-bottom:14px;border:2px solid #f0a500}
+        .header h2{color:#f0a500;font-size:18px}
+        .header p{color:#888;font-size:10px;margin-top:4px}
         
-        /* HEADER */
-        .header{background:linear-gradient(145deg,#1a1f2e,#232a3b);padding:18px 15px;border-radius:16px;text-align:center;margin-bottom:14px;border:1px solid #f0a500;box-shadow:0 4px 15px rgba(240,165,0,0.1)}
-        .header h1{color:#f0a500;font-size:19px;font-weight:700;letter-spacing:1px}
-        .header .status{display:flex;justify-content:center;align-items:center;gap:12px;margin-top:6px;font-size:10px;color:#aaa}
-        .live-dot{width:7px;height:7px;background:#00ff88;border-radius:50%;animation:blink 1.2s infinite}
-        @keyframes blink{0%,100%{opacity:1}50%{opacity:0.2}}
-
-        /* BALANCE CARDS */
-        .balance-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:14px}
-        .bal-card{background:#111827;padding:14px 10px;border-radius:12px;text-align:center;border:1px solid #1e293b}
-        .bal-card .bal-label{font-size:9px;color:#6b7280;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
-        .bal-card .bal-value{font-size:17px;font-weight:700}
-        .green{color:#10b981}.red{color:#ef4444}.gold{color:#f0a500}.white{color:#f9fafb}
-
-        /* SECTION */
-        .section{margin-bottom:14px}
-        .section-title{display:flex;justify-content:space-between;align-items:center;color:#f0a500;font-size:12px;font-weight:700;margin-bottom:8px;padding-bottom:5px;border-bottom:1px solid #1e293b;text-transform:uppercase;letter-spacing:1px}
-        .section-count{font-size:10px;color:#6b7280;background:#1e293b;padding:2px 10px;border-radius:10px}
-
-        /* TRADES */
-        .trade-item{background:#111827;border-radius:10px;padding:12px;margin-bottom:6px;border-left:3px solid #333}
-        .trade-item.win{border-left-color:#10b981}
-        .trade-item.loss{border-left-color:#ef4444}
-        .trade-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
-        .trade-type{font-weight:700;font-size:13px}
-        .trade-strat{background:#1e293b;color:#f0a500;padding:2px 8px;border-radius:8px;font-size:9px;font-weight:600}
-        .trade-pnl{font-weight:700;font-size:13px}
-        .trade-info{display:flex;flex-wrap:wrap;gap:10px;font-size:10px;color:#9ca3af}
-        .trade-info span{background:#0a0e17;padding:3px 8px;border-radius:5px}
-
-        /* SIGNALS */
-        .signal-item{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:#111827;border-radius:8px;margin-bottom:4px}
-        .signal-symbol{font-weight:600;font-size:12px}
-        .badge{padding:4px 14px;border-radius:15px;font-size:10px;font-weight:700;letter-spacing:1px}
-        .badge-buy{background:#064e3b;color:#10b981}
-        .badge-sell{background:#4c0519;color:#ef4444}
-        .badge-wait{background:#1e293b;color:#6b7280}
-
-        /* CURRENCY */
-        .curr-item{display:flex;align-items:center;gap:8px;padding:5px 0}
-        .curr-name{width:28px;font-size:10px;font-weight:700}
-        .curr-bar-wrap{flex:1;height:8px;background:#1e293b;border-radius:4px;overflow:hidden}
-        .curr-bar-fill{height:100%;border-radius:4px;transition:width 0.6s ease}
-
-        /* SHARE */
-        .share-box{background:#111827;border-radius:12px;padding:14px;text-align:center;margin-top:14px;border:1px solid #1e293b}
-        .share-box p{font-size:11px;color:#f0a500;font-weight:600;margin-bottom:8px}
-        .share-url{display:flex;gap:6px}
-        .share-url input{flex:1;padding:10px;background:#0a0e17;border:1px solid #374151;color:#f9fafb;border-radius:8px;font-size:10px;text-align:center}
-        .share-url button{background:#f0a500;color:#000;border:none;padding:10px 16px;border-radius:8px;font-weight:700;font-size:10px;cursor:pointer;white-space:nowrap}
-
-        .footer{text-align:center;color:#4b5563;font-size:9px;margin-top:18px;padding:10px}
-
-        .empty-state{text-align:center;color:#4b5563;padding:16px;font-size:11px}
+        .control-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:14px}
+        .btn{padding:14px;border-radius:10px;border:none;font-weight:700;font-size:12px;cursor:pointer;text-align:center}
+        .btn-green{background:#10b981;color:#000}
+        .btn-red{background:#ef4444;color:#fff}
+        .btn-gold{background:#f0a500;color:#000}
+        .btn-blue{background:#3b82f6;color:#fff}
+        .btn-purple{background:#8b5cf6;color:#fff}
+        .btn-gray{background:#374151;color:#fff}
+        
+        .section{margin-bottom:14px;background:#111827;border-radius:12px;padding:14px;border:1px solid #1e293b}
+        .section h3{color:#f0a500;font-size:13px;margin-bottom:10px;text-transform:uppercase;letter-spacing:1px}
+        
+        select,input{padding:10px;background:#0a0e17;border:1px solid #374151;color:#fff;border-radius:8px;font-size:11px;margin-bottom:8px}
+        select{width:100%}
+        .input-row{display:flex;gap:8px}
+        .input-row input{flex:1}
+        
+        .status-box{background:#111827;border-radius:10px;padding:12px;margin-top:10px;border:1px solid #1e293b;text-align:center}
+        .status-box .value{font-size:22px;font-weight:700;margin:5px 0}
+        
+        .log{background:#000;border-radius:8px;padding:10px;margin-top:10px;font-size:9px;color:#10b981;max-height:150px;overflow-y:auto;font-family:monospace}
+        .log .error{color:#ef4444}
+        .log .info{color:#f0a500}
     </style>
 </head>
 <body>
 
-    <!-- HEADER -->
     <div class="header">
-        <h1>🚀 MOHA PRO V30</h1>
-        <div class="status">
-            <span class="live-dot"></span> LIVE
-            <span>•</span>
-            <span id="strategy">---</span>
-            <span>•</span>
-            <span id="lastUpdate">---</span>
+        <h2>🎛️ MOHA PRO ADMIN</h2>
+        <p>Maamul Bot-kaaga • <span id="status">⏳ Xidhan</span></p>
+    </div>
+
+    <!-- Quick Controls -->
+    <div class="control-grid">
+        <button class="btn btn-green" onclick="sendCmd('START')">▶️ SHID TRADING</button>
+        <button class="btn btn-red" onclick="sendCmd('STOP')">⏹️ DAM TRADING</button>
+        <button class="btn btn-gold" onclick="sendCmd('CLOSE_ALL')">❌ XIDH DHAMMAAN</button>
+        <button class="btn btn-purple" onclick="sendCmd('CLOSE_PROFIT')">💰 XIDH FAA'IIDO</button>
+    </div>
+
+    <!-- Strategy -->
+    <div class="section">
+        <h3>🎯 BEDDEL STRATEGY</h3>
+        <select id="strategy" onchange="sendCmd('STRATEGY:'+this.value)">
+            <option value="">-- Dooro Strategy --</option>
+            <option value="SR">SR (Support/Resistance)</option>
+            <option value="BB">Bollinger Bands</option>
+            <option value="EMA">EMA Cross</option>
+            <option value="SMC">Smart Money Concepts</option>
+            <option value="VSA">Volume Spread Analysis</option>
+            <option value="RSI">RSI Overbought/Oversold</option>
+        </select>
+    </div>
+
+    <!-- Settings -->
+    <div class="section">
+        <h3>⚙️ BEDDEL SETTINGS</h3>
+        <div class="input-row">
+            <input type="number" id="lotSize" placeholder="Lot Size (0.01)" step="0.01">
+            <input type="number" id="maxTrades" placeholder="Max Trades (20)">
+        </div>
+        <div class="input-row">
+            <input type="number" id="slPips" placeholder="SL Pips (30)">
+            <input type="number" id="tpPips" placeholder="TP Pips (80)">
+        </div>
+        <button class="btn btn-blue" style="width:100%" onclick="sendSettings()">💾 SAVE SETTINGS</button>
+    </div>
+
+    <!-- Status -->
+    <div class="section">
+        <h3>📊 XAALADDA HADDA</h3>
+        <div class="status-box">
+            <div>💰 Haraaga</div>
+            <div class="value green" id="balance">$0.00</div>
+        </div>
+        <div class="status-box">
+            <div>📈 Faa'iido Maanta</div>
+            <div class="value" id="profit">$0.00</div>
+        </div>
+        <div class="status-box">
+            <div>📋 Ganacsiyo Furan</div>
+            <div class="value white" id="openTrades">0</div>
         </div>
     </div>
 
-    <!-- BALANCE -->
-    <div class="balance-grid">
-        <div class="bal-card"><div class="bal-label">💰 Haraaga</div><div class="bal-value white" id="balance">0.00</div></div>
-        <div class="bal-card"><div class="bal-label">📊 Equity</div><div class="bal-value white" id="equity">0.00</div></div>
-        <div class="bal-card"><div class="bal-label">📈 Faa'iido</div><div class="bal-value" id="profit">0.00</div></div>
-        <div class="bal-card"><div class="bal-label">✅ Win Rate</div><div class="bal-value gold" id="winrate">0%</div></div>
-        <div class="bal-card"><div class="bal-label">⚠️ Drawdown</div><div class="bal-value red" id="drawdown">0%</div></div>
-        <div class="bal-card"><div class="bal-label">📋 Furan</div><div class="bal-value white" id="opencount">0</div></div>
-    </div>
-
-    <!-- TRADES -->
+    <!-- Log -->
     <div class="section">
-        <div class="section-title">📋 Ganacsiyada Furan <span class="section-count" id="tradeBadge">0</span></div>
-        <div id="trades"><div class="empty-state">Ma jiraan ganacsiyo furan</div></div>
+        <h3>📝 LOG</h3>
+        <div class="log" id="log">Diyaar...<br></div>
     </div>
 
-    <!-- SIGNALS -->
-    <div class="section">
-        <div class="section-title">🔔 Calaamadaha</div>
-        <div id="signals"><div class="empty-state">Ma jiraan calaamado</div></div>
-    </div>
-
-    <!-- CURRENCY -->
-    <div class="section">
-        <div class="section-title">💪 Xoogga Lacagaha (H1)</div>
-        <div id="currencies"></div>
-    </div>
-
-    <!-- SHARE -->
-    <div class="share-box">
-        <p>🔗 La Wadaag Asxaabta</p>
-        <div class="share-url">
-            <input type="text" id="shareURL" value="https://mohapro-dashboard.onrender.com" readonly>
-            <button onclick="copyLink()">📋 Copy</button>
-        </div>
-    </div>
-
-    <div class="footer">© 2026 MOHA PRO • Waxaa Shaqeynaya Render.com</div>
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.min.js"></script>
 <script>
-    const socket = io();
-    const currencies = ['AUD','CAD','CHF','EUR','GBP','JPY','NZD','USD'];
-
-    socket.on('data_update', (d) => {
-        document.getElementById('balance').textContent = '$'+(d.balance||0).toFixed(2);
-        document.getElementById('equity').textContent = '$'+(d.equity||0).toFixed(2);
-        let p = parseFloat(d.profit||0);
-        let pEl = document.getElementById('profit');
-        pEl.textContent = (p>=0?'+':'')+'$'+p.toFixed(2);
-        pEl.className = 'bal-value '+(p>=0?'green':'red');
-        document.getElementById('winrate').textContent = (d.winrate||0).toFixed(1)+'%';
-        document.getElementById('drawdown').textContent = (d.drawdown||0).toFixed(1)+'%';
-        document.getElementById('opencount').textContent = d.opentrades||0;
-        document.getElementById('tradeBadge').textContent = d.opentrades||0;
-        document.getElementById('strategy').textContent = d.strategy||'---';
-        document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString('so-SO');
-
-        // Trades
-        let tHTML = '';
-        if(d.trades&&d.trades.length>0){
-            d.trades.forEach(t=>{
-                let win = parseFloat(t.profit)>=0;
-                tHTML+=`<div class="trade-item ${win?'win':'loss'}">
-                    <div class="trade-top">
-                        <span class="trade-type" style="color:${t.type=='BUY'?'#10b981':'#ef4444'}">${t.type} ${t.symbol}</span>
-                        <span class="trade-strat">${t.strategy||'SR'}</span>
-                        <span class="trade-pnl" style="color:${win?'#10b981':'#ef4444'}">${win?'+':'-'}$ ${Math.abs(t.profit||0).toFixed(2)}</span>
-                    </div>
-                    <div class="trade-info">
-                        <span>Lot: ${t.lot}</span><span>Open: ${t.openprice}</span><span>SL: ${t.sl}</span><span>TP: ${t.tp}</span>
-                    </div>
-                </div>`;
-            });
-        }else{tHTML='<div class="empty-state">Ma jiraan ganacsiyo furan</div>';}
-        document.getElementById('trades').innerHTML=tHTML;
-
-        // Signals
-        let sHTML='';
-        if(d.signals&&d.signals.length>0){
-            d.signals.forEach(s=>{
-                let cls=s.signal=='BUY'?'badge-buy':(s.signal=='SELL'?'badge-sell':'badge-wait');
-                sHTML+=`<div class="signal-item"><span class="signal-symbol">${s.symbol}</span><span class="badge ${cls}">${s.signal}</span></div>`;
-            });
-        }else{sHTML='<div class="empty-state">Ma jiraan calaamado</div>';}
-        document.getElementById('signals').innerHTML=sHTML;
-
-        // Currencies
-        let cHTML='';
-        currencies.forEach((c,i)=>{
-            let str=55+Math.sin(Date.now()/8000+i)*18;
-            let col=str>=60?'#10b981':(str<=40?'#ef4444':'#f0a500');
-            cHTML+=`<div class="curr-item">
-                <span class="curr-name" style="color:${col}">${c}</span>
-                <div class="curr-bar-wrap"><div class="curr-bar-fill" style="width:${str}%;background:${col}"></div></div>
-                <span style="font-size:9px;color:${col}">${str.toFixed(0)}</span>
-            </div>`;
-        });
-        document.getElementById('currencies').innerHTML=cHTML;
-    });
-
-    function copyLink(){
-        let inp=document.getElementById('shareURL');
-        inp.select();inp.setSelectionRange(0,99999);
-        navigator.clipboard.writeText(inp.value);
-        alert('✅ Link-ga waa la copy-gareeyay!');
+    function addLog(msg,type){
+        let log=document.getElementById('log');
+        let cls=type||'info';
+        log.innerHTML+=`<span class="${cls}">[${new Date().toLocaleTimeString()}] ${msg}</span><br>`;
+        log.scrollTop=log.scrollHeight;
     }
+
+    function sendCmd(cmd){
+        addLog(`Amar la diray: ${cmd}`);
+        fetch('/command',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({command:cmd})
+        }).then(r=>r.json()).then(d=>{
+            addLog(`✅ ${d.message||'La fuliyay'}`,d.error?'error':'info');
+        }).catch(e=>addLog('❌ Khalad: '+e,'error'));
+    }
+
+    function sendSettings(){
+        let data={
+            command:'SETTINGS',
+            lot:document.getElementById('lotSize').value,
+            maxtrades:document.getElementById('maxTrades').value,
+            sl:document.getElementById('slPips').value,
+            tp:document.getElementById('tpPips').value
+        };
+        addLog('Settings la diray...');
+        fetch('/command',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify(data)
+        }).then(r=>r.json()).then(d=>{
+            addLog('✅ Settings saved!');
+        }).catch(e=>addLog('❌ Error','error'));
+    }
+
+    // Live data refresh
+    setInterval(()=>{
+        fetch('/api/data').then(r=>r.json()).then(d=>{
+            document.getElementById('balance').textContent='$'+(d.balance||0).toFixed(2);
+            document.getElementById('profit').textContent='$'+(d.profit||0).toFixed(2);
+            document.getElementById('openTrades').textContent=d.opentrades||0;
+            document.getElementById('status').innerHTML=d.trading?'🟢 SHAQEYN':'⏹️ XIDHAN';
+        }).catch(()=>{});
+    },2000);
 </script>
 </body>
 </html>
