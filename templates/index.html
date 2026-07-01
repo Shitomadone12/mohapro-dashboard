@@ -3,188 +3,186 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MOHA PRO - Live Trading Dashboard</title>
+    <title>MOHA PRO - Trading Dashboard</title>
     <style>
         *{margin:0;padding:0;box-sizing:border-box}
-        body{background:#0a0a14;color:#fff;font-family:Arial,sans-serif;padding:10px;max-width:550px;margin:0 auto}
+        body{background:#0a0e17;color:#fff;font-family:'Segoe UI',Arial,sans-serif;padding:12px;max-width:480px;margin:0 auto}
         
-        .header{background:linear-gradient(135deg,#1a1a2e,#2a2a3e);padding:15px;border-radius:15px;text-align:center;margin-bottom:12px;border:2px solid #f0a500}
-        .header h1{color:#f0a500;font-size:18px}
-        .header .live{color:#00ff88;font-size:11px;margin-top:3px}
-        .pulse{display:inline-block;width:8px;height:8px;background:#00ff88;border-radius:50%;animation:pulse 1.5s infinite;margin-right:5px}
-        @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+        /* HEADER */
+        .header{background:linear-gradient(145deg,#1a1f2e,#232a3b);padding:18px 15px;border-radius:16px;text-align:center;margin-bottom:14px;border:1px solid #f0a500;box-shadow:0 4px 15px rgba(240,165,0,0.1)}
+        .header h1{color:#f0a500;font-size:19px;font-weight:700;letter-spacing:1px}
+        .header .status{display:flex;justify-content:center;align-items:center;gap:12px;margin-top:6px;font-size:10px;color:#aaa}
+        .live-dot{width:7px;height:7px;background:#00ff88;border-radius:50%;animation:blink 1.2s infinite}
+        @keyframes blink{0%,100%{opacity:1}50%{opacity:0.2}}
 
-        .card-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:12px}
-        .card{background:#1a1a2e;padding:10px;border-radius:10px;text-align:center}
-        .card .label{color:#888;font-size:9px;text-transform:uppercase;margin-bottom:4px}
-        .card .value{font-size:16px;font-weight:bold}
-        .positive{color:#00ff88}.negative{color:#ff4444}.neutral{color:#f0a500}.white{color:#fff}
+        /* BALANCE CARDS */
+        .balance-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:14px}
+        .bal-card{background:#111827;padding:14px 10px;border-radius:12px;text-align:center;border:1px solid #1e293b}
+        .bal-card .bal-label{font-size:9px;color:#6b7280;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+        .bal-card .bal-value{font-size:17px;font-weight:700}
+        .green{color:#10b981}.red{color:#ef4444}.gold{color:#f0a500}.white{color:#f9fafb}
 
-        .section-title{color:#f0a500;font-size:13px;margin:18px 0 8px;border-bottom:2px solid #f0a500;padding-bottom:4px;display:flex;justify-content:space-between;align-items:center}
-        .section-title .count{font-size:10px;color:#888}
+        /* SECTION */
+        .section{margin-bottom:14px}
+        .section-title{display:flex;justify-content:space-between;align-items:center;color:#f0a500;font-size:12px;font-weight:700;margin-bottom:8px;padding-bottom:5px;border-bottom:1px solid #1e293b;text-transform:uppercase;letter-spacing:1px}
+        .section-count{font-size:10px;color:#6b7280;background:#1e293b;padding:2px 10px;border-radius:10px}
 
-        .trade-row{background:#1a1a2e;padding:10px;border-radius:10px;margin-bottom:6px;border-left:4px solid #333}
-        .trade-row.win{border-left-color:#00ff88}
-        .trade-row.loss{border-left-color:#ff4444}
-        .trade-row .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
-        .trade-row .symbol{font-weight:bold;font-size:13px}
-        .trade-row .profit{font-size:13px;font-weight:bold}
-        .trade-row .details{display:flex;gap:15px;font-size:10px;color:#aaa}
-        .trade-row .strategy{background:#2a2a3e;padding:2px 8px;border-radius:10px;font-size:9px;color:#f0a500}
+        /* TRADES */
+        .trade-item{background:#111827;border-radius:10px;padding:12px;margin-bottom:6px;border-left:3px solid #333}
+        .trade-item.win{border-left-color:#10b981}
+        .trade-item.loss{border-left-color:#ef4444}
+        .trade-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+        .trade-type{font-weight:700;font-size:13px}
+        .trade-strat{background:#1e293b;color:#f0a500;padding:2px 8px;border-radius:8px;font-size:9px;font-weight:600}
+        .trade-pnl{font-weight:700;font-size:13px}
+        .trade-info{display:flex;flex-wrap:wrap;gap:10px;font-size:10px;color:#9ca3af}
+        .trade-info span{background:#0a0e17;padding:3px 8px;border-radius:5px}
 
-        .signal-row{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:#1a1a2e;border-radius:8px;margin-bottom:4px}
-        .signal-buy{background:#003300;color:#00ff88;padding:3px 10px;border-radius:12px;font-weight:bold;font-size:10px}
-        .signal-sell{background:#330000;color:#ff4444;padding:3px 10px;border-radius:12px;font-weight:bold;font-size:10px}
-        .signal-wait{background:#1a1a1a;color:#888;padding:3px 10px;border-radius:12px;font-size:10px}
+        /* SIGNALS */
+        .signal-item{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:#111827;border-radius:8px;margin-bottom:4px}
+        .signal-symbol{font-weight:600;font-size:12px}
+        .badge{padding:4px 14px;border-radius:15px;font-size:10px;font-weight:700;letter-spacing:1px}
+        .badge-buy{background:#064e3b;color:#10b981}
+        .badge-sell{background:#4c0519;color:#ef4444}
+        .badge-wait{background:#1e293b;color:#6b7280}
 
-        .analysis-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
-        .analysis-card{background:#1a1a2e;padding:8px;border-radius:8px;text-align:center}
-        .analysis-card .label{color:#888;font-size:8px;text-transform:uppercase}
-        .analysis-card .value{font-size:13px;font-weight:bold;margin-top:3px}
+        /* CURRENCY */
+        .curr-item{display:flex;align-items:center;gap:8px;padding:5px 0}
+        .curr-name{width:28px;font-size:10px;font-weight:700}
+        .curr-bar-wrap{flex:1;height:8px;background:#1e293b;border-radius:4px;overflow:hidden}
+        .curr-bar-fill{height:100%;border-radius:4px;transition:width 0.6s ease}
 
-        .currency-row{display:flex;align-items:center;gap:6px;padding:4px 0}
-        .currency-name{font-size:10px;font-weight:bold;width:30px}
-        .currency-bar{flex:1;height:10px;background:#2a2a3e;border-radius:5px;overflow:hidden}
-        .currency-fill{height:100%;border-radius:5px;transition:width 0.5s}
+        /* SHARE */
+        .share-box{background:#111827;border-radius:12px;padding:14px;text-align:center;margin-top:14px;border:1px solid #1e293b}
+        .share-box p{font-size:11px;color:#f0a500;font-weight:600;margin-bottom:8px}
+        .share-url{display:flex;gap:6px}
+        .share-url input{flex:1;padding:10px;background:#0a0e17;border:1px solid #374151;color:#f9fafb;border-radius:8px;font-size:10px;text-align:center}
+        .share-url button{background:#f0a500;color:#000;border:none;padding:10px 16px;border-radius:8px;font-weight:700;font-size:10px;cursor:pointer;white-space:nowrap}
 
-        .share-section{text-align:center;margin-top:15px;padding:12px;background:#1a1a2e;border-radius:10px}
-        .share-section input{width:100%;padding:8px;background:#0a0a14;border:1px solid #f0a500;color:#f0a500;border-radius:6px;font-size:10px;text-align:center;margin:8px 0}
-        .share-section button{background:#f0a500;color:#000;border:none;padding:8px 20px;border-radius:6px;font-weight:bold;cursor:pointer;font-size:11px}
+        .footer{text-align:center;color:#4b5563;font-size:9px;margin-top:18px;padding:10px}
 
-        .footer{text-align:center;color:#555;font-size:9px;margin-top:20px;padding:10px}
+        .empty-state{text-align:center;color:#4b5563;padding:16px;font-size:11px}
     </style>
 </head>
 <body>
 
-    <!-- Header -->
+    <!-- HEADER -->
     <div class="header">
-        <h1>🚀 MOHA PRO ULTIMATE V30</h1>
-        <div class="live"><span class="pulse"></span>LIVE • <span id="lastUpdate">---</span> • <span id="strategyName">---</span></div>
+        <h1>🚀 MOHA PRO V30</h1>
+        <div class="status">
+            <span class="live-dot"></span> LIVE
+            <span>•</span>
+            <span id="strategy">---</span>
+            <span>•</span>
+            <span id="lastUpdate">---</span>
+        </div>
     </div>
 
-    <!-- Balance Cards -->
-    <div class="card-grid">
-        <div class="card"><div class="label">💰 Haraaga</div><div class="value white" id="balance">$0.00</div></div>
-        <div class="card"><div class="label">📊 Equity</div><div class="value white" id="equity">$0.00</div></div>
-        <div class="card"><div class="label">📈 Faa'iido Maanta</div><div class="value" id="profit">$0.00</div></div>
-        <div class="card"><div class="label">✅ Win Rate</div><div class="value neutral" id="winrate">0%</div></div>
+    <!-- BALANCE -->
+    <div class="balance-grid">
+        <div class="bal-card"><div class="bal-label">💰 Haraaga</div><div class="bal-value white" id="balance">0.00</div></div>
+        <div class="bal-card"><div class="bal-label">📊 Equity</div><div class="bal-value white" id="equity">0.00</div></div>
+        <div class="bal-card"><div class="bal-label">📈 Faa'iido</div><div class="bal-value" id="profit">0.00</div></div>
+        <div class="bal-card"><div class="bal-label">✅ Win Rate</div><div class="bal-value gold" id="winrate">0%</div></div>
+        <div class="bal-card"><div class="bal-label">⚠️ Drawdown</div><div class="bal-value red" id="drawdown">0%</div></div>
+        <div class="bal-card"><div class="bal-label">📋 Furan</div><div class="bal-value white" id="opencount">0</div></div>
     </div>
 
-    <!-- Market Analysis -->
-    <div class="section-title">📊 Falanqaynta Suuqa</div>
-    <div class="analysis-grid">
-        <div class="analysis-card"><div class="label">Maanta</div><div class="value" id="todayPnL">$0.00</div></div>
-        <div class="analysis-card"><div class="label">Toddobaadkan</div><div class="value" id="weeklyPnL">$0.00</div></div>
-        <div class="analysis-card"><div class="label">Drawdown</div><div class="value negative" id="drawdown">0%</div></div>
+    <!-- TRADES -->
+    <div class="section">
+        <div class="section-title">📋 Ganacsiyada Furan <span class="section-count" id="tradeBadge">0</span></div>
+        <div id="trades"><div class="empty-state">Ma jiraan ganacsiyo furan</div></div>
     </div>
 
-    <!-- Open Trades -->
-    <div class="section-title">📋 Ganacsiyada Furan <span class="count" id="tradeCount">0</span></div>
-    <div id="trades"><div style="text-align:center;color:#888;padding:15px">Ma jiraan ganacsiyo furan</div></div>
-
-    <!-- Signals -->
-    <div class="section-title">🔔 Calaamadaha (Signals)</div>
-    <div id="signals"><div style="text-align:center;color:#888;padding:10px">Ma jiraan calaamado</div></div>
-
-    <!-- Currency Strength -->
-    <div class="section-title">💪 Xoogga Lacagaha (H1)</div>
-    <div id="currencies"></div>
-
-    <!-- Share -->
-    <div class="share-section">
-        <div style="font-size:11px;color:#f0a500;font-weight:bold">🔗 La Wadaag Asxaabta</div>
-        <input type="text" id="shareURL" value="https://mohapro-dashboard.onrender.com" readonly>
-        <button onclick="copyURL()">📋 Copy Link</button>
+    <!-- SIGNALS -->
+    <div class="section">
+        <div class="section-title">🔔 Calaamadaha</div>
+        <div id="signals"><div class="empty-state">Ma jiraan calaamado</div></div>
     </div>
 
-    <!-- Footer -->
-    <div class="footer">© 2026 MOHA PRO • Xogta Tooska Ah • Waxaa Shaqeynaya Render.com</div>
+    <!-- CURRENCY -->
+    <div class="section">
+        <div class="section-title">💪 Xoogga Lacagaha (H1)</div>
+        <div id="currencies"></div>
+    </div>
+
+    <!-- SHARE -->
+    <div class="share-box">
+        <p>🔗 La Wadaag Asxaabta</p>
+        <div class="share-url">
+            <input type="text" id="shareURL" value="https://mohapro-dashboard.onrender.com" readonly>
+            <button onclick="copyLink()">📋 Copy</button>
+        </div>
+    </div>
+
+    <div class="footer">© 2026 MOHA PRO • Waxaa Shaqeynaya Render.com</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.min.js"></script>
 <script>
     const socket = io();
-    const currencyPairs = ['AUD','CAD','CHF','EUR','GBP','JPY','NZD','USD'];
+    const currencies = ['AUD','CAD','CHF','EUR','GBP','JPY','NZD','USD'];
 
-    socket.on('data_update', (data) => {
-        // Balance
-        document.getElementById('balance').textContent = '$' + (data.balance||0).toFixed(2);
-        document.getElementById('equity').textContent = '$' + (data.equity||0).toFixed(2);
-        
-        let profit = parseFloat(data.profit||0);
-        let profitEl = document.getElementById('profit');
-        profitEl.textContent = (profit>=0?'+$':'-$') + Math.abs(profit).toFixed(2);
-        profitEl.className = 'value ' + (profit>=0?'positive':'negative');
-        
-        document.getElementById('winrate').textContent = (data.winrate||0).toFixed(1) + '%';
-        document.getElementById('drawdown').textContent = (data.drawdown||0).toFixed(1) + '%';
-        document.getElementById('strategyName').textContent = data.strategy||'---';
-        document.getElementById('tradeCount').textContent = data.opentrades||0;
-
-        // Analysis
-        document.getElementById('todayPnL').textContent = (profit>=0?'+$':'-$') + Math.abs(profit).toFixed(2);
-        document.getElementById('todayPnL').style.color = profit>=0?'#00ff88':'#ff4444';
-        document.getElementById('weeklyPnL').textContent = '$' + (data.weekly||0).toFixed(2);
+    socket.on('data_update', (d) => {
+        document.getElementById('balance').textContent = '$'+(d.balance||0).toFixed(2);
+        document.getElementById('equity').textContent = '$'+(d.equity||0).toFixed(2);
+        let p = parseFloat(d.profit||0);
+        let pEl = document.getElementById('profit');
+        pEl.textContent = (p>=0?'+':'')+'$'+p.toFixed(2);
+        pEl.className = 'bal-value '+(p>=0?'green':'red');
+        document.getElementById('winrate').textContent = (d.winrate||0).toFixed(1)+'%';
+        document.getElementById('drawdown').textContent = (d.drawdown||0).toFixed(1)+'%';
+        document.getElementById('opencount').textContent = d.opentrades||0;
+        document.getElementById('tradeBadge').textContent = d.opentrades||0;
+        document.getElementById('strategy').textContent = d.strategy||'---';
+        document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString('so-SO');
 
         // Trades
-        let tradeHTML = '';
-        if(data.trades && data.trades.length>0) {
-            data.trades.forEach(t => {
-                let isWin = parseFloat(t.profit)>=0;
-                let cls = isWin?'win':'loss';
-                tradeHTML += `<div class="trade-row ${cls}">
-                    <div class="top">
-                        <span class="symbol" style="color:${t.type=='BUY'?'#00ff88':'#ff4444'}">${t.type} ${t.symbol}</span>
-                        <span class="strategy">${t.strategy||'SR'}</span>
-                        <span class="profit" style="color:${isWin?'#00ff88':'#ff4444'}">${isWin?'+':'-'}$${Math.abs(t.profit||0).toFixed(2)}</span>
+        let tHTML = '';
+        if(d.trades&&d.trades.length>0){
+            d.trades.forEach(t=>{
+                let win = parseFloat(t.profit)>=0;
+                tHTML+=`<div class="trade-item ${win?'win':'loss'}">
+                    <div class="trade-top">
+                        <span class="trade-type" style="color:${t.type=='BUY'?'#10b981':'#ef4444'}">${t.type} ${t.symbol}</span>
+                        <span class="trade-strat">${t.strategy||'SR'}</span>
+                        <span class="trade-pnl" style="color:${win?'#10b981':'#ef4444'}">${win?'+':'-'}$ ${Math.abs(t.profit||0).toFixed(2)}</span>
                     </div>
-                    <div class="details">
-                        <span>Lot: ${t.lot}</span>
-                        <span>Open: ${t.openprice}</span>
-                        <span>SL: ${t.sl}</span>
-                        <span>TP: ${t.tp}</span>
+                    <div class="trade-info">
+                        <span>Lot: ${t.lot}</span><span>Open: ${t.openprice}</span><span>SL: ${t.sl}</span><span>TP: ${t.tp}</span>
                     </div>
                 </div>`;
             });
-        } else {
-            tradeHTML = '<div style="text-align:center;color:#888;padding:15px">Ma jiraan ganacsiyo furan</div>';
-        }
-        document.getElementById('trades').innerHTML = tradeHTML;
+        }else{tHTML='<div class="empty-state">Ma jiraan ganacsiyo furan</div>';}
+        document.getElementById('trades').innerHTML=tHTML;
 
         // Signals
-        let signalHTML = '';
-        if(data.signals && data.signals.length>0) {
-            data.signals.forEach(s => {
-                let cls = s.signal=='BUY'?'signal-buy':(s.signal=='SELL'?'signal-sell':'signal-wait');
-                signalHTML += `<div class="signal-row">
-                    <span style="font-size:11px;font-weight:bold">${s.symbol}</span>
-                    <span class="${cls}">${s.signal}</span>
-                </div>`;
+        let sHTML='';
+        if(d.signals&&d.signals.length>0){
+            d.signals.forEach(s=>{
+                let cls=s.signal=='BUY'?'badge-buy':(s.signal=='SELL'?'badge-sell':'badge-wait');
+                sHTML+=`<div class="signal-item"><span class="signal-symbol">${s.symbol}</span><span class="badge ${cls}">${s.signal}</span></div>`;
             });
-        } else {
-            signalHTML = '<div style="text-align:center;color:#888;padding:10px">Ma jiraan calaamado</div>';
-        }
-        document.getElementById('signals').innerHTML = signalHTML;
+        }else{sHTML='<div class="empty-state">Ma jiraan calaamado</div>';}
+        document.getElementById('signals').innerHTML=sHTML;
 
-        // Currency Strength (simulated - update from server)
-        let currHTML = '';
-        currencyPairs.forEach((c,i) => {
-            let strength = 50 + Math.sin(Date.now()/10000 + i)*20;
-            let color = strength>=60?'#00ff88':(strength<=40?'#ff4444':'#f0a500');
-            currHTML += `<div class="currency-row">
-                <span class="currency-name" style="color:${color}">${c}</span>
-                <div class="currency-bar"><div class="currency-fill" style="width:${strength}%;background:${color}"></div></div>
-                <span style="font-size:9px;color:${color}">${strength.toFixed(0)}</span>
+        // Currencies
+        let cHTML='';
+        currencies.forEach((c,i)=>{
+            let str=55+Math.sin(Date.now()/8000+i)*18;
+            let col=str>=60?'#10b981':(str<=40?'#ef4444':'#f0a500');
+            cHTML+=`<div class="curr-item">
+                <span class="curr-name" style="color:${col}">${c}</span>
+                <div class="curr-bar-wrap"><div class="curr-bar-fill" style="width:${str}%;background:${col}"></div></div>
+                <span style="font-size:9px;color:${col}">${str.toFixed(0)}</span>
             </div>`;
         });
-        document.getElementById('currencies').innerHTML = currHTML;
-
-        document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString('so-SO');
+        document.getElementById('currencies').innerHTML=cHTML;
     });
 
-    function copyURL() {
-        let input = document.getElementById('shareURL');
-        input.select();
-        document.execCommand('copy');
+    function copyLink(){
+        let inp=document.getElementById('shareURL');
+        inp.select();inp.setSelectionRange(0,99999);
+        navigator.clipboard.writeText(inp.value);
         alert('✅ Link-ga waa la copy-gareeyay!');
     }
 </script>
