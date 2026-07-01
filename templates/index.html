@@ -3,151 +3,120 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MOHA PRO - Admin Panel</title>
+    <title>MOHA PRO - Trading Dashboard</title>
     <style>
         *{margin:0;padding:0;box-sizing:border-box}
-        body{background:#0a0e17;color:#fff;font-family:Arial,sans-serif;padding:12px;max-width:500px;margin:0 auto}
-        .header{background:linear-gradient(145deg,#1a1f2e,#232a3b);padding:15px;border-radius:12px;text-align:center;margin-bottom:14px;border:2px solid #f0a500}
-        .header h2{color:#f0a500;font-size:18px}
-        .header p{color:#888;font-size:10px;margin-top:4px}
+        body{background:#0a0e17;color:#fff;font-family:Arial,sans-serif;padding:12px;max-width:550px;margin:0 auto}
+        .header{background:linear-gradient(145deg,#1a1f2e,#232a3b);padding:15px;border-radius:12px;text-align:center;margin-bottom:12px;border:2px solid #f0a500}
+        .header h1{color:#f0a500;font-size:20px}
+        .header .live{color:#00ff88;font-size:11px;margin-top:4px}
+        .live-dot{display:inline-block;width:8px;height:8px;background:#00ff88;border-radius:50%;animation:pulse 1.2s infinite;margin-right:5px}
+        @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
         
-        .control-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:14px}
-        .btn{padding:14px;border-radius:10px;border:none;font-weight:700;font-size:12px;cursor:pointer;text-align:center}
-        .btn-green{background:#10b981;color:#000}
-        .btn-red{background:#ef4444;color:#fff}
-        .btn-gold{background:#f0a500;color:#000}
-        .btn-blue{background:#3b82f6;color:#fff}
-        .btn-purple{background:#8b5cf6;color:#fff}
-        .btn-gray{background:#374151;color:#fff}
+        .balance-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:12px}
+        .bal-card{background:#111827;padding:12px;border-radius:10px;text-align:center;border:1px solid #1e293b}
+        .bal-card .label{font-size:9px;color:#6b7280;text-transform:uppercase;margin-bottom:4px}
+        .bal-card .value{font-size:16px;font-weight:bold}
+        .green{color:#10b981}.red{color:#ef4444}.gold{color:#f0a500}.white{color:#f9fafb}
         
-        .section{margin-bottom:14px;background:#111827;border-radius:12px;padding:14px;border:1px solid #1e293b}
-        .section h3{color:#f0a500;font-size:13px;margin-bottom:10px;text-transform:uppercase;letter-spacing:1px}
+        .section{margin-bottom:14px}
+        .section-title{color:#f0a500;font-size:13px;font-weight:bold;margin-bottom:8px;border-bottom:1px solid #1e293b;padding-bottom:4px;text-transform:uppercase}
         
-        select,input{padding:10px;background:#0a0e17;border:1px solid #374151;color:#fff;border-radius:8px;font-size:11px;margin-bottom:8px}
-        select{width:100%}
-        .input-row{display:flex;gap:8px}
-        .input-row input{flex:1}
+        .trade-item{background:#111827;border-radius:10px;padding:10px;margin-bottom:6px;border-left:4px solid #333}
+        .trade-item.win{border-left-color:#10b981}
+        .trade-item.loss{border-left-color:#ef4444}
+        .trade-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:5px}
+        .trade-symbol{font-weight:bold;font-size:14px}
+        .trade-type-buy{color:#10b981}.trade-type-sell{color:#ef4444}
+        .trade-pnl{font-weight:bold;font-size:14px}
+        .trade-details{display:flex;flex-wrap:wrap;gap:10px;font-size:10px;color:#9ca3af}
+        .trade-details span{background:#0a0e17;padding:2px 6px;border-radius:4px}
         
-        .status-box{background:#111827;border-radius:10px;padding:12px;margin-top:10px;border:1px solid #1e293b;text-align:center}
-        .status-box .value{font-size:22px;font-weight:700;margin:5px 0}
+        .signal-item{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:#111827;border-radius:8px;margin-bottom:4px}
+        .badge{padding:3px 12px;border-radius:12px;font-size:10px;font-weight:bold}
+        .badge-buy{background:#064e3b;color:#10b981}.badge-sell{background:#4c0519;color:#ef4444}.badge-wait{background:#1e293b;color:#6b7280}
         
-        .log{background:#000;border-radius:8px;padding:10px;margin-top:10px;font-size:9px;color:#10b981;max-height:150px;overflow-y:auto;font-family:monospace}
-        .log .error{color:#ef4444}
-        .log .info{color:#f0a500}
+        .empty-state{text-align:center;color:#6b7280;padding:15px;font-size:11px}
+        .footer{text-align:center;color:#4b5563;font-size:9px;margin-top:20px;padding:10px}
     </style>
 </head>
 <body>
-
     <div class="header">
-        <h2>🎛️ MOHA PRO ADMIN</h2>
-        <p>Maamul Bot-kaaga • <span id="status">⏳ Xidhan</span></p>
+        <h1>🚀 MOHA PRO V30</h1>
+        <div class="live"><span class="live-dot"></span> LIVE • <span id="lastUpdate">---</span></div>
     </div>
 
-    <!-- Quick Controls -->
-    <div class="control-grid">
-        <button class="btn btn-green" onclick="sendCmd('START')">▶️ SHID TRADING</button>
-        <button class="btn btn-red" onclick="sendCmd('STOP')">⏹️ DAM TRADING</button>
-        <button class="btn btn-gold" onclick="sendCmd('CLOSE_ALL')">❌ XIDH DHAMMAAN</button>
-        <button class="btn btn-purple" onclick="sendCmd('CLOSE_PROFIT')">💰 XIDH FAA'IIDO</button>
+    <div class="balance-grid">
+        <div class="bal-card"><div class="label">💰 Haraaga</div><div class="value white" id="balance">0.00</div></div>
+        <div class="bal-card"><div class="label">📊 Equity</div><div class="value white" id="equity">0.00</div></div>
+        <div class="bal-card"><div class="label">📈 Faa'iido</div><div class="value" id="profit">0.00</div></div>
+        <div class="bal-card"><div class="label">✅ Win Rate</div><div class="value gold" id="winrate">0%</div></div>
     </div>
 
-    <!-- Strategy -->
     <div class="section">
-        <h3>🎯 BEDDEL STRATEGY</h3>
-        <select id="strategy" onchange="sendCmd('STRATEGY:'+this.value)">
-            <option value="">-- Dooro Strategy --</option>
-            <option value="SR">SR (Support/Resistance)</option>
-            <option value="BB">Bollinger Bands</option>
-            <option value="EMA">EMA Cross</option>
-            <option value="SMC">Smart Money Concepts</option>
-            <option value="VSA">Volume Spread Analysis</option>
-            <option value="RSI">RSI Overbought/Oversold</option>
-        </select>
+        <div class="section-title">📋 Ganacsiyada Furan (<span id="tradeCount">0</span>)</div>
+        <div id="trades"><div class="empty-state">Ma jiraan ganacsiyo furan</div></div>
     </div>
 
-    <!-- Settings -->
     <div class="section">
-        <h3>⚙️ BEDDEL SETTINGS</h3>
-        <div class="input-row">
-            <input type="number" id="lotSize" placeholder="Lot Size (0.01)" step="0.01">
-            <input type="number" id="maxTrades" placeholder="Max Trades (20)">
-        </div>
-        <div class="input-row">
-            <input type="number" id="slPips" placeholder="SL Pips (30)">
-            <input type="number" id="tpPips" placeholder="TP Pips (80)">
-        </div>
-        <button class="btn btn-blue" style="width:100%" onclick="sendSettings()">💾 SAVE SETTINGS</button>
+        <div class="section-title">🔔 Calaamadaha</div>
+        <div id="signals"><div class="empty-state">Ma jiraan calaamado</div></div>
     </div>
 
-    <!-- Status -->
-    <div class="section">
-        <h3>📊 XAALADDA HADDA</h3>
-        <div class="status-box">
-            <div>💰 Haraaga</div>
-            <div class="value green" id="balance">$0.00</div>
-        </div>
-        <div class="status-box">
-            <div>📈 Faa'iido Maanta</div>
-            <div class="value" id="profit">$0.00</div>
-        </div>
-        <div class="status-box">
-            <div>📋 Ganacsiyo Furan</div>
-            <div class="value white" id="openTrades">0</div>
-        </div>
-    </div>
+    <div class="footer">© 2026 MOHA PRO • Waxaa Shaqeynaya Render.com</div>
 
-    <!-- Log -->
-    <div class="section">
-        <h3>📝 LOG</h3>
-        <div class="log" id="log">Diyaar...<br></div>
-    </div>
-
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.min.js"></script>
 <script>
-    function addLog(msg,type){
-        let log=document.getElementById('log');
-        let cls=type||'info';
-        log.innerHTML+=`<span class="${cls}">[${new Date().toLocaleTimeString()}] ${msg}</span><br>`;
-        log.scrollTop=log.scrollHeight;
-    }
+    const socket = io();
+    
+    socket.on('data_update', (data) => {
+        document.getElementById('balance').textContent = '$'+(data.balance||0).toFixed(2);
+        document.getElementById('equity').textContent = '$'+(data.equity||0).toFixed(2);
+        let p = parseFloat(data.profit||0);
+        let pEl = document.getElementById('profit');
+        pEl.textContent = (p>=0?'+':'')+'$'+p.toFixed(2);
+        pEl.className = 'value '+(p>=0?'green':'red');
+        document.getElementById('winrate').textContent = (data.winrate||0).toFixed(1)+'%';
+        document.getElementById('tradeCount').textContent = data.opentrades||0;
 
-    function sendCmd(cmd){
-        addLog(`Amar la diray: ${cmd}`);
-        fetch('/command',{
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({command:cmd})
-        }).then(r=>r.json()).then(d=>{
-            addLog(`✅ ${d.message||'La fuliyay'}`,d.error?'error':'info');
-        }).catch(e=>addLog('❌ Khalad: '+e,'error'));
-    }
+        // Ganacsiyada furan
+        let tHTML = '';
+        if(data.trades && data.trades.length > 0){
+            data.trades.forEach(t => {
+                let profitVal = parseFloat(t.profit||0);
+                let isWin = profitVal >= 0;
+                tHTML += `<div class="trade-item ${isWin?'win':'loss'}">
+                    <div class="trade-row">
+                        <span class="trade-symbol ${t.type=='BUY'?'trade-type-buy':'trade-type-sell'}">${t.type} ${t.symbol}</span>
+                        <span class="trade-pnl" style="color:${isWin?'#10b981':'#ef4444'}">${isWin?'+':'-'}$${Math.abs(profitVal).toFixed(2)}</span>
+                    </div>
+                    <div class="trade-details">
+                        <span>Lot: ${t.lot}</span>
+                        <span>Open: ${t.openprice}</span>
+                        <span>SL: ${t.sl}</span>
+                        <span>TP: ${t.tp}</span>
+                    </div>
+                </div>`;
+            });
+        } else {
+            tHTML = '<div class="empty-state">Ma jiraan ganacsiyo furan</div>';
+        }
+        document.getElementById('trades').innerHTML = tHTML;
 
-    function sendSettings(){
-        let data={
-            command:'SETTINGS',
-            lot:document.getElementById('lotSize').value,
-            maxtrades:document.getElementById('maxTrades').value,
-            sl:document.getElementById('slPips').value,
-            tp:document.getElementById('tpPips').value
-        };
-        addLog('Settings la diray...');
-        fetch('/command',{
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify(data)
-        }).then(r=>r.json()).then(d=>{
-            addLog('✅ Settings saved!');
-        }).catch(e=>addLog('❌ Error','error'));
-    }
+        // Calaamadaha
+        let sHTML = '';
+        if(data.signals && data.signals.length > 0){
+            data.signals.forEach(s => {
+                let cls = s.signal=='BUY'?'badge-buy':(s.signal=='SELL'?'badge-sell':'badge-wait');
+                sHTML += `<div class="signal-item"><span>${s.symbol}</span><span class="badge ${cls}">${s.signal}</span></div>`;
+            });
+        } else {
+            sHTML = '<div class="empty-state">Ma jiraan calaamado</div>';
+        }
+        document.getElementById('signals').innerHTML = sHTML;
 
-    // Live data refresh
-    setInterval(()=>{
-        fetch('/api/data').then(r=>r.json()).then(d=>{
-            document.getElementById('balance').textContent='$'+(d.balance||0).toFixed(2);
-            document.getElementById('profit').textContent='$'+(d.profit||0).toFixed(2);
-            document.getElementById('openTrades').textContent=d.opentrades||0;
-            document.getElementById('status').innerHTML=d.trading?'🟢 SHAQEYN':'⏹️ XIDHAN';
-        }).catch(()=>{});
-    },2000);
+        document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString('so-SO');
+    });
 </script>
 </body>
 </html>
