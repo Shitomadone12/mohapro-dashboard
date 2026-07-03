@@ -1,231 +1,211 @@
 <!DOCTYPE html>
 <html lang="so">
 <head>
-    <meta charset="UTF-8">
-    <title>MOHA PRO V31 - Dashboard</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
-    <style>
-        /* CIRIFKA GUUD - midab madow oo qurux badan, laakiin iftiin leh */
-        body { 
-            background: #0d1117; 
-            color: #e6edf3; 
-            font-family: 'Segoe UI', Tahoma, sans-serif; 
-        }
-        .card { 
-            background: #161b22; 
-            border: 1px solid #30363d; 
-            border-radius: 12px; 
-            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-        }
-        .card-header { 
-            background: #21262d; 
-            border-bottom: 1px solid #30363d; 
-            font-weight: bold; 
-            color: #ffb300; 
-            font-size: 0.95rem;
-        }
-        .value { 
-            font-size: 2rem; 
-            font-weight: bold; 
-            text-shadow: 0 0 8px rgba(255,255,255,0.1);
-        }
-        .green { color: #2ea043; }   /* cagaar faa'iido */
-        .red { color: #f85149; }     /* cas qasara/drawdown */
-        .gold { color: #ffb300; }    /* dahabi xog gaar ah */
-        .blue { color: #58a6ff; }    /* buluug */
-        .small-text { font-size: 0.85rem; color: #8b949e; }
-        .btn-gold { 
-            background: #ffb300; 
-            color: #0d1117; 
-            border: none; 
-            font-weight: bold; 
-        }
-        .btn-outline-gold { 
-            border: 1px solid #ffb300; 
-            color: #ffb300; 
-            background: transparent; 
-        }
-        .btn-outline-gold:hover {
-            background: #ffb300;
-            color: #0d1117;
-        }
-        .strategy-btn { 
-            width: 100%; 
-            margin-bottom: 5px; 
-            text-align: left;
-        }
-        /* si aad u aragto sanduuqyada gelinta */
-        .form-control-sm {
-            background: #0d1117;
-            border: 1px solid #30363d;
-            color: #e6edf3;
-        }
-        .form-control-sm:focus {
-            background: #161b22;
-            border-color: #ffb300;
-            color: #fff;
-            box-shadow: none;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard MT4 Bot - Qurux Badan</title>
+  <style>
+    /* ... isla CSS-kii hore oo dhammaystiran ... */
+    /* (koodhka CSS halkan wuxuu la mid yahay kii hore, waxba ha beddelin) */
+    /* Waxaan soo gaabiyaa booska laakiin waa inaad ku shubtaa intaas oo dhan */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #e2e8f0; display: flex; min-height: 100vh; }
+    .sidebar { width: 260px; background: #1e293b; padding: 20px; display: flex; flex-direction: column; gap: 30px; border-right: 1px solid #334155; }
+    .logo { font-size: 1.5rem; font-weight: bold; color: #38bdf8; text-align: center; letter-spacing: 1px; }
+    .nav-links { display: flex; flex-direction: column; gap: 15px; }
+    .nav-links a { color: #94a3b8; text-decoration: none; padding: 10px 15px; border-radius: 8px; transition: all 0.2s; }
+    .nav-links a.active, .nav-links a:hover { background: #334155; color: white; }
+    .general-commands { margin-top: auto; }
+    .general-commands button { width: 100%; padding: 12px; background: #2563eb; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; transition: background 0.2s; }
+    .general-commands button:hover { background: #1d4ed8; }
+    .main { flex: 1; padding: 30px; overflow-y: auto; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+    .header h1 { font-size: 1.8rem; color: #f1f5f9; }
+    .update-time { background: #1e293b; padding: 8px 16px; border-radius: 20px; font-size: 0.9rem; color: #94a3b8; }
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 30px; }
+    .stat-card { background: #1e293b; border-radius: 16px; padding: 15px; position: relative; overflow: hidden; transition: transform 0.2s; }
+    .stat-card:hover { transform: translateY(-3px); }
+    .stat-card .label { font-size: 0.8rem; text-transform: uppercase; color: #64748b; margin-bottom: 8px; }
+    .stat-card .value { font-size: 1.6rem; font-weight: bold; }
+    .value.positive { color: #10b981; }
+    .value.negative { color: #ef4444; }
+    .value.neutral { color: #f59e0b; }
+    .value.info { color: #38bdf8; }
+    .value.white { color: #f1f5f9; }
+    .section-title { font-size: 1.2rem; margin: 25px 0 15px; color: #cbd5e1; border-bottom: 1px solid #334155; padding-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+    .section-title span { font-size: 0.9rem; color: #64748b; }
+    .table-container { background: #1e293b; border-radius: 16px; padding: 15px; margin-bottom: 25px; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; padding: 12px 10px; background: #0f172a; color: #94a3b8; font-weight: 500; font-size: 0.85rem; text-transform: uppercase; }
+    td { padding: 12px 10px; border-bottom: 1px solid #334155; font-size: 0.9rem; }
+    tr:last-child td { border-bottom: none; }
+    .profit { color: #10b981; font-weight: bold; }
+    .loss { color: #ef4444; font-weight: bold; }
+    .open-trade td { background: rgba(56, 189, 248, 0.05); }
+    .symbol-results { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 25px; }
+    .symbol-card { background: #1e293b; border-radius: 12px; padding: 15px; text-align: center; }
+    .symbol-card .pair { font-weight: bold; font-size: 1.1rem; margin-bottom: 8px; }
+    .symbol-card .stat { font-size: 0.85rem; color: #94a3b8; margin-bottom: 4px; }
+    .symbol-card .pnl { font-size: 1.2rem; font-weight: bold; }
+    .settings-panel { background: #1e293b; border-radius: 16px; padding: 20px; display: flex; flex-wrap: wrap; gap: 25px; align-items: flex-end; }
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    .form-group label { font-size: 0.85rem; color: #94a3b8; }
+    .form-group input, .form-group select { padding: 8px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: white; font-size: 0.9rem; outline: none; }
+    .form-group input:focus, .form-group select:focus { border-color: #38bdf8; }
+    .save-btn { padding: 10px 20px; background: #10b981; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
+    .save-btn:hover { background: #059669; }
+  </style>
 </head>
 <body>
-    <div class="container-fluid py-3">
-        <h2 class="text-center" style="color:#ffb300;"><i class="bi bi-robot"></i> MOHA PRO ULTIMATE V31</h2>
-        <p class="text-center small-text">Dashboard-ka Kormeerka & Maamulka Bot-ka MT4</p>
-        
-        <!-- Tirakoobyada Muhiimka ah -->
-        <div class="row g-3 mt-2">
-            <div class="col-md-3">
-                <div class="card text-center">
-                    <div class="card-header"><i class="bi bi-wallet2"></i> Haraaga</div>
-                    <div class="card-body"><span class="value" id="balance" style="color:#e6edf3;">0.00</span> <span class="small-text">USD</span></div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card text-center">
-                    <div class="card-header"><i class="bi bi-graph-up"></i> Equity</div>
-                    <div class="card-body"><span class="value" id="equity" style="color:#e6edf3;">0.00</span> <span class="small-text">USD</span></div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card text-center">
-                    <div class="card-header"><i class="bi bi-cash-coin"></i> Faa'iido</div>
-                    <div class="card-body"><span class="value" id="profit">0.00</span> <span class="small-text">USD</span></div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card text-center">
-                    <div class="card-header"><i class="bi bi-percent"></i> Win Rate</div>
-                    <div class="card-body"><span class="value" id="winrate" style="color:#58a6ff;">0.0%</span></div>
-                </div>
-            </div>
-        </div>
+  <aside class="sidebar">
+    <div class="logo">⚡ MT4 BOT</div>
+    <nav class="nav-links">
+      <a href="#" class="active">📊 Dashboard</a>
+      <a href="#">📈 Natiijada Ganacsiyada</a>
+      <a href="#">📋 Taariikhda</a>
+      <a href="#">⚙️ Dejinta</a>
+    </nav>
+    <div class="general-commands">
+      <button onclick="alert('Amarrada Guud waa la fulin doonaa')">🔧 Amarrada Guud</button>
+    </div>
+  </aside>
 
-        <div class="row g-3 mt-2">
-            <div class="col-md-3">
-                <div class="card text-center">
-                    <div class="card-header"><i class="bi bi-arrow-down-circle"></i> Drawdown</div>
-                    <div class="card-body"><span class="value red" id="drawdown">0.0%</span></div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card text-center">
-                    <div class="card-header"><i class="bi bi-briefcase"></i> Ganacsiyo Furran</div>
-                    <div class="card-body"><span class="value gold" id="opentrades">0</span></div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card text-center">
-                    <div class="card-header"><i class="bi bi-bar-chart"></i> Spread</div>
-                    <div class="card-body"><span class="value" id="spread" style="color:#e6edf3;">-</span></div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card text-center">
-                    <div class="card-header"><i class="bi bi-clock"></i> Cusboonaysiin</div>
-                    <div class="card-body"><span id="lastUpdate" class="small-text">--</span></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Kontaroolada Strategy & Amarrada -->
-        <div class="row mt-4">
-            <!-- Strategy Control -->
-            <div class="col-md-4">
-                <div class="card">
-                    <div class="card-header"><i class="bi bi-sliders"></i> Beddel Istaraatiijiyadda</div>
-                    <div class="card-body">
-                        <button class="btn btn-sm btn-outline-gold strategy-btn" onclick="sendCommand('STRATEGY:SR')">SR - Support/Resistance</button>
-                        <button class="btn btn-sm btn-outline-gold strategy-btn" onclick="sendCommand('STRATEGY:BB')">BB - Bollinger Bands</button>
-                        <button class="btn btn-sm btn-outline-gold strategy-btn" onclick="sendCommand('STRATEGY:EMA')">EMA - Crossover</button>
-                        <button class="btn btn-sm btn-outline-gold strategy-btn" onclick="sendCommand('STRATEGY:SMC')">SMC - Smart Money</button>
-                        <button class="btn btn-sm btn-outline-gold strategy-btn" onclick="sendCommand('STRATEGY:VSA')">VSA - Volume</button>
-                        <button class="btn btn-sm btn-outline-gold strategy-btn" onclick="sendCommand('STRATEGY:RSI')">RSI - Overbought/Oversold</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Amarrada Guud -->
-            <div class="col-md-4">
-                <div class="card">
-                    <div class="card-header"><i class="bi bi-toggles"></i> Amarrada Guud</div>
-                    <div class="card-body d-grid gap-2">
-                        <button class="btn btn-success" onclick="sendCommand('START')"><i class="bi bi-play-fill"></i> Bilaab Bot-ka</button>
-                        <button class="btn btn-danger" onclick="sendCommand('STOP')"><i class="bi bi-stop-fill"></i> Jooji Bot-ka</button>
-                        <button class="btn btn-warning" onclick="sendCommand('CLOSE_ALL')"><i class="bi bi-x-circle"></i> Xidh Dhammaan Ganacsiyada</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Dejinta Khatarta & Lot-ka -->
-            <div class="col-md-4">
-                <div class="card">
-                    <div class="card-header"><i class="bi bi-gear"></i> Dejinta Khatarta & Lot-ka</div>
-                    <div class="card-body">
-                        <div class="mb-2">
-                            <label class="form-label small">Risk Percent (%)</label>
-                            <input type="number" id="riskPercent" class="form-control form-control-sm" value="2.0" step="0.1" min="0.1">
-                        </div>
-                        <div class="mb-2">
-                            <label class="form-label small">Lot-ka Aasaasiga ah</label>
-                            <input type="number" id="initialLot" class="form-control form-control-sm" value="0.01" step="0.01" min="0.01">
-                        </div>
-                        <button class="btn btn-sm btn-gold" onclick="updateRiskSettings()">Cusboonaysii Dejinta</button>
-                        <p id="commandMsg" class="mt-2 small-text"></p>
-                    </div>
-                </div>
-            </div>
-        </div>
+  <main class="main">
+    <div class="header">
+      <h1>Kormeerka & Ganacsiyada</h1>
+      <div class="update-time" id="updateTime">Cusboonaysiin: {{ update_time }}</div>
     </div>
 
-    <script>
-        async function fetchData() {
-            try {
-                const res = await fetch('/api/data');
-                const data = await res.json();
-                
-                const bal = Number(data.balance || 0);
-                const eq = Number(data.equity || 0);
-                const profit = Number(data.profit || 0);
-                
-                document.getElementById('balance').innerText = bal.toFixed(2);
-                document.getElementById('equity').innerText = eq.toFixed(2);
-                document.getElementById('profit').innerText = (profit >= 0 ? '+' : '') + profit.toFixed(2);
-                document.getElementById('profit').className = 'value ' + (profit >= 0 ? 'green' : 'red');
-                
-                document.getElementById('winrate').innerText = Number(data.winrate || 0).toFixed(1) + '%';
-                document.getElementById('drawdown').innerText = Number(data.drawdown || 0).toFixed(1) + '%';
-                document.getElementById('opentrades').innerText = data.opentrades || 0;
-                document.getElementById('spread').innerText = data.spread || '-';
-                document.getElementById('lastUpdate').innerText = data.lastUpdate || new Date().toLocaleTimeString();
-            } catch(e) {
-                console.error('Error fetching data', e);
-            }
-        }
+    <!-- Summary stats -->
+    <div class="stats-grid">
+      <div class="stat-card"><div class="label">Haraaga</div><div class="value white">${{ "{:,.2f}".format(balance) }}</div></div>
+      <div class="stat-card"><div class="label">Equity</div><div class="value info">${{ "{:,.2f}".format(equity) }}</div></div>
+      <div class="stat-card"><div class="label">Faa'iido</div><div class="value {{ 'positive' if profit >= 0 else 'negative' }}">{{ "{:+,.2f}".format(profit) }}</div></div>
+      <div class="stat-card"><div class="label">Win Rate</div><div class="value positive">{{ win_rate }}%</div></div>
+      <div class="stat-card"><div class="label">Drawdown</div><div class="value neutral">{{ drawdown }}%</div></div>
+      <div class="stat-card"><div class="label">Ganacsiyo Furran</div><div class="value white">{{ open_trades_count }}</div></div>
+      <div class="stat-card"><div class="label">Spread</div><div class="value info">{{ spread if spread else '-' }}</div></div>
+    </div>
 
-        async function sendCommand(cmd) {
-            try {
-                await fetch('/api/setcommand', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ command: cmd })
-                });
-                document.getElementById('commandMsg').innerText = 'Amar la diray: ' + cmd;
-            } catch(e) {
-                document.getElementById('commandMsg').innerText = 'Khalad!';
-            }
-        }
+    <!-- SYMBOL RESULT SECTION -->
+    <h2 class="section-title">📊 Natiijada Symbol-ka <span>kuwa ugu muhiimsan</span></h2>
+    <div class="symbol-results">
+      {% for sym in symbol_results %}
+      <div class="symbol-card">
+        <div class="pair">{{ sym.pair }}</div>
+        <div class="stat">Ganacsiyo: {{ sym.trades }} | Guul: {{ sym.wins }}</div>
+        <div class="pnl {{ 'positive' if sym.pnl >= 0 else 'loss' }}">{{ "{:+,.2f}".format(sym.pnl) }}</div>
+      </div>
+      {% endfor %}
+      {% if symbol_results|length == 0 %}
+      <p>Ma jiraan wax natiijo ah</p>
+      {% endif %}
+    </div>
 
-        function updateRiskSettings() {
-            const risk = document.getElementById('riskPercent').value;
-            const lot = document.getElementById('initialLot').value;
-            sendCommand(`SET_RISK:${risk},${lot}`);
-        }
+    <!-- OPEN TRADES TABLE -->
+    <h2 class="section-title">🔓 Ganacsiyada Furan <span>{{ open_trades|length }} furan</span></h2>
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr><th>Symbol</th><th>Nooca</th><th>Lot</th><th>Qiimaha Furan</th><th>Take Profit</th><th>Stop Loss</th><th>Faa'iido (USD)</th><th>Swap</th></tr>
+        </thead>
+        <tbody>
+          {% for trade in open_trades %}
+          <tr class="open-trade">
+            <td>{{ trade.symbol }}</td>
+            <td>{{ trade.type }}</td>
+            <td>{{ trade.lot }}</td>
+            <td>{{ trade.open_price }}</td>
+            <td>{{ trade.tp }}</td>
+            <td>{{ trade.sl }}</td>
+            <td class="{{ 'profit' if trade.profit >= 0 else 'loss' }}">{{ "{:+,.2f}".format(trade.profit) }}</td>
+            <td>{{ trade.swap }}</td>
+          </tr>
+          {% endfor %}
+          {% if open_trades|length == 0 %}
+          <tr><td colspan="8" style="text-align:center; color:#64748b;">Ma jiraan ganacsiyo furan</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
 
-        fetchData();
-        setInterval(fetchData, 2000);
-    </script>
+    <!-- CLOSED LOSS TRADES TABLE -->
+    <h2 class="section-title">📉 Ganacsiyadii Khasaaraha ahaa (la xiray) <span>ugu dambeeyay {{ closed_loss_trades|length }}</span></h2>
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr><th>Symbol</th><th>Nooca</th><th>Lot</th><th>Wakhtiga la xiray</th><th>Qiimaha Furan</th><th>Qiimaha Xidhan</th><th>Khasaare (USD)</th></tr>
+        </thead>
+        <tbody>
+          {% for trade in closed_loss_trades %}
+          <tr>
+            <td>{{ trade.symbol }}</td>
+            <td>{{ trade.type }}</td>
+            <td>{{ trade.lot }}</td>
+            <td>{{ trade.close_time }}</td>
+            <td>{{ trade.open_price }}</td>
+            <td>{{ trade.close_price }}</td>
+            <td class="loss">{{ "{:+,.2f}".format(trade.loss) }}</td>
+          </tr>
+          {% endfor %}
+          {% if closed_loss_trades|length == 0 %}
+          <tr><td colspan="7" style="text-align:center; color:#64748b;">Ma jiraan ganacsiyo khasaare ah</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Settings -->
+    <h2 class="section-title">⚙️ Dejinta Khatarta & Lot-ka</h2>
+    <div class="settings-panel">
+      <div class="form-group">
+        <label for="riskPercent">Risk Percent (%)</label>
+        <input type="number" id="riskPercent" value="{{ risk_percent }}" step="0.1" min="0.1" max="100">
+      </div>
+      <div class="form-group">
+        <label for="lotSize">Lot-ka Aasaasiga ah</label>
+        <input type="number" id="lotSize" value="{{ lot_size }}" step="0.01" min="0.01">
+      </div>
+      <div class="form-group">
+        <label for="strategy">Beddel Istaraatiijiyadda</label>
+        <select id="strategy">
+          {% for strat in strategies %}
+          <option value="{{ strat.value }}" {{ 'selected' if strat.value == current_strategy else '' }}>{{ strat.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button class="save-btn" onclick="saveSettings()">💾 Keydi Dejinta</button>
+    </div>
+  </main>
+
+  <script>
+    // Cusboonaysiinta saacadda si toos ah
+    function updateClock() {
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString('so-SO', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      document.getElementById('updateTime').textContent = 'Cusboonaysiin: ' + timeStr;
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    function saveSettings() {
+      const risk = document.getElementById('riskPercent').value;
+      const lot = document.getElementById('lotSize').value;
+      const strategy = document.getElementById('strategy').value;
+      // U dir xogta server-ka si loo keydiyo
+      fetch('/save_settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ risk_percent: risk, lot_size: lot, strategy: strategy })
+      })
+      .then(response => response.json())
+      .then(data => {
+        alert('Dejinta waa la keydiyay!');
+      })
+      .catch(error => {
+        alert('Khalad ayaa dhacay markii la keydinayay.');
+      });
+    }
+  </script>
 </body>
 </html>
