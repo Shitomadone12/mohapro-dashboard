@@ -1,211 +1,93 @@
-<!DOCTYPE html>
-<html lang="so">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Dashboard MT4 Bot - Qurux Badan</title>
-  <style>
-    /* ... isla CSS-kii hore oo dhammaystiran ... */
-    /* (koodhka CSS halkan wuxuu la mid yahay kii hore, waxba ha beddelin) */
-    /* Waxaan soo gaabiyaa booska laakiin waa inaad ku shubtaa intaas oo dhan */
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #e2e8f0; display: flex; min-height: 100vh; }
-    .sidebar { width: 260px; background: #1e293b; padding: 20px; display: flex; flex-direction: column; gap: 30px; border-right: 1px solid #334155; }
-    .logo { font-size: 1.5rem; font-weight: bold; color: #38bdf8; text-align: center; letter-spacing: 1px; }
-    .nav-links { display: flex; flex-direction: column; gap: 15px; }
-    .nav-links a { color: #94a3b8; text-decoration: none; padding: 10px 15px; border-radius: 8px; transition: all 0.2s; }
-    .nav-links a.active, .nav-links a:hover { background: #334155; color: white; }
-    .general-commands { margin-top: auto; }
-    .general-commands button { width: 100%; padding: 12px; background: #2563eb; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; transition: background 0.2s; }
-    .general-commands button:hover { background: #1d4ed8; }
-    .main { flex: 1; padding: 30px; overflow-y: auto; }
-    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
-    .header h1 { font-size: 1.8rem; color: #f1f5f9; }
-    .update-time { background: #1e293b; padding: 8px 16px; border-radius: 20px; font-size: 0.9rem; color: #94a3b8; }
-    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 30px; }
-    .stat-card { background: #1e293b; border-radius: 16px; padding: 15px; position: relative; overflow: hidden; transition: transform 0.2s; }
-    .stat-card:hover { transform: translateY(-3px); }
-    .stat-card .label { font-size: 0.8rem; text-transform: uppercase; color: #64748b; margin-bottom: 8px; }
-    .stat-card .value { font-size: 1.6rem; font-weight: bold; }
-    .value.positive { color: #10b981; }
-    .value.negative { color: #ef4444; }
-    .value.neutral { color: #f59e0b; }
-    .value.info { color: #38bdf8; }
-    .value.white { color: #f1f5f9; }
-    .section-title { font-size: 1.2rem; margin: 25px 0 15px; color: #cbd5e1; border-bottom: 1px solid #334155; padding-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
-    .section-title span { font-size: 0.9rem; color: #64748b; }
-    .table-container { background: #1e293b; border-radius: 16px; padding: 15px; margin-bottom: 25px; overflow-x: auto; }
-    table { width: 100%; border-collapse: collapse; }
-    th { text-align: left; padding: 12px 10px; background: #0f172a; color: #94a3b8; font-weight: 500; font-size: 0.85rem; text-transform: uppercase; }
-    td { padding: 12px 10px; border-bottom: 1px solid #334155; font-size: 0.9rem; }
-    tr:last-child td { border-bottom: none; }
-    .profit { color: #10b981; font-weight: bold; }
-    .loss { color: #ef4444; font-weight: bold; }
-    .open-trade td { background: rgba(56, 189, 248, 0.05); }
-    .symbol-results { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 25px; }
-    .symbol-card { background: #1e293b; border-radius: 12px; padding: 15px; text-align: center; }
-    .symbol-card .pair { font-weight: bold; font-size: 1.1rem; margin-bottom: 8px; }
-    .symbol-card .stat { font-size: 0.85rem; color: #94a3b8; margin-bottom: 4px; }
-    .symbol-card .pnl { font-size: 1.2rem; font-weight: bold; }
-    .settings-panel { background: #1e293b; border-radius: 16px; padding: 20px; display: flex; flex-wrap: wrap; gap: 25px; align-items: flex-end; }
-    .form-group { display: flex; flex-direction: column; gap: 6px; }
-    .form-group label { font-size: 0.85rem; color: #94a3b8; }
-    .form-group input, .form-group select { padding: 8px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: white; font-size: 0.9rem; outline: none; }
-    .form-group input:focus, .form-group select:focus { border-color: #38bdf8; }
-    .save-btn { padding: 10px 20px; background: #10b981; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
-    .save-btn:hover { background: #059669; }
-  </style>
-</head>
-<body>
-  <aside class="sidebar">
-    <div class="logo">⚡ MT4 BOT</div>
-    <nav class="nav-links">
-      <a href="#" class="active">📊 Dashboard</a>
-      <a href="#">📈 Natiijada Ganacsiyada</a>
-      <a href="#">📋 Taariikhda</a>
-      <a href="#">⚙️ Dejinta</a>
-    </nav>
-    <div class="general-commands">
-      <button onclick="alert('Amarrada Guud waa la fulin doonaa')">🔧 Amarrada Guud</button>
-    </div>
-  </aside>
+<!-- Ku dar qaybtaan script-ga dhammaadka body ka -->
+<script>
+// Function to update all stats from JSON data
+function updateDashboard(data) {
+    // Update summary cards
+    document.querySelector('.stat-card:nth-child(1) .value').textContent = '$' + parseFloat(data.balance).toLocaleString('en-US', {minimumFractionDigits: 2});
+    document.querySelector('.stat-card:nth-child(2) .value').textContent = '$' + parseFloat(data.equity).toLocaleString('en-US', {minimumFractionDigits: 2});
+    const profitEl = document.querySelector('.stat-card:nth-child(3) .value');
+    const profitVal = parseFloat(data.profit);
+    profitEl.textContent = (profitVal >= 0 ? '+' : '') + '$' + profitVal.toFixed(2);
+    profitEl.className = 'value ' + (profitVal >= 0 ? 'positive' : 'negative');
+    document.querySelector('.stat-card:nth-child(4) .value').textContent = data.win_rate + '%';
+    document.querySelector('.stat-card:nth-child(5) .value').textContent = data.drawdown + '%';
+    document.querySelector('.stat-card:nth-child(6) .value').textContent = data.open_trades_count;
+    const spreadVal = data.spread !== null ? data.spread : '-';
+    document.querySelector('.stat-card:nth-child(7) .value').textContent = spreadVal;
 
-  <main class="main">
-    <div class="header">
-      <h1>Kormeerka & Ganacsiyada</h1>
-      <div class="update-time" id="updateTime">Cusboonaysiin: {{ update_time }}</div>
-    </div>
+    // Update time
+    document.getElementById('updateTime').textContent = 'Cusboonaysiin: ' + data.update_time;
 
-    <!-- Summary stats -->
-    <div class="stats-grid">
-      <div class="stat-card"><div class="label">Haraaga</div><div class="value white">${{ "{:,.2f}".format(balance) }}</div></div>
-      <div class="stat-card"><div class="label">Equity</div><div class="value info">${{ "{:,.2f}".format(equity) }}</div></div>
-      <div class="stat-card"><div class="label">Faa'iido</div><div class="value {{ 'positive' if profit >= 0 else 'negative' }}">{{ "{:+,.2f}".format(profit) }}</div></div>
-      <div class="stat-card"><div class="label">Win Rate</div><div class="value positive">{{ win_rate }}%</div></div>
-      <div class="stat-card"><div class="label">Drawdown</div><div class="value neutral">{{ drawdown }}%</div></div>
-      <div class="stat-card"><div class="label">Ganacsiyo Furran</div><div class="value white">{{ open_trades_count }}</div></div>
-      <div class="stat-card"><div class="label">Spread</div><div class="value info">{{ spread if spread else '-' }}</div></div>
-    </div>
-
-    <!-- SYMBOL RESULT SECTION -->
-    <h2 class="section-title">📊 Natiijada Symbol-ka <span>kuwa ugu muhiimsan</span></h2>
-    <div class="symbol-results">
-      {% for sym in symbol_results %}
-      <div class="symbol-card">
-        <div class="pair">{{ sym.pair }}</div>
-        <div class="stat">Ganacsiyo: {{ sym.trades }} | Guul: {{ sym.wins }}</div>
-        <div class="pnl {{ 'positive' if sym.pnl >= 0 else 'loss' }}">{{ "{:+,.2f}".format(sym.pnl) }}</div>
-      </div>
-      {% endfor %}
-      {% if symbol_results|length == 0 %}
-      <p>Ma jiraan wax natiijo ah</p>
-      {% endif %}
-    </div>
-
-    <!-- OPEN TRADES TABLE -->
-    <h2 class="section-title">🔓 Ganacsiyada Furan <span>{{ open_trades|length }} furan</span></h2>
-    <div class="table-container">
-      <table>
-        <thead>
-          <tr><th>Symbol</th><th>Nooca</th><th>Lot</th><th>Qiimaha Furan</th><th>Take Profit</th><th>Stop Loss</th><th>Faa'iido (USD)</th><th>Swap</th></tr>
-        </thead>
-        <tbody>
-          {% for trade in open_trades %}
-          <tr class="open-trade">
-            <td>{{ trade.symbol }}</td>
-            <td>{{ trade.type }}</td>
-            <td>{{ trade.lot }}</td>
-            <td>{{ trade.open_price }}</td>
-            <td>{{ trade.tp }}</td>
-            <td>{{ trade.sl }}</td>
-            <td class="{{ 'profit' if trade.profit >= 0 else 'loss' }}">{{ "{:+,.2f}".format(trade.profit) }}</td>
-            <td>{{ trade.swap }}</td>
-          </tr>
-          {% endfor %}
-          {% if open_trades|length == 0 %}
-          <tr><td colspan="8" style="text-align:center; color:#64748b;">Ma jiraan ganacsiyo furan</td></tr>
-          {% endif %}
-        </tbody>
-      </table>
-    </div>
-
-    <!-- CLOSED LOSS TRADES TABLE -->
-    <h2 class="section-title">📉 Ganacsiyadii Khasaaraha ahaa (la xiray) <span>ugu dambeeyay {{ closed_loss_trades|length }}</span></h2>
-    <div class="table-container">
-      <table>
-        <thead>
-          <tr><th>Symbol</th><th>Nooca</th><th>Lot</th><th>Wakhtiga la xiray</th><th>Qiimaha Furan</th><th>Qiimaha Xidhan</th><th>Khasaare (USD)</th></tr>
-        </thead>
-        <tbody>
-          {% for trade in closed_loss_trades %}
-          <tr>
-            <td>{{ trade.symbol }}</td>
-            <td>{{ trade.type }}</td>
-            <td>{{ trade.lot }}</td>
-            <td>{{ trade.close_time }}</td>
-            <td>{{ trade.open_price }}</td>
-            <td>{{ trade.close_price }}</td>
-            <td class="loss">{{ "{:+,.2f}".format(trade.loss) }}</td>
-          </tr>
-          {% endfor %}
-          {% if closed_loss_trades|length == 0 %}
-          <tr><td colspan="7" style="text-align:center; color:#64748b;">Ma jiraan ganacsiyo khasaare ah</td></tr>
-          {% endif %}
-        </tbody>
-      </table>
-    </div>
-
-    <!-- Settings -->
-    <h2 class="section-title">⚙️ Dejinta Khatarta & Lot-ka</h2>
-    <div class="settings-panel">
-      <div class="form-group">
-        <label for="riskPercent">Risk Percent (%)</label>
-        <input type="number" id="riskPercent" value="{{ risk_percent }}" step="0.1" min="0.1" max="100">
-      </div>
-      <div class="form-group">
-        <label for="lotSize">Lot-ka Aasaasiga ah</label>
-        <input type="number" id="lotSize" value="{{ lot_size }}" step="0.01" min="0.01">
-      </div>
-      <div class="form-group">
-        <label for="strategy">Beddel Istaraatiijiyadda</label>
-        <select id="strategy">
-          {% for strat in strategies %}
-          <option value="{{ strat.value }}" {{ 'selected' if strat.value == current_strategy else '' }}>{{ strat.name }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <button class="save-btn" onclick="saveSettings()">💾 Keydi Dejinta</button>
-    </div>
-  </main>
-
-  <script>
-    // Cusboonaysiinta saacadda si toos ah
-    function updateClock() {
-      const now = new Date();
-      const timeStr = now.toLocaleTimeString('so-SO', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      document.getElementById('updateTime').textContent = 'Cusboonaysiin: ' + timeStr;
+    // Update open trades table
+    const openTableBody = document.querySelector('#openTradesTable tbody');
+    openTableBody.innerHTML = '';
+    if(data.open_trades && data.open_trades.length > 0) {
+        data.open_trades.forEach(trade => {
+            const row = `<tr class="open-trade">
+                <td>${trade.symbol}</td>
+                <td>${trade.type}</td>
+                <td>${trade.lot}</td>
+                <td>${trade.open_price}</td>
+                <td>${trade.tp}</td>
+                <td>${trade.sl}</td>
+                <td class="${trade.profit >= 0 ? 'profit' : 'loss'}">${trade.profit >= 0 ? '+' : ''}$${parseFloat(trade.profit).toFixed(2)}</td>
+                <td>${trade.swap}</td>
+            </tr>`;
+            openTableBody.innerHTML += row;
+        });
+    } else {
+        openTableBody.innerHTML = '<tr><td colspan="8" style="text-align:center; color:#64748b;">Ma jiraan ganacsiyo furan</td></tr>';
     }
-    setInterval(updateClock, 1000);
-    updateClock();
+    document.querySelector('.section-title span:contains("furan")').textContent = data.open_trades.length + ' furan';
 
-    function saveSettings() {
-      const risk = document.getElementById('riskPercent').value;
-      const lot = document.getElementById('lotSize').value;
-      const strategy = document.getElementById('strategy').value;
-      // U dir xogta server-ka si loo keydiyo
-      fetch('/save_settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ risk_percent: risk, lot_size: lot, strategy: strategy })
-      })
-      .then(response => response.json())
-      .then(data => {
-        alert('Dejinta waa la keydiyay!');
-      })
-      .catch(error => {
-        alert('Khalad ayaa dhacay markii la keydinayay.');
-      });
+    // Update closed loss trades table
+    const lossTableBody = document.querySelector('#closedLossTradesTable tbody');
+    lossTableBody.innerHTML = '';
+    if(data.closed_loss_trades && data.closed_loss_trades.length > 0) {
+        data.closed_loss_trades.forEach(trade => {
+            const row = `<tr>
+                <td>${trade.symbol}</td>
+                <td>${trade.type}</td>
+                <td>${trade.lot}</td>
+                <td>${trade.close_time}</td>
+                <td>${trade.open_price}</td>
+                <td>${trade.close_price}</td>
+                <td class="loss">-$${Math.abs(parseFloat(trade.loss)).toFixed(2)}</td>
+            </tr>`;
+            lossTableBody.innerHTML += row;
+        });
+    } else {
+        lossTableBody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:#64748b;">Ma jiraan ganacsiyo khasaare ah</td></tr>';
     }
-  </script>
-</body>
-</html>
+
+    // Symbol results
+    const symbolContainer = document.querySelector('.symbol-results');
+    symbolContainer.innerHTML = '';
+    if(data.symbol_results && data.symbol_results.length > 0) {
+        data.symbol_results.forEach(sym => {
+            const card = `<div class="symbol-card">
+                <div class="pair">${sym.pair}</div>
+                <div class="stat">Ganacsiyo: ${sym.trades} | Guul: ${sym.wins}</div>
+                <div class="pnl ${sym.pnl >= 0 ? 'positive' : 'loss'}">${sym.pnl >= 0 ? '+' : ''}$${parseFloat(sym.pnl).toFixed(2)}</div>
+            </div>`;
+            symbolContainer.innerHTML += card;
+        });
+    } else {
+        symbolContainer.innerHTML = '<p>Ma jiraan wax natiijo ah</p>';
+    }
+}
+
+// Fetch data every 5 seconds
+function fetchLiveData() {
+    fetch('/live_data')
+        .then(response => response.json())
+        .then(data => {
+            updateDashboard(data);
+        })
+        .catch(error => console.error('Error fetching data:', error));
+}
+
+// Run on load and then every 5 seconds
+fetchLiveData();
+setInterval(fetchLiveData, 5000);
+</script>
