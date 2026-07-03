@@ -1,59 +1,93 @@
-from flask import Flask, request, jsonify, render_template
-from datetime import datetime
+from flask import Flask, render_template, request, jsonify
+import json
 
 app = Flask(__name__)
 
-# Xogta ugu dambeysay ee laga helo EA
-latest_data = {
-    "balance": 0,
-    "equity": 0,
-    "profit": 0,
-    "winrate": 0,
-    "drawdown": 0,
-    "opentrades": 0,
-    "spread": 0,
-    "lastUpdate": ""
-}
-
-# Amarka hadda jira (oo uu akhriyo EA, ka dibna la tirtiro)
-current_command = ""
+# Tani waa xogta tusaalaha ah - beddel tan oo akhri xogta dhabta ah
+def get_mt4_data():
+    # Halkan waxaad ka akhri kartaa faylka JSON, database, ama MT4 API
+    # Tusaale: akhri faylka 'mt4_data.json'
+    # with open('mt4_data.json') as f:
+    #     data = json.load(f)
+    # Haddii aad haysato database: 
+    # data = db.fetch_all()
+    
+    # Qaab-dhismeedka xogta:
+    data = {
+        "balance": 4912.82,
+        "equity": 4914.23,
+        "profit": 0.00,
+        "win_rate": 100.0,
+        "drawdown": 0.0,
+        "open_trades_count": 1,
+        "spread": None,  # ama ''
+        "update_time": "13:40:23",  # ama waqti toos ah oo server-ka laga helo
+        "open_trades": [
+            {
+                "symbol": "EURUSD",
+                "type": "Buy",
+                "lot": 0.01,
+                "open_price": 1.0850,
+                "tp": 1.0870,
+                "sl": 1.0830,
+                "profit": 1.23,
+                "swap": -0.15
+            }
+        ],
+        "closed_loss_trades": [
+            {
+                "symbol": "GBPUSD",
+                "type": "Sell",
+                "lot": 0.02,
+                "close_time": "2026-07-03 09:15",
+                "open_price": 1.2710,
+                "close_price": 1.2732,
+                "loss": -4.40
+            },
+            {
+                "symbol": "USDCAD",
+                "type": "Buy",
+                "lot": 0.01,
+                "close_time": "2026-07-02 14:00",
+                "open_price": 1.3680,
+                "close_price": 1.3645,
+                "loss": -3.50
+            }
+        ],
+        "symbol_results": [
+            {"pair": "EURUSD", "trades": 12, "wins": 7, "pnl": 45.20},
+            {"pair": "GBPUSD", "trades": 5, "wins": 2, "pnl": -12.50},
+            {"pair": "XAUUSD", "trades": 3, "wins": 3, "pnl": 89.00},
+            {"pair": "USDCAD", "trades": 1, "wins": 0, "pnl": -5.30}
+        ],
+        "risk_percent": 2.0,
+        "lot_size": 0.01,
+        "current_strategy": "trend",
+        "strategies": [
+            {"value": "scalping", "name": "Scalping Fast"},
+            {"value": "trend", "name": "Trend Follower"},
+            {"value": "grid", "name": "Grid Hedged"},
+            {"value": "martingale", "name": "Martingale Safe"}
+        ]
+    }
+    return data
 
 @app.route('/')
 def dashboard():
-    return render_template('index.html')
+    data = get_mt4_data()
+    return render_template('index.html', **data)
 
-# EA waxay u soo diri doontaa xogta halkan (POST)
-@app.route('/update', methods=['POST'])
-def update():
-    data = request.get_json()
-    if data:
-        latest_data.update(data)
-        latest_data['lastUpdate'] = datetime.now().strftime("%H:%M:%S")
-        print("Xog cusub laga helay EA:", latest_data)
-    return "OK"
-
-# EA waxay ka akhrisan doontaa amar cusub (GET)
-@app.route('/api/commands')
-def get_command():
-    global current_command
-    cmd = current_command
-    current_command = ""  # tirtir marka la akhriyo
-    return cmd
-
-# Dashboard-ka ayaa soo jiidan doona xogta (GET)
-@app.route('/api/data')
-def get_data():
-    return jsonify(latest_data)
-
-# Dashboard-ka ayaa ku shubi doona amar cusub (POST)
-@app.route('/api/setcommand', methods=['POST'])
-def set_command():
-    global current_command
-    data = request.get_json()
-    if data and 'command' in data:
-        current_command = data['command']
-        print("Amar cusub:", current_command)
-    return "OK"
+@app.route('/save_settings', methods=['POST'])
+def save_settings():
+    # Halkan waxaad ku keydisaa dejinta (fayl, database, iwm.)
+    settings = request.get_json()
+    risk = settings.get('risk_percent')
+    lot = settings.get('lot_size')
+    strategy = settings.get('strategy')
+    # Tusaale: ku qor faylka JSON
+    with open('settings.json', 'w') as f:
+        json.dump(settings, f)
+    return jsonify({"status": "ok"})
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+    app.run(debug=True, host='0.0.0.0', port=5000)
