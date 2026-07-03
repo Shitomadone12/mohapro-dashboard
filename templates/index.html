@@ -1,449 +1,90 @@
 <!DOCTYPE html>
 <html lang="so">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Dashboard MT4 - Live</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      background: #0f172a;
-      color: #e2e8f0;
-      display: flex;
-      min-height: 100vh;
-    }
-    .sidebar {
-      width: 260px;
-      background: #1e293b;
-      padding: 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 30px;
-      border-right: 1px solid #334155;
-    }
-    .logo {
-      font-size: 1.5rem;
-      font-weight: bold;
-      color: #38bdf8;
-      text-align: center;
-      letter-spacing: 1px;
-    }
-    .nav-links { display: flex; flex-direction: column; gap: 15px; }
-    .nav-links a {
-      color: #94a3b8;
-      text-decoration: none;
-      padding: 10px 15px;
-      border-radius: 8px;
-      transition: all 0.2s;
-    }
-    .nav-links a.active, .nav-links a:hover { background: #334155; color: white; }
-    .general-commands { margin-top: auto; }
-    .general-commands button {
-      width: 100%;
-      padding: 12px;
-      background: #2563eb;
-      color: white;
-      border: none;
-      border-radius: 8px;
-      font-weight: bold;
-      cursor: pointer;
-    }
-    .general-commands button:hover { background: #1d4ed8; }
-    .main { flex: 1; padding: 30px; overflow-y: auto; }
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 30px;
-    }
-    .header h1 { font-size: 1.8rem; color: #f1f5f9; }
-    .update-time {
-      background: #1e293b;
-      padding: 8px 16px;
-      border-radius: 20px;
-      font-size: 0.9rem;
-      color: #94a3b8;
-    }
-    .stats-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 15px;
-      margin-bottom: 30px;
-    }
-    .stat-card {
-      background: #1e293b;
-      border-radius: 16px;
-      padding: 15px;
-      position: relative;
-      overflow: hidden;
-      transition: transform 0.2s;
-    }
-    .stat-card:hover { transform: translateY(-3px); }
-    .stat-card .label {
-      font-size: 0.8rem;
-      text-transform: uppercase;
-      color: #64748b;
-      margin-bottom: 8px;
-    }
-    .stat-card .value { font-size: 1.6rem; font-weight: bold; }
-    .value.positive { color: #10b981; }
-    .value.negative { color: #ef4444; }
-    .value.neutral { color: #f59e0b; }
-    .value.info { color: #38bdf8; }
-    .value.white { color: #f1f5f9; }
-    .section-title {
-      font-size: 1.2rem;
-      margin: 25px 0 15px;
-      color: #cbd5e1;
-      border-bottom: 1px solid #334155;
-      padding-bottom: 8px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .section-title span { font-size: 0.9rem; color: #64748b; }
-    .table-container {
-      background: #1e293b;
-      border-radius: 16px;
-      padding: 15px;
-      margin-bottom: 25px;
-      overflow-x: auto;
-    }
-    table { width: 100%; border-collapse: collapse; }
-    th {
-      text-align: left;
-      padding: 12px 10px;
-      background: #0f172a;
-      color: #94a3b8;
-      font-weight: 500;
-      font-size: 0.85rem;
-      text-transform: uppercase;
-    }
-    td { padding: 12px 10px; border-bottom: 1px solid #334155; font-size: 0.9rem; }
-    tr:last-child td { border-bottom: none; }
-    .profit { color: #10b981; font-weight: bold; }
-    .loss { color: #ef4444; font-weight: bold; }
-    .open-trade td { background: rgba(56, 189, 248, 0.05); }
-    .symbol-results {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 15px;
-      margin-bottom: 25px;
-    }
-    .symbol-card {
-      background: #1e293b;
-      border-radius: 12px;
-      padding: 15px;
-      text-align: center;
-    }
-    .symbol-card .pair { font-weight: bold; font-size: 1.1rem; margin-bottom: 8px; }
-    .symbol-card .stat { font-size: 0.85rem; color: #94a3b8; margin-bottom: 4px; }
-    .symbol-card .pnl { font-size: 1.2rem; font-weight: bold; }
-    .settings-panel {
-      background: #1e293b;
-      border-radius: 16px;
-      padding: 20px;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 25px;
-      align-items: flex-end;
-    }
-    .form-group { display: flex; flex-direction: column; gap: 6px; }
-    .form-group label { font-size: 0.85rem; color: #94a3b8; }
-    .form-group input, .form-group select {
-      padding: 8px 12px;
-      border-radius: 8px;
-      border: 1px solid #334155;
-      background: #0f172a;
-      color: white;
-      font-size: 0.9rem;
-      outline: none;
-    }
-    .form-group input:focus, .form-group select:focus { border-color: #38bdf8; }
-    .save-btn {
-      padding: 10px 20px;
-      background: #10b981;
-      color: white;
-      border: none;
-      border-radius: 8px;
-      font-weight: bold;
-      cursor: pointer;
-    }
-    .save-btn:hover { background: #059669; }
-
-    /* Loading indicator */
-    .loading-spinner {
-      border: 3px solid #334155;
-      border-top: 3px solid #38bdf8;
-      border-radius: 50%;
-      width: 20px;
-      height: 20px;
-      animation: spin 1s linear infinite;
-      display: inline-block;
-      margin-left: 10px;
-      vertical-align: middle;
-    }
-    @keyframes spin {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
-    }
-
-    /* Status badge */
-    .status-badge {
-      display: inline-block;
-      padding: 4px 12px;
-      border-radius: 20px;
-      font-size: 0.75rem;
-      font-weight: bold;
-      text-transform: uppercase;
-    }
-    .status-live {
-      background: rgba(16, 185, 129, 0.2);
-      color: #10b981;
-    }
-    .status-waiting {
-      background: rgba(245, 158, 11, 0.2);
-      color: #f59e0b;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MOHA PRO - Dashboard Live</title>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{background:#0a0a14;color:#fff;font-family:Arial,sans-serif;padding:20px}
+        .header{background:#1a1a2e;padding:15px;border-radius:10px;text-align:center;margin-bottom:20px;border:2px solid #f0a500}
+        .header h1{color:#f0a500;font-size:24px}
+        .header p{color:#aaa;font-size:12px;margin-top:5px}
+        .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}
+        .card{background:#1a1a2e;padding:15px;border-radius:10px;text-align:center}
+        .card h3{color:#888;font-size:11px;margin-bottom:8px}
+        .card .value{font-size:22px;font-weight:bold}
+        .positive{color:#00ff88}
+        .negative{color:#ff4444}
+        .neutral{color:#f0a500}
+        .white{color:#fff}
+        table{width:100%;border-collapse:collapse;margin-top:20px;background:#1a1a2e;border-radius:10px;overflow:hidden}
+        th{background:#16213e;color:#f0a500;padding:10px;font-size:12px;text-align:left}
+        td{padding:8px;font-size:12px;border-bottom:1px solid #16213e}
+        .signal-buy{background:#003300;color:#00ff88;padding:3px 8px;border-radius:5px;font-weight:bold}
+        .signal-sell{background:#330000;color:#ff4444;padding:3px 8px;border-radius:5px;font-weight:bold}
+        .signal-wait{background:#1a1a1a;color:#888;padding:3px 8px;border-radius:5px}
+        .section-title{color:#f0a500;font-size:16px;margin:25px 0 10px;border-bottom:2px solid #f0a500;padding-bottom:5px}
+        .live-dot{display:inline-block;width:10px;height:10px;background:#00ff88;border-radius:50%;animation:pulse 1s infinite;margin-right:5px}
+        @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+        @media(max-width:768px){.grid{grid-template-columns:repeat(2,1fr)}}
+    </style>
 </head>
 <body>
-  <aside class="sidebar">
-    <div class="logo">⚡ MT4 BOT</div>
-    <nav class="nav-links">
-      <a href="#" class="active">📊 Dashboard</a>
-      <a href="#">📈 Natiijada Ganacsiyada</a>
-      <a href="#">📋 Taariikhda</a>
-      <a href="#">⚙️ Dejinta</a>
-    </nav>
-    <div class="general-commands">
-      <button onclick="alert('Amarrada Guud waa la fulin doonaa')">🔧 Amarrada Guud</button>
-    </div>
-  </aside>
-
-  <main class="main">
     <div class="header">
-      <h1>
-        Kormeerka & Ganacsiyada
-        <span id="connectionStatus" class="status-badge status-waiting">SUGAYA</span>
-      </h1>
-      <div class="update-time" id="updateTime">Cusboonaysiin: {{ update_time }}</div>
+        <h1>🚀 MOHA PRO ULTIMATE V30</h1>
+        <p><span class="live-dot"></span> LIVE | Cusboonaysiinta: <span id="lastUpdate">Sug...</span></p>
     </div>
-
-    <!-- Summary stats -->
-    <div class="stats-grid">
-      <div class="stat-card"><div class="label">💰 Haraaga</div><div class="value white" id="balance">$0.00</div></div>
-      <div class="stat-card"><div class="label">📊 Equity</div><div class="value info" id="equity">$0.00</div></div>
-      <div class="stat-card"><div class="label">📈 Faa'iido</div><div class="value neutral" id="profit">$0.00</div></div>
-      <div class="stat-card"><div class="label">🏆 Win Rate</div><div class="value positive" id="winRate">0%</div></div>
-      <div class="stat-card"><div class="label">📉 Drawdown</div><div class="value neutral" id="drawdown">0%</div></div>
-      <div class="stat-card"><div class="label">🔓 Ganacsiyo Furran</div><div class="value white" id="openTradesCount">0</div></div>
-      <div class="stat-card"><div class="label">📏 Spread</div><div class="value info" id="spread">-</div></div>
+    <div class="grid">
+        <div class="card"><h3>💰 HARAAGA (Balance)</h3><div class="value white" id="balance">$0.00</div></div>
+        <div class="card"><h3>📊 EQUITY</h3><div class="value white" id="equity">$0.00</div></div>
+        <div class="card"><h3>📈 FAA'IIDADA MAANTA</h3><div class="value" id="profit">$0.00</div></div>
+        <div class="card"><h3>✅ WIN RATE</h3><div class="value neutral" id="winrate">0%</div></div>
+        <div class="card"><h3>⚠️ DRAWDOWN</h3><div class="value negative" id="drawdown">0%</div></div>
+        <div class="card"><h3>🎯 ISTARAATIIJIYAD</h3><div class="value neutral" id="strategy">---</div></div>
     </div>
-
-    <!-- SYMBOL RESULT SECTION -->
-    <h2 class="section-title">📊 Natiijada Symbol-ka <span id="symbolCount">kuwa ugu muhiimsan</span></h2>
-    <div class="symbol-results" id="symbolResultsContainer">
-      <div class="symbol-card">
-        <div class="pair">--</div>
-        <div class="stat">Sugaya xog MT4...</div>
-        <div class="pnl neutral">$0.00</div>
-      </div>
-    </div>
-
-    <!-- OPEN TRADES TABLE -->
-    <h2 class="section-title">🔓 Ganacsiyada Furan <span id="openTradesCountLabel">0 furan</span></h2>
-    <div class="table-container">
-      <table>
-        <thead>
-          <tr><th>Symbol</th><th>Nooca</th><th>Lot</th><th>Qiimaha Furan</th><th>Take Profit</th><th>Stop Loss</th><th>Faa'iido (USD)</th><th>Swap</th></tr>
-        </thead>
-        <tbody id="openTradesTable">
-          <tr><td colspan="8" style="text-align:center; color:#64748b;">
-            <span class="loading-spinner"></span> Sugaya xog MT4...
-          </td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- CLOSED LOSS TRADES TABLE -->
-    <h2 class="section-title">📉 Ganacsiyadii Khasaaraha ahaa (la xiray) <span id="closedLossCountLabel">ugu dambeeyay 0</span></h2>
-    <div class="table-container">
-      <table>
-        <thead>
-          <tr><th>Symbol</th><th>Nooca</th><th>Lot</th><th>Wakhtiga la xiray</th><th>Qiimaha Furan</th><th>Qiimaha Xidhan</th><th>Khasaare (USD)</th></tr>
-        </thead>
-        <tbody id="closedLossTradesTable">
-          <tr><td colspan="7" style="text-align:center; color:#64748b;">Ma jiraan ganacsiyo khasaare ah</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- Settings -->
-    <h2 class="section-title">⚙️ Dejinta Khatarta & Lot-ka</h2>
-    <div class="settings-panel">
-      <div class="form-group">
-        <label for="riskPercent">Risk Percent (%)</label>
-        <input type="number" id="riskPercent" value="{{ risk_percent }}" step="0.1" min="0.1" max="100">
-      </div>
-      <div class="form-group">
-        <label for="lotSize">Lot-ka Aasaasiga ah</label>
-        <input type="number" id="lotSize" value="{{ lot_size }}" step="0.01" min="0.01">
-      </div>
-      <div class="form-group">
-        <label for="strategy">Beddel Istaraatiijiyadda</label>
-        <select id="strategy">
-          {% for strat in strategies %}
-          <option value="{{ strat.value }}" {{ 'selected' if strat.value == current_strategy else '' }}>{{ strat.name }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <button class="save-btn" onclick="saveSettings()">💾 Keydi Dejinta</button>
-    </div>
-  </main>
-
-  <script>
-    // ========== GLOBAL STATE ==========
-    let isLiveData = false;
-
-    // ========== LIVE DATA UPDATES ==========
-    function updateDashboard(data) {
-      // Check if this is real data (balance > 0)
-      if (parseFloat(data.balance) > 0 && !isLiveData) {
-        isLiveData = true;
-        document.getElementById('connectionStatus').textContent = 'LIVE';
-        document.getElementById('connectionStatus').className = 'status-badge status-live';
-      }
-
-      // Update summary cards
-      document.getElementById('balance').textContent = '$' + parseFloat(data.balance).toLocaleString('en-US', {minimumFractionDigits: 2});
-      document.getElementById('equity').textContent = '$' + parseFloat(data.equity).toLocaleString('en-US', {minimumFractionDigits: 2});
-      const profitVal = parseFloat(data.profit);
-      const profitEl = document.getElementById('profit');
-      profitEl.textContent = (profitVal >= 0 ? '+' : '-') + '$' + Math.abs(profitVal).toLocaleString('en-US', {minimumFractionDigits: 2});
-      profitEl.className = 'value ' + (profitVal > 0 ? 'positive' : profitVal < 0 ? 'negative' : 'neutral');
-      document.getElementById('winRate').textContent = parseFloat(data.win_rate).toFixed(1) + '%';
-      document.getElementById('drawdown').textContent = parseFloat(data.drawdown).toFixed(1) + '%';
-      document.getElementById('openTradesCount').textContent = parseInt(data.open_trades_count);
-      document.getElementById('spread').textContent = data.spread !== null && data.spread !== '' ? data.spread : '-';
-
-      // Update time
-      document.getElementById('updateTime').textContent = 'Cusboonaysiin: ' + data.update_time;
-
-      // Open trades table
-      const openTbody = document.getElementById('openTradesTable');
-      openTbody.innerHTML = '';
-      if (data.open_trades && data.open_trades.length > 0) {
-        data.open_trades.forEach(trade => {
-          const row = document.createElement('tr');
-          row.className = 'open-trade';
-          const profit = parseFloat(trade.profit);
-          row.innerHTML = `<td><strong>${trade.symbol}</strong></td>
-                           <td><span style="color: ${trade.type === 'Buy' ? '#10b981' : '#ef4444'}">${trade.type}</span></td>
-                           <td>${parseFloat(trade.lot).toFixed(2)}</td>
-                           <td>${parseFloat(trade.open_price).toFixed(5)}</td>
-                           <td>${parseFloat(trade.tp).toFixed(5)}</td>
-                           <td>${parseFloat(trade.sl).toFixed(5)}</td>
-                           <td class="${profit >= 0 ? 'profit' : 'loss'}">${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}</td>
-                           <td>${parseFloat(trade.swap).toFixed(2)}</td>`;
-          openTbody.appendChild(row);
-        });
-        document.getElementById('openTradesCountLabel').textContent = data.open_trades.length + ' furan';
-      } else {
-        openTbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color:#64748b;">Ma jiraan ganacsiyo furan</td></tr>';
-        document.getElementById('openTradesCountLabel').textContent = '0 furan';
-      }
-
-      // Closed loss trades table
-      const lossTbody = document.getElementById('closedLossTradesTable');
-      lossTbody.innerHTML = '';
-      if (data.closed_loss_trades && data.closed_loss_trades.length > 0) {
-        data.closed_loss_trades.forEach(trade => {
-          const row = document.createElement('tr');
-          const loss = Math.abs(parseFloat(trade.loss));
-          row.innerHTML = `<td><strong>${trade.symbol}</strong></td>
-                           <td><span style="color: ${trade.type === 'Buy' ? '#10b981' : '#ef4444'}">${trade.type}</span></td>
-                           <td>${parseFloat(trade.lot).toFixed(2)}</td>
-                           <td>${trade.close_time}</td>
-                           <td>${parseFloat(trade.open_price).toFixed(5)}</td>
-                           <td>${parseFloat(trade.close_price).toFixed(5)}</td>
-                           <td class="loss">-$${loss.toFixed(2)}</td>`;
-          lossTbody.appendChild(row);
-        });
-        document.getElementById('closedLossCountLabel').textContent = 'ugu dambeeyay ' + data.closed_loss_trades.length;
-      } else {
-        lossTbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:#64748b;">Ma jiraan ganacsiyo khasaare ah</td></tr>';
-        document.getElementById('closedLossCountLabel').textContent = 'ugu dambeeyay 0';
-      }
-
-      // Symbol results
-      const symbolContainer = document.getElementById('symbolResultsContainer');
-      symbolContainer.innerHTML = '';
-      if (data.symbol_results && data.symbol_results.length > 0) {
-        data.symbol_results.forEach(sym => {
-          const card = document.createElement('div');
-          card.className = 'symbol-card';
-          const pnl = parseFloat(sym.pnl);
-          card.innerHTML = `<div class="pair">${sym.pair}</div>
-                            <div class="stat">Ganacsiyo: ${sym.trades} | Guul: ${sym.wins}</div>
-                            <div class="pnl ${pnl > 0 ? 'positive' : pnl < 0 ? 'loss' : 'neutral'}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</div>`;
-          symbolContainer.appendChild(card);
-        });
-        document.getElementById('symbolCount').textContent = 'kuwa ugu muhiimsan (' + data.symbol_results.length + ')';
-      } else if (isLiveData) {
-        symbolContainer.innerHTML = '<div class="symbol-card"><div class="pair">--</div><div class="stat">Ma jiraan wax natiijo ah</div><div class="pnl neutral">$0.00</div></div>';
-        document.getElementById('symbolCount').textContent = 'kuwa ugu muhiimsan';
-      }
-      // else keep the default "Sugaya xog MT4..."
-    }
-
-    async function fetchLiveData() {
-      try {
-        const response = await fetch('/live_data');
-        if (!response.ok) throw new Error('Server error');
-        const data = await response.json();
-        updateDashboard(data);
-        document.getElementById('connectionStatus').textContent = isLiveData ? 'LIVE' : 'SUGAYA';
-        document.getElementById('connectionStatus').className = 'status-badge ' + (isLiveData ? 'status-live' : 'status-waiting');
-      } catch (error) {
-        console.error('Khalad soo dejinta xogta:', error);
-        document.getElementById('connectionStatus').textContent = 'KHALAD';
-        document.getElementById('connectionStatus').className = 'status-badge';
-        document.getElementById('connectionStatus').style.color = '#ef4444';
-        document.getElementById('connectionStatus').style.background = 'rgba(239, 68, 68, 0.2)';
-      }
-    }
-
-    // First load and then every 5 seconds
-    fetchLiveData();
-    setInterval(fetchLiveData, 5000);
-
-    // ========== SAVE SETTINGS ==========
-    function saveSettings() {
-      const risk = document.getElementById('riskPercent').value;
-      const lot = document.getElementById('lotSize').value;
-      const strategy = document.getElementById('strategy').value;
-      fetch('/save_settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ risk_percent: risk, lot_size: lot, strategy: strategy })
-      })
-      .then(response => response.json())
-      .then(data => alert('✅ Dejinta waa la keydiyay!'))
-      .catch(error => alert('❌ Khalad ayaa dhacay.'));
-    }
-
-    // Update local clock for smooth time display
-    function updateLocalClock() {
-      const now = new Date();
-      const timeStr = now.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit', second:'2-digit', hour12: false });
-      // Only update local time if server hasn't provided real data yet
-      if (!isLiveData) {
-        document.getElementById('updateTime').textContent = 'Cusboonaysiin: ' + timeStr;
-      }
-    }
-    setInterval(updateLocalClock, 1000);
-  </script>
+    <div class="section-title">📋 GANACSIYADA FURAN</div>
+    <table><thead><tr><th>Nooca</th><th>Lammaane</th><th>Lot</th><th>Qiimaha</th><th>SL</th><th>TP</th><th>Faa'iido</th></tr></thead>
+    <tbody id="tradeBody"><tr><td colspan="7" style="text-align:center;color:#888">Ma jiraan ganacsiyo furan</td></tr></tbody></table>
+    <div class="section-title">🔔 CALAAMADAHA (Signals)</div>
+    <table><thead><tr><th>Lammaane</th><th>Calaamad</th></tr></thead>
+    <tbody id="signalBody"><tr><td colspan="2" style="text-align:center;color:#888">Ma jiraan calaamado</td></tr></tbody></table>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.min.js"></script>
+<script>
+    const socket = io();
+    socket.on('data_update', (data) => {
+        document.getElementById('balance').textContent = '$' + parseFloat(data.balance || 0).toFixed(2);
+        document.getElementById('equity').textContent = '$' + parseFloat(data.equity || 0).toFixed(2);
+        let profit = parseFloat(data.profit || 0);
+        let profitEl = document.getElementById('profit');
+        profitEl.textContent = (profit >= 0 ? '+$' : '-$') + Math.abs(profit).toFixed(2);
+        profitEl.className = 'value ' + (profit >= 0 ? 'positive' : 'negative');
+        document.getElementById('winrate').textContent = parseFloat(data.winrate || 0).toFixed(1) + '%';
+        document.getElementById('drawdown').textContent = parseFloat(data.drawdown || 0).toFixed(1) + '%';
+        document.getElementById('strategy').textContent = data.strategy || '---';
+        let tradeHTML = '';
+        if (data.trades && data.trades.length > 0) {
+            data.trades.forEach(t => {
+                let pc = parseFloat(t.profit) >= 0 ? 'color:#00ff88' : 'color:#ff4444';
+                tradeHTML += `<tr><td style="color:${t.type=='BUY'?'#00ff88':'#ff4444'}">${t.type}</td><td>${t.symbol}</td><td>${t.lot}</td><td>${t.openprice}</td><td style="color:#ff4444">${t.sl}</td><td style="color:#00ff88">${t.tp}</td><td style="${pc}">$${parseFloat(t.profit).toFixed(2)}</td></tr>`;
+            });
+        } else {
+            tradeHTML = '<tr><td colspan="7" style="text-align:center;color:#888">Ma jiraan ganacsiyo furan</td></tr>';
+        }
+        document.getElementById('tradeBody').innerHTML = tradeHTML;
+        let signalHTML = '';
+        if (data.signals && data.signals.length > 0) {
+            data.signals.forEach(s => {
+                let cls = s.signal == 'BUY' ? 'signal-buy' : (s.signal == 'SELL' ? 'signal-sell' : 'signal-wait');
+                signalHTML += `<tr><td>${s.symbol}</td><td><span class="${cls}">${s.signal}</span></td></tr>`;
+            });
+        } else {
+            signalHTML = '<tr><td colspan="2" style="text-align:center;color:#888">Ma jiraan calaamado</td></tr>';
+        }
+        document.getElementById('signalBody').innerHTML = signalHTML;
+        let now = new Date();
+        document.getElementById('lastUpdate').textContent = now.toLocaleTimeString('so-SO');
+    });
+</script>
 </body>
 </html>
