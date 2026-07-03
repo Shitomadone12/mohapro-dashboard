@@ -1,65 +1,24 @@
 from flask import Flask, render_template, request, jsonify
 import json
+import os
 
 app = Flask(__name__)
 
-# Tani waa xogta tusaalaha ah - beddel tan oo akhri xogta dhabta ah
-def get_mt4_data():
-    # Halkan waxaad ka akhri kartaa faylka JSON, database, ama MT4 API
-    # Tusaale: akhri faylka 'mt4_data.json'
-    # with open('mt4_data.json') as f:
-    #     data = json.load(f)
-    # Haddii aad haysato database: 
-    # data = db.fetch_all()
-    
-    # Qaab-dhismeedka xogta:
-    data = {
-        "balance": 4912.82,
-        "equity": 4914.23,
-        "profit": 0.00,
-        "win_rate": 100.0,
-        "drawdown": 0.0,
-        "open_trades_count": 1,
-        "spread": None,  # ama ''
-        "update_time": "13:40:23",  # ama waqti toos ah oo server-ka laga helo
-        "open_trades": [
-            {
-                "symbol": "EURUSD",
-                "type": "Buy",
-                "lot": 0.01,
-                "open_price": 1.0850,
-                "tp": 1.0870,
-                "sl": 1.0830,
-                "profit": 1.23,
-                "swap": -0.15
-            }
-        ],
-        "closed_loss_trades": [
-            {
-                "symbol": "GBPUSD",
-                "type": "Sell",
-                "lot": 0.02,
-                "close_time": "2026-07-03 09:15",
-                "open_price": 1.2710,
-                "close_price": 1.2732,
-                "loss": -4.40
-            },
-            {
-                "symbol": "USDCAD",
-                "type": "Buy",
-                "lot": 0.01,
-                "close_time": "2026-07-02 14:00",
-                "open_price": 1.3680,
-                "close_price": 1.3645,
-                "loss": -3.50
-            }
-        ],
-        "symbol_results": [
-            {"pair": "EURUSD", "trades": 12, "wins": 7, "pnl": 45.20},
-            {"pair": "GBPUSD", "trades": 5, "wins": 2, "pnl": -12.50},
-            {"pair": "XAUUSD", "trades": 3, "wins": 3, "pnl": 89.00},
-            {"pair": "USDCAD", "trades": 1, "wins": 0, "pnl": -5.30}
-        ],
+DATA_FILE = "mt4_live.json"  # Xogta MT4 ayaa halkan lagu kaydin doonaa
+
+def get_current_data():
+    """Soo celi xogta hadda kaydsan, ama default haddii aan file jirin."""
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, 'r') as f:
+            return json.load(f)
+    # Fallback: xog eber ah oo muujinaysa in aan weli xog la helin
+    return {
+        "balance": 0, "equity": 0, "profit": 0,
+        "win_rate": 0, "drawdown": 0, "open_trades_count": 0,
+        "spread": None, "update_time": "Sugaya xog MT4...",
+        "open_trades": [],
+        "closed_loss_trades": [],
+        "symbol_results": [],
         "risk_percent": 2.0,
         "lot_size": 0.01,
         "current_strategy": "trend",
@@ -70,24 +29,30 @@ def get_mt4_data():
             {"value": "martingale", "name": "Martingale Safe"}
         ]
     }
-    return data
 
 @app.route('/')
 def dashboard():
-    data = get_mt4_data()
+    data = get_current_data()
     return render_template('index.html', **data)
 
-@app.route('/save_settings', methods=['POST'])
-def save_settings():
-    # Halkan waxaad ku keydisaa dejinta (fayl, database, iwm.)
-    settings = request.get_json()
-    risk = settings.get('risk_percent')
-    lot = settings.get('lot_size')
-    strategy = settings.get('strategy')
-    # Tusaale: ku qor faylka JSON
-    with open('settings.json', 'w') as f:
-        json.dump(settings, f)
-    return jsonify({"status": "ok"})
+@app.route('/live_data')
+def live_data():
+    """JSON-ka ay JavaScript-ku isticmaasho si uu u cusboonaysiiyo bogga."""
+    return jsonify(get_current_data())
+
+@app.route('/update_data', methods=['POST'])
+def update_data():
+    """Hel xog cusub MT4 oo ku kaydi fayl."""
+    data = request.get_json(silent=True)
+    if data is None:
+        return jsonify({"error": "JSON required"}), 400
+    try:
+        with open(DATA_FILE, 'w') as f:
+            json.dump(data, f)
+        return jsonify({"status": "ok", "message": "Data updated"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    # Haddii aad Render isticmaalayso, wuxuu isagu port galiyaa, laakiin tan waa local
+    app.run(host='0.0.0.0', port=5000)
