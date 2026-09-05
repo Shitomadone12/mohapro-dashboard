@@ -1,5 +1,2 @@
-flask
-flask-socketio
-gunicorn
-gevent
-gevent-websocket
+flask==3.0.3
+gunicorn==22.0.0
