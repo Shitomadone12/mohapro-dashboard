@@ -1,27 +1,20 @@
 """
-MOHA PRO ULTIMATE - Cloud Dashboard Backend (v2)
-------------------------------------------------
-Isbeddelka v2:
-  - Qaybta SYMBOLS: server-ka ayaa symbol-ada ka soo saara trades-ka bootka
-    diray, sidaas awgeed .mq4 / .mq5 WAX LOOMA BEDDELIN.
-  - Command QUEUE: amarro badan oo isku mar la sugayo (hore mid ayaa kaliya
-    la kaydin jiray, kii labaadna wuu tirtiri jiray kii hore).
-  - /diag: sharraxaad cad oo ah SABABTA dashboard-ku uu DEMO u muujinayo.
-  - VALID_COMMANDS: POC lagu daray (badhanka POC hore 400 ayuu soo celin jiray)
-    iyo SYMBOL_ON / SYMBOL_OFF.
-  - HAL FAYL: dashboard-ka wuxuu ku dhex jiraa faylkan (EMBEDDED_HTML). Haddii
-    aad dhigto dashboard.html isla galka, kaas ayaa mudnaan leh — haddii kale
-    nuqulka gudaha ayaa la isticmaalaa. Marnaba ma jabi karo.
+MOHA PRO - Cloud Dashboard Backend (v3, multi-bot)
+--------------------------------------------------
+Isbeddelka v3:
+  - LABA BOT AMA KA BADAN: bot kastaa wuxuu diraa `"bot":"<magac>"`. Xogtoodu
+    gebi ahaanba way kala go'an tahay - state, amarro, symbols.
+  - Dashboard-ku wuxuu leeyahay bot switcher: "Dhammaan" ama mid gaar ah.
+  - Amarku wuxuu u socdaa BOOTKA la doortay oo keliya.
 
 Endpoints:
-  POST /update           - bootka MT4/MT5 -> xogta
-  GET  /state            - dashboard <- xogta
-  GET  /symbols          - dashboard <- liiska symbol-ada
-  GET  /api/commands     - bootka <- amarka soo socda
-  POST /admin/command    - dashboard -> dir amar
-  GET  /signals          - Twelve Data signals (ikhtiyaari)
-  GET  /diag             - caafimaadka xiriirka (debug)
-  GET  /health           - health check
+  POST /update                        - bootka -> xogta   (body: token, bot, ...)
+  GET  /state?token=&bot=             - dashboard <- xogta bot gaar ah
+  GET  /state?token=                  - dashboard <- liiska botyada oo dhan
+  GET  /api/commands?token=&bot=      - bootka <- amarka soo socda
+  POST /admin/command                 - dashboard -> dir amar (token, bot, command)
+  GET  /diag                          - sababta DEMO
+  GET  /signals, /health
 """
 import os
 import time
@@ -36,12 +29,15 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DASHBOARD_FILE = os.path.join(BASE_DIR, "dashboard.html")
 
 # ---------------- CONFIG ----------------
-# MUHIIM: AUTH_TOKEN waa in uu SAX AHAAN la mid yahay Cloud_Auth_Token ee EA-ga.
+# MUHIIM: AUTH_TOKEN waa in uu SAX AHAAN la mid yahay InpCloudToken ee EA-yada.
+# LABADA BOT waxay isticmaalaan ISKU TOKEN - waxa kala saara `bot` magaca.
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "MohaPro_Live_2026_MySecret")
 MASTER_TOKEN = AUTH_TOKEN
 
-MAX_HISTORY = 120        # immisa qiimo equity ah oo la kaydiyo
-STALE_SECONDS = 120      # ka dib intaas xogtu waa duugoobtay -> DEMO
+DEFAULT_BOT = "default"
+MAX_HISTORY = 120
+STALE_SECONDS = 120
+MAX_QUEUE = 20
 
 # ---------------- SIGNALS (ikhtiyaari) ----------------
 TWELVEDATA_KEY = os.environ.get("TWELVEDATA_KEY", "")
@@ -50,25 +46,36 @@ SIGNAL_INTERVAL = os.environ.get("SIGNAL_INTERVAL", "5min")
 SIGNAL_CACHE_SEC = 60
 _signal_cache = {}
 
+
 # ---------------- STATE ----------------
 def blank_state():
     return {
         "balance": None, "equity": None, "profit": None,
         "winrate": None, "drawdown": None, "opentrades": None,
         "symbol": None, "trades": None, "journal": None,
+        "account": None, "broker": None, "trading": None,
         "updated": None, "equity_history": [],
     }
 
-STATES = {}         # token -> state
-COMMANDS = {}       # token -> [amarro sugaya]
-SYMBOL_FLAGS = {}   # token -> {"XAUUSD": True, "US30": False, ...}
-SEEN = {}           # token -> {"first": ts, "count": n, "ip": str}
 
-MAX_QUEUE = 20
+# token -> bot -> state
+STATES = {}
+# token -> bot -> [amarro]
+COMMANDS = {}
+# token -> bot -> {"XAUUSD": True}
+SYMBOL_FLAGS = {}
+# token -> bot -> {"count": n, "ip": str}
+SEEN = {}
+
+
+def clean_bot(name):
+    n = (name or "").strip()
+    if not n:
+        return DEFAULT_BOT
+    return n[:40]
 
 
 def get_token(req):
-    """Token ka soo qaado: Bearer header, JSON body {token}, ama ?token="""
     auth = req.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
         t = auth[7:].strip()
@@ -80,6 +87,11 @@ def get_token(req):
     if req.args.get("token"):
         return req.args.get("token")
     return None
+
+
+def get_bot(req):
+    data = req.get_json(silent=True) or {}
+    return clean_bot(data.get("bot") or req.args.get("bot"))
 
 
 @app.after_request
@@ -99,11 +111,12 @@ def update():
     if not tok:
         return jsonify({"error": "no token"}), 401
 
+    bot = get_bot(request)
     data = request.get_json(silent=True) or {}
-    st = STATES.setdefault(tok, blank_state())
+    st = STATES.setdefault(tok, {}).setdefault(bot, blank_state())
 
-    for k in ["balance", "equity", "profit", "winrate", "drawdown",
-              "opentrades", "symbol", "trades", "journal"]:
+    for k in ["balance", "equity", "profit", "winrate", "drawdown", "opentrades",
+              "symbol", "trades", "journal", "account", "broker", "trading"]:
         if k in data:
             st[k] = data[k]
 
@@ -117,16 +130,16 @@ def update():
         except (TypeError, ValueError):
             pass
 
-    seen = SEEN.setdefault(tok, {"first": int(time.time()), "count": 0, "ip": ""})
+    seen = SEEN.setdefault(tok, {}).setdefault(bot, {"count": 0, "ip": ""})
     seen["count"] += 1
     seen["ip"] = request.headers.get("X-Forwarded-For", request.remote_addr or "")
 
-    return jsonify({"ok": True, "queued_commands": len(COMMANDS.get(tok, []))})
+    return jsonify({"ok": True, "bot": bot,
+                    "queued_commands": len(COMMANDS.get(tok, {}).get(bot, []))})
 
 
 # ============ 2) Dashboard <- Server ============
 def live_info(st):
-    """Sheeg haddii xogtu nool tahay iyo SABABTA haddii ay nolol la'dahay."""
     if not st:
         return False, "no_data", None
     updated = st.get("updated") or 0
@@ -138,40 +151,91 @@ def live_info(st):
     return True, "live", age
 
 
+def bot_summary(tok, bot, st):
+    live, reason, age = live_info(st)
+    return {
+        "bot": bot, "live": live, "reason": reason, "age": age,
+        "balance": st.get("balance"), "equity": st.get("equity"),
+        "profit": st.get("profit"), "opentrades": st.get("opentrades"),
+        "symbol": st.get("symbol"), "winrate": st.get("winrate"),
+        "drawdown": st.get("drawdown"), "account": st.get("account"),
+        "broker": st.get("broker"), "trading": st.get("trading"),
+        "symbols": build_symbols(tok, bot, st),
+        "pending": len(COMMANDS.get(tok, {}).get(bot, [])),
+    }
+
+
 @app.route("/state", methods=["GET"])
 def get_state():
     tok = request.args.get("token") or MASTER_TOKEN
-    st = STATES.get(tok)
-    if not st:
+    want = request.args.get("bot")
+    bots = STATES.get(tok, {})
+
+    # --- liiska botyada (had iyo jeer la diraa)
+    summaries = [bot_summary(tok, b, s) for b, s in sorted(bots.items())]
+
+    if not bots:
         out = blank_state()
-        out["live"] = False
-        out["reason"] = "no_data"
-        out["age"] = None
-        out["symbols"] = []
+        out.update({"live": False, "reason": "no_data", "age": None,
+                    "symbols": [], "bots": [], "bot": None})
         return jsonify(out)
 
-    out = dict(st)
-    live, reason, age = live_info(st)
-    out["live"] = live
-    out["reason"] = reason
-    out["age"] = age
-    out["symbols"] = build_symbols(tok, st)
+    # --- bot gaar ah
+    if want:
+        bot = clean_bot(want)
+        st = bots.get(bot)
+        if not st:
+            out = blank_state()
+            out.update({"live": False, "reason": "no_data", "age": None,
+                        "symbols": [], "bots": summaries, "bot": bot})
+            return jsonify(out)
+        out = dict(st)
+        live, reason, age = live_info(st)
+        out.update({"live": live, "reason": reason, "age": age, "bot": bot,
+                    "symbols": build_symbols(tok, bot, st), "bots": summaries})
+        return jsonify(out)
+
+    # --- "Dhammaan": ma isku darno balance-ka (waxay noqon kartaa isku akoon
+    #     ama laba akoon oo kala duwan). Waxaa la diraa liiska botyada,
+    #     iyo kaliya waxa si sax ah loo isku daro: profit + trades furan.
+    out = blank_state()
+    live_any = any(b["live"] for b in summaries)
+    prof = sum((b["profit"] or 0) for b in summaries if b["live"])
+    opens = sum((b["opentrades"] or 0) for b in summaries if b["live"])
+    syms = []
+    for b in summaries:
+        for s in b["symbols"]:
+            row = dict(s)
+            row["bot"] = b["bot"]
+            syms.append(row)
+    trades = []
+    for b, s in sorted(bots.items()):
+        for t in (s.get("trades") or []):
+            row = dict(t)
+            row["bot"] = b
+            trades.append(row)
+
+    out.update({
+        "live": live_any,
+        "reason": "live" if live_any else (summaries[0]["reason"] if summaries else "no_data"),
+        "age": min([b["age"] for b in summaries if b["age"] is not None], default=None),
+        "bot": None, "bots": summaries, "symbols": syms,
+        "profit": round(prof, 2), "opentrades": opens,
+        "trades": trades, "aggregate": True,
+    })
     return jsonify(out)
 
 
 # ============ 3) SYMBOLS ============
-def build_symbols(tok, st):
-    """
-    Symbol-ada waxaa laga soo saaraa trades-ka bootku diray.
-    EA-ga wax looma beddelin: `trades` array-ga horeba wuu leeyahay `sym`.
-    Haddii EA-gu si toos ah u diro `symbols`, taas ayaa mudnaan leh.
-    """
+def build_symbols(tok, bot, st):
+    if not st:
+        return []
     explicit = st.get("symbols")
     if isinstance(explicit, list) and explicit:
         return explicit
 
     trades = st.get("trades") or []
-    flags = SYMBOL_FLAGS.setdefault(tok, {})
+    flags = SYMBOL_FLAGS.setdefault(tok, {}).setdefault(bot, {})
     agg = {}
 
     for t in trades:
@@ -197,7 +261,6 @@ def build_symbols(tok, st):
         if strat and strat not in row["strategies"]:
             row["strategies"].append(strat)
 
-    # symbol-ada la damiyay oo aan trade furan lahayn wali ha muuqdaan
     for sym, on in flags.items():
         if sym not in agg:
             agg[sym] = {"symbol": sym, "open": 0, "closed": 0,
@@ -215,41 +278,38 @@ def build_symbols(tok, st):
 @app.route("/symbols", methods=["GET"])
 def symbols_endpoint():
     tok = request.args.get("token") or MASTER_TOKEN
-    st = STATES.get(tok)
-    return jsonify({
-        "symbols": build_symbols(tok, st) if st else [],
-        "flags": SYMBOL_FLAGS.get(tok, {}),
-    })
+    bot = clean_bot(request.args.get("bot"))
+    st = STATES.get(tok, {}).get(bot)
+    return jsonify({"bot": bot,
+                    "symbols": build_symbols(tok, bot, st),
+                    "flags": SYMBOL_FLAGS.get(tok, {}).get(bot, {})})
 
 
 # ============ 4) Bootka <- Server: amarrada ============
-# Bootku wuxuu raadiyaa `"token":"<token>"` iyo `"command":"START"` — meel bannaan
-# la'aan. Sidaas darteed JSON compact ah ayaa loo diraa.
 @app.route("/api/commands", methods=["GET"])
 def commands():
     tok = get_token(request)
     if not tok:
         return jsonify({"error": "no token"}), 401
-    q = COMMANDS.get(tok) or []
+    bot = get_bot(request)
+    q = COMMANDS.get(tok, {}).get(bot) or []
     cmd = q.pop(0) if q else ""
-    payload = json.dumps({"token": tok, "command": cmd}, separators=(",", ":"))
+    payload = json.dumps({"token": tok, "bot": bot, "command": cmd},
+                         separators=(",", ":"))
     return Response(payload, mimetype="application/json")
 
 
-# ============ 5) Admin -> Server: dir amar ============
+# ============ 5) Admin -> Server ============
 SIMPLE_COMMANDS = {"START", "STOP", "PAUSE", "RESUME", "CLOSE_ALL", "CLOSE_PROFIT"}
 STRATEGIES = {"SR", "BB", "EMA", "SMC", "VSA", "RSI", "POC", "SCALP", "GRID"}
 
 
 def validate(cmd):
-    """Soo celi (ok, fariin). Amarrada symbol-ka ee cusub halkan ayey ku jiraan."""
     if cmd in SIMPLE_COMMANDS:
         return True, ""
     if cmd.startswith("STRATEGY:"):
         s = cmd.split(":", 1)[1]
-        if s in STRATEGIES:
-            return True, ""
-        return False, "strategy aan la aqoon: " + s
+        return (True, "") if s in STRATEGIES else (False, "strategy aan la aqoon: " + s)
     if cmd.startswith("SYMBOL_ON:") or cmd.startswith("SYMBOL_OFF:"):
         s = cmd.split(":", 1)[1]
         if s and s.replace(".", "").replace("_", "").isalnum() and len(s) <= 16:
@@ -276,63 +336,73 @@ def set_command():
                        + ["SYMBOL_ON:<SYM>", "SYMBOL_OFF:<SYM>"],
         }), 400
 
-    # xaaladda symbol-ka isla markiiba badal si dashboard-ku uga jawaabo dhaqso
-    if cmd.startswith("SYMBOL_ON:"):
-        SYMBOL_FLAGS.setdefault(tok, {})[cmd.split(":", 1)[1]] = True
-    elif cmd.startswith("SYMBOL_OFF:"):
-        SYMBOL_FLAGS.setdefault(tok, {})[cmd.split(":", 1)[1]] = False
+    # bot: mid gaar ah, ama "*" = dhammaan botyada la yaqaan
+    raw = (data.get("bot") or "").strip()
+    if raw == "*":
+        targets = sorted(STATES.get(tok, {}).keys())
+        if not targets:
+            return jsonify({"error": "bot lama helin"}), 404
+    else:
+        targets = [clean_bot(raw)]
 
-    q = COMMANDS.setdefault(tok, [])
-    q.append(cmd)
-    if len(q) > MAX_QUEUE:
-        del q[0:len(q) - MAX_QUEUE]
+    sent = []
+    for bot in targets:
+        if cmd.startswith("SYMBOL_ON:"):
+            SYMBOL_FLAGS.setdefault(tok, {}).setdefault(bot, {})[cmd.split(":", 1)[1]] = True
+        elif cmd.startswith("SYMBOL_OFF:"):
+            SYMBOL_FLAGS.setdefault(tok, {}).setdefault(bot, {})[cmd.split(":", 1)[1]] = False
 
-    return jsonify({"ok": True, "queued": cmd, "pending": len(q)})
+        q = COMMANDS.setdefault(tok, {}).setdefault(bot, [])
+        q.append(cmd)
+        if len(q) > MAX_QUEUE:
+            del q[0:len(q) - MAX_QUEUE]
+        sent.append(bot)
+
+    return jsonify({"ok": True, "queued": cmd, "bots": sent})
 
 
-# ============ 6) DIAG — sababta DEMO ============
+# ============ 6) DIAG ============
 @app.route("/diag", methods=["GET"])
 def diag():
-    """
-    Fur: https://<app>.onrender.com/diag
-    Wuxuu kuu sheegayaa MEESHA xiriirku ka jabay.
-    """
-    now = int(time.time())
-    tenants = []
-    for tok, st in STATES.items():
-        live, reason, age = live_info(st)
-        seen = SEEN.get(tok, {})
-        tenants.append({
-            "token_preview": tok[:6] + "..." + tok[-4:] if len(tok) > 12 else tok,
-            "token_matches_env": tok == MASTER_TOKEN,
-            "live": live, "reason": reason, "age_seconds": age,
-            "updates_received": seen.get("count", 0),
-            "last_ip": seen.get("ip", ""),
-            "symbols_found": len(build_symbols(tok, st)),
-            "pending_commands": len(COMMANDS.get(tok, [])),
-        })
+    rows = []
+    for tok, bots in STATES.items():
+        for bot, st in sorted(bots.items()):
+            live, reason, age = live_info(st)
+            seen = SEEN.get(tok, {}).get(bot, {})
+            rows.append({
+                "bot": bot,
+                "token_preview": (tok[:6] + "..." + tok[-4:]) if len(tok) > 12 else tok,
+                "token_matches_env": tok == MASTER_TOKEN,
+                "live": live, "reason": reason, "age_seconds": age,
+                "updates_received": seen.get("count", 0),
+                "last_ip": seen.get("ip", ""),
+                "symbols_found": len(build_symbols(tok, bot, st)),
+                "pending_commands": len(COMMANDS.get(tok, {}).get(bot, [])),
+            })
 
-    if not tenants:
+    default_named = [r for r in rows if r["bot"] == DEFAULT_BOT]
+
+    if not rows:
         hint = ("Boot NA soo gaarin. Hubi: (1) URL-ka /update ee EA-ga, "
                 "(2) URL-ka ku jira liiska 'Allow WebRequest' ee MT4/MT5, "
                 "(3) in EA-gu shaqeynayo oo AutoTrading la furay.")
-    elif not any(t["token_matches_env"] for t in tenants):
-        hint = ("Boot wuu soo gaaray LAAKIIN token-kiisu kama mid aha AUTH_TOKEN "
-                "ee Render. Taasi waa sababta DEMO. Xal: Cloud_Auth_Token ee EA-ga "
-                "ka dhig sida AUTH_TOKEN, AMA dashboard-ka ku fur ?token=<token-ka EA-ga>.")
-    elif not any(t["live"] for t in tenants):
-        hint = ("Xog hore ayaa timid laakiin way duugowday (>%ds). Hubi in EA-gu "
-                "wali shaqeynayo, ama in Render free tier uu hurday." % STALE_SECONDS)
+    elif not any(r["token_matches_env"] for r in rows):
+        hint = ("Boot wuu soo gaaray laakiin token-kiisu kama mid aha AUTH_TOKEN "
+                "ee Render. Taasi waa sababta DEMO.")
+    elif not any(r["live"] for r in rows):
+        hint = ("Xog hore ayaa timid laakiin way duugowday (>%ds)." % STALE_SECONDS)
+    elif len(rows) == 1 and default_named:
+        hint = ("Hal bot ayaa soo gaaraya, magacna ma laha. Geli InpCloudBotName "
+                "EA kasta si ay dashboard-ka ugu kala muuqdaan.")
     else:
-        hint = "Wax walba way shaqeynayaan."
+        hint = "Wax walba way shaqeynayaan. Botyada la helay: %d" % len(rows)
 
     return jsonify({
-        "server_time": now,
+        "server_time": int(time.time()),
         "env_auth_token_preview": (MASTER_TOKEN[:6] + "..." + MASTER_TOKEN[-4:]
                                    if len(MASTER_TOKEN) > 12 else MASTER_TOKEN),
-        "env_auth_token_is_default": MASTER_TOKEN == "MohaPro_Live_2026_MySecret",
         "stale_after_seconds": STALE_SECONDS,
-        "tenants": tenants,
+        "bots": rows,
         "diagnosis": hint,
     })
 
@@ -361,10 +431,8 @@ def _rsi(values, period=14):
     ag, al = gains / period, losses / period
     for i in range(period + 1, len(values)):
         d = values[i] - values[i - 1]
-        g = d if d > 0 else 0.0
-        l = -d if d < 0 else 0.0
-        ag = (ag * (period - 1) + g) / period
-        al = (al * (period - 1) + l) / period
+        ag = (ag * (period - 1) + (d if d > 0 else 0.0)) / period
+        al = (al * (period - 1) + (-d if d < 0 else 0.0)) / period
     if al == 0:
         return 100.0
     return 100.0 - 100.0 / (1.0 + ag / al)
@@ -373,12 +441,12 @@ def _rsi(values, period=14):
 def _fetch_closes(symbol, interval, size=60):
     if not TWELVEDATA_KEY:
         return None, None, "no_key"
-    q = urllib.parse.urlencode({
-        "symbol": symbol, "interval": interval,
-        "outputsize": size, "apikey": TWELVEDATA_KEY, "format": "JSON",
-    })
+    q = urllib.parse.urlencode({"symbol": symbol, "interval": interval,
+                                "outputsize": size, "apikey": TWELVEDATA_KEY,
+                                "format": "JSON"})
     try:
-        with urllib.request.urlopen("https://api.twelvedata.com/time_series?" + q, timeout=8) as r:
+        with urllib.request.urlopen("https://api.twelvedata.com/time_series?" + q,
+                                    timeout=8) as r:
             data = json.loads(r.read().decode())
     except Exception as e:
         return None, None, "fetch_error: " + str(e)
@@ -409,8 +477,7 @@ def _compute_signal(closes):
         score += 1; reasons.append("Momentum up")
     elif mom < 0:
         score -= 1; reasons.append("Momentum down")
-    direction = "UP" if score > 0.5 else ("DOWN" if score < -0.5 else "NEUTRAL")
-    return {"direction": direction,
+    return {"direction": "UP" if score > 0.5 else ("DOWN" if score < -0.5 else "NEUTRAL"),
             "confidence": int(min(abs(score) / 3.0 * 100, 99)),
             "rsi": round(r, 1) if r is not None else None,
             "reasons": reasons}
@@ -420,7 +487,7 @@ def _compute_signal(closes):
 def signals():
     if not TWELVEDATA_KEY:
         return jsonify({"error": "no_api_key",
-                        "hint": "Geli TWELVEDATA_KEY env var (bilaash: twelvedata.com)"}), 200
+                        "hint": "Geli TWELVEDATA_KEY env var"}), 200
     out, now = [], time.time()
     for sym in SIGNAL_PAIRS:
         cached = _signal_cache.get(sym)
@@ -501,6 +568,23 @@ button{font-family:inherit;cursor:pointer}
 .banner.live{background:rgba(34,180,85,.13);border:1px solid rgba(34,180,85,.45);color:var(--good-ink)}
 .banner a{color:inherit}
 
+/* ===== BOT SWITCHER ===== */
+.botsw{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;margin-bottom:15px;-webkit-overflow-scrolling:touch}
+.botsw button{flex-shrink:0;display:flex;align-items:center;gap:7px;background:var(--surface);border:1px solid var(--line);color:var(--ink-2);border-radius:999px;padding:9px 15px;font-size:13px;font-weight:600;white-space:nowrap}
+.botsw button.on{background:var(--orange);border-color:var(--orange);color:#0a0a0f}
+.botsw button .bdot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex-shrink:0}
+.botsw button .bdot.live{background:var(--good-ink)}
+.botsw button.on .bdot{background:rgba(0,0,0,.45)}
+.botsw button.on .bdot.live{background:#0a3d1c}
+.botcard{display:flex;align-items:center;gap:12px;padding:13px 2px;border-bottom:1px solid var(--line);cursor:pointer}
+.botcard:last-child{border-bottom:none}
+.botcard .bn{font-size:15px;font-weight:700;display:flex;align-items:center;gap:7px}
+.botcard .bm{font-size:12px;color:var(--muted);margin-top:3px;font-variant-numeric:tabular-nums}
+.botcard .bp{margin-left:auto;text-align:right;flex-shrink:0}
+.botcard .bp .v{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
+.botcard .bp .l{font-size:11px;color:var(--muted);margin-top:2px}
+.hide{display:none!important}
+
 /* ===== TABS ===== */
 .tabs{display:flex;background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:3px;gap:3px;margin-bottom:16px}
 .tabs div{flex:1;text-align:center;font-size:13px;font-weight:600;color:var(--ink-2);padding:9px 0;border-radius:8px;cursor:pointer;transition:.15s}
@@ -520,6 +604,47 @@ button{font-family:inherit;cursor:pointer}
 .kpi .val{font-size:19px;font-weight:700;margin-top:6px;letter-spacing:-.4px}
 .up{color:var(--good-ink)} .down{color:var(--bad-ink)} .or{color:var(--orange)}
 .kpi.accent{background:linear-gradient(135deg,rgba(240,135,42,.12),var(--surface));border-color:rgba(240,135,42,.3)}
+
+/* ===== BOT SWITCHER ===== */
+function renderBots(list){
+  BOTS=list||[];
+  const sw=$('botsw');
+  if(!BOTS.length){sw.innerHTML='';$('botsBlock').classList.add('hide');$('acctBlock').classList.remove('hide');return;}
+  if(CUR_BOT&&!BOTS.some(b=>b.bot===CUR_BOT))CUR_BOT=null;
+
+  sw.innerHTML='';
+  const mk=(label,val,live)=>{
+    const b=document.createElement('button');
+    b.className=(val===CUR_BOT?'on':'');
+    b.innerHTML='<span class="bdot'+(live?' live':'')+'"></span>'+esc(label);
+    b.addEventListener('click',()=>{CUR_BOT=val;renderBots(BOTS);poll();});
+    sw.appendChild(b);
+  };
+  if(BOTS.length>1)mk('Dhammaan',null,BOTS.some(b=>b.live));
+  BOTS.forEach(b=>mk(b.bot,b.bot,b.live));
+
+  const all=!CUR_BOT&&BOTS.length>1;
+  $('botsBlock').classList.toggle('hide',!all);
+  $('acctBlock').classList.toggle('hide',all);
+  $('stratBlock').classList.toggle('hide',all);
+  $('bots-live').textContent=BOTS.filter(b=>b.live).length+' nool';
+
+  if(all){
+    const box=$('botList');box.innerHTML='';
+    BOTS.forEach(b=>{
+      const row=document.createElement('div');row.className='botcard';
+      const p=+b.profit||0;
+      row.innerHTML='<div style="flex:1;min-width:0">'+
+        '<div class="bn"><span class="bdot'+(b.live?' live':'')+'"></span>'+esc(b.bot)+'</div>'+
+        '<div class="bm">'+(b.live?('Balance '+money(b.balance)+' · '+(b.opentrades||0)+' furan'):
+          (b.reason==='stale'?'Duugoobay '+(b.age||0)+'s':'Xog ma jirto'))+'</div></div>'+
+        '<div class="bp"><div class="v '+(p>=0?'up':'down')+'">'+(b.live?((p>=0?'+':'')+money(Math.abs(p))):'—')+'</div>'+
+        '<div class="l">floating</div></div>';
+      row.addEventListener('click',()=>{CUR_BOT=b.bot;renderBots(BOTS);poll();});
+      box.appendChild(row);
+    });
+  }
+}
 
 /* ===== SYMBOLS ===== */
 .symrow{display:flex;align-items:center;gap:12px;padding:13px 2px;border-bottom:1px solid var(--line)}
@@ -622,6 +747,8 @@ button{font-family:inherit;cursor:pointer}
 
   <div class="banner demo" id="dataMode">Xogta lama helin weli</div>
 
+  <div class="botsw" id="botsw"></div>
+
   <div class="tabs" id="tabs">
     <div data-t="overview" class="on">Guud</div>
     <div data-t="symbols">Symbols</div>
@@ -631,7 +758,12 @@ button{font-family:inherit;cursor:pointer}
 
   <!-- ===== OVERVIEW ===== -->
   <section class="pane on" data-p="overview">
-    <div class="block">
+    <div class="card block hide" id="botsBlock">
+      <h2 class="sec-h">Botyada <span class="rt" id="bots-live">0 nool</span></h2>
+      <div id="botList"></div>
+    </div>
+
+    <div class="block" id="acctBlock">
       <h2 class="sec-h">Akoonka <span class="rt" id="symbol">—</span></h2>
       <div class="kpis">
         <div class="card kpi accent"><div class="lbl">Balance</div><div class="val num" id="k_balance">$0.00</div></div>
@@ -643,7 +775,7 @@ button{font-family:inherit;cursor:pointer}
       </div>
     </div>
 
-    <div class="card block">
+    <div class="card block" id="stratBlock">
       <h2 class="sec-h">Xeeladda <span class="rt">guji si aad u beddesho</span></h2>
       <div class="strats" id="strats">
         <button class="strat" data-s="SR">SR</button><button class="strat" data-s="BB">BB</button>
@@ -725,11 +857,30 @@ button{font-family:inherit;cursor:pointer}
 const $=id=>document.getElementById(id);
 const TOKEN=new URLSearchParams(location.search).get('token')||"MohaPro_Live_2026_MySecret";
 const POLL_MS=5000;
+let CUR_BOT=null;      // null = Dhammaan
+let BOTS=[];
 const money=n=>{const v=+n||0;return (v<0?'-$':'$')+Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});};
 
 /* clock */
 function tick(){$('clock').textContent=new Date().toLocaleTimeString('en-GB');}
 setInterval(tick,1000);tick();
+
+/* ===== BOT SWITCHER ===== */
+.botsw{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;margin-bottom:15px;-webkit-overflow-scrolling:touch}
+.botsw button{flex-shrink:0;display:flex;align-items:center;gap:7px;background:var(--surface);border:1px solid var(--line);color:var(--ink-2);border-radius:999px;padding:9px 15px;font-size:13px;font-weight:600;white-space:nowrap}
+.botsw button.on{background:var(--orange);border-color:var(--orange);color:#0a0a0f}
+.botsw button .bdot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex-shrink:0}
+.botsw button .bdot.live{background:var(--good-ink)}
+.botsw button.on .bdot{background:rgba(0,0,0,.45)}
+.botsw button.on .bdot.live{background:#0a3d1c}
+.botcard{display:flex;align-items:center;gap:12px;padding:13px 2px;border-bottom:1px solid var(--line);cursor:pointer}
+.botcard:last-child{border-bottom:none}
+.botcard .bn{font-size:15px;font-weight:700;display:flex;align-items:center;gap:7px}
+.botcard .bm{font-size:12px;color:var(--muted);margin-top:3px;font-variant-numeric:tabular-nums}
+.botcard .bp{margin-left:auto;text-align:right;flex-shrink:0}
+.botcard .bp .v{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
+.botcard .bp .l{font-size:11px;color:var(--muted);margin-top:2px}
+.hide{display:none!important}
 
 /* ===== TABS ===== */
 function showTab(t){
@@ -769,13 +920,58 @@ document.querySelectorAll('.strat').forEach(el=>el.addEventListener('click',()=>
 
 /* ===== COMMANDS ===== */
 async function sendCmd(cmd){
+  if(!CUR_BOT && BOTS.length>1 && (cmd==='CLOSE_ALL'||cmd==='STOP'||cmd==='CLOSE_PROFIT')){
+    if(!confirm(cmd+' waxay u socotaa DHAMMAAN botyada ('+BOTS.length+'). Sii wad?'))return;
+  }
   const note=$('cmdNote');note.style.color='var(--muted)';note.textContent='Diraya '+cmd+'…';
   try{
-    const r=await fetch('/admin/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:TOKEN,command:cmd})});
+    const r=await fetch('/admin/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:TOKEN,bot:(CUR_BOT||'*'),command:cmd})});
     const d=await r.json();
-    if(d.ok){note.style.color='var(--good-ink)';note.textContent=cmd+' waa la diray — bootku ~3s gudahood ayuu qaadanayaa';}
+    if(d.ok){note.style.color='var(--good-ink)';
+      note.textContent=cmd+' → '+(d.bots||[]).join(', ')+' (~3s gudahood)';}
     else{note.style.color='var(--bad-ink)';note.textContent=d.error||'Amarka lama aqbalin';}
   }catch(e){note.style.color='var(--bad-ink)';note.textContent='Server-ka lama gaari karin';}
+}
+
+/* ===== BOT SWITCHER ===== */
+function renderBots(list){
+  BOTS=list||[];
+  const sw=$('botsw');
+  if(!BOTS.length){sw.innerHTML='';$('botsBlock').classList.add('hide');$('acctBlock').classList.remove('hide');return;}
+  if(CUR_BOT&&!BOTS.some(b=>b.bot===CUR_BOT))CUR_BOT=null;
+
+  sw.innerHTML='';
+  const mk=(label,val,live)=>{
+    const b=document.createElement('button');
+    b.className=(val===CUR_BOT?'on':'');
+    b.innerHTML='<span class="bdot'+(live?' live':'')+'"></span>'+esc(label);
+    b.addEventListener('click',()=>{CUR_BOT=val;renderBots(BOTS);poll();});
+    sw.appendChild(b);
+  };
+  if(BOTS.length>1)mk('Dhammaan',null,BOTS.some(b=>b.live));
+  BOTS.forEach(b=>mk(b.bot,b.bot,b.live));
+
+  const all=!CUR_BOT&&BOTS.length>1;
+  $('botsBlock').classList.toggle('hide',!all);
+  $('acctBlock').classList.toggle('hide',all);
+  $('stratBlock').classList.toggle('hide',all);
+  $('bots-live').textContent=BOTS.filter(b=>b.live).length+' nool';
+
+  if(all){
+    const box=$('botList');box.innerHTML='';
+    BOTS.forEach(b=>{
+      const row=document.createElement('div');row.className='botcard';
+      const p=+b.profit||0;
+      row.innerHTML='<div style="flex:1;min-width:0">'+
+        '<div class="bn"><span class="bdot'+(b.live?' live':'')+'"></span>'+esc(b.bot)+'</div>'+
+        '<div class="bm">'+(b.live?('Balance '+money(b.balance)+' · '+(b.opentrades||0)+' furan'):
+          (b.reason==='stale'?'Duugoobay '+(b.age||0)+'s':'Xog ma jirto'))+'</div></div>'+
+        '<div class="bp"><div class="v '+(p>=0?'up':'down')+'">'+(b.live?((p>=0?'+':'')+money(Math.abs(p))):'—')+'</div>'+
+        '<div class="l">floating</div></div>';
+      row.addEventListener('click',()=>{CUR_BOT=b.bot;renderBots(BOTS);poll();});
+      box.appendChild(row);
+    });
+  }
 }
 
 /* ===== SYMBOLS ===== */
@@ -793,14 +989,16 @@ function renderSymbols(list){
       ? s.open+' furan · <b class="'+(pnl>=0?'pl-pos':'pl-neg')+'">'+(pnl>=0?'+':'')+money(Math.abs(pnl))+'</b>'
       : (s.enabled===false?'Damisan':'Bannaan');
     const strat=s.strategies&&s.strategies.length?' · '+s.strategies.join(', '):'';
-    row.innerHTML='<div class="si"><div class="sn">'+esc(s.symbol)+'</div><div class="sm">'+meta+strat+'</div></div>';
+    const who=s.bot?' · '+esc(s.bot):'';
+    row.innerHTML='<div class="si"><div class="sn">'+esc(s.symbol)+'</div><div class="sm">'+meta+strat+who+'</div></div>';
     const sw=document.createElement('button');
     sw.className='sw'+(s.enabled===false?'':' on');
     sw.setAttribute('aria-label',(s.enabled===false?'Fur ':'Dami ')+s.symbol);
     sw.addEventListener('click',()=>{
       const turnOn=!sw.classList.contains('on');
       sw.classList.toggle('on',turnOn);
-      sendCmd((turnOn?'SYMBOL_ON:':'SYMBOL_OFF:')+s.symbol);
+      const keep=CUR_BOT;if(s.bot)CUR_BOT=s.bot;
+      sendCmd((turnOn?'SYMBOL_ON:':'SYMBOL_OFF:')+s.symbol);CUR_BOT=keep;
     });
     row.appendChild(sw);box.appendChild(row);
   });
@@ -878,7 +1076,7 @@ document.querySelectorAll('#jseg div').forEach(el=>el.addEventListener('click',(
 /* ===== STATE ===== */
 const DEMO={balance:10482.55,equity:10531.20,profit:182.55,winrate:76.2,drawdown:3.10,opentrades:2,symbol:"GBPUSD",
   trades:[
-    {sym:"GBPUSD",type:"BUY",strat:"VSA",profit:64.20,st:"OPEN",entry:1.27140,cur:1.27204,sl:1.26950,tp:1.27520,lot:0.20},
+    {bot:"MOHA PRO V56",sym:"GBPUSD",type:"BUY",strat:"VSA",profit:64.20,st:"OPEN",entry:1.27140,cur:1.27204,sl:1.26950,tp:1.27520,lot:0.20},
     {sym:"USDJPY",type:"SELL",strat:"SR",profit:16.93,st:"OPEN",entry:157.320,cur:157.280,sl:157.520,tp:156.920,lot:0.15},
     {sym:"GBPUSD",type:"BUY",strat:"VSA",profit:88.30,st:"CLOSED",entry:1.26980,cur:1.27290,sl:1.26800,tp:1.27340,lot:0.20},
     {sym:"AUDUSD",type:"SELL",strat:"VSA",profit:137.09,st:"CLOSED",entry:0.66420,cur:0.66150,sl:0.66600,tp:0.66060,lot:0.30},
@@ -890,6 +1088,8 @@ const DEMO={balance:10482.55,equity:10531.20,profit:182.55,winrate:76.2,drawdown
     {symbol:"AUDUSD",open:0,open_pnl:0,strategies:["VSA"],enabled:true},
     {symbol:"USDCAD",open:0,open_pnl:0,strategies:["SR"],enabled:false}
   ],
+  bots:[{bot:"MOHA PRO GOLD",live:true,balance:10482.55,equity:10531.20,profit:81.13,opentrades:2,symbols:[]},
+        {bot:"MOHA PRO V56",live:true,balance:6210.00,equity:6288.40,profit:78.40,opentrades:1,symbols:[]}],
   journal:{gainPct:18.4,balance:11842.55,equity:11905.20,today:82.55,week:1842.55,month:1842.55,year:1842.55,
     trades:1078,winRate:76.2,pf:1.62,pips:4820,avgWin:34,avgLoss:-21,best:137,worst:-50,dd:3.1,
     monthly:[320,540,-180,410,730,-90,560,880,210,-210,640,780]}};
@@ -925,6 +1125,7 @@ function applyState(d){
   if(d.symbol){$('symbol').textContent=d.symbol;LAST_SYMBOL=d.symbol;}
   renderTrades(d.trades);
   renderSymbols(d.symbols);
+  if(d.bots)renderBots(d.bots);
   if(d.journal){J_DATA=d.journal;renderJournal(d.journal);}
 }
 
@@ -932,7 +1133,8 @@ function showDemo(reason){applyState(DEMO);setStatus('demo',reason||'no_data');}
 
 async function poll(){
   try{
-    const r=await fetch('/state?token='+encodeURIComponent(TOKEN),{cache:'no-store'});
+    const url='/state?token='+encodeURIComponent(TOKEN)+(CUR_BOT?'&bot='+encodeURIComponent(CUR_BOT):'');
+    const r=await fetch(url,{cache:'no-store'});
     if(!r.ok)throw 0;
     const d=await r.json();
     if(d.live){applyState(d);setStatus('on','live',d.age);}
@@ -958,7 +1160,6 @@ def dashboard_html():
             _dashboard_cache["mtime"] = mtime
         return _dashboard_cache["html"]
     except OSError:
-        # Faylka dibadda ah lama helin -> isticmaal nuqulka ku dhex jira faylkan.
         return EMBEDDED_HTML
 
 
@@ -970,9 +1171,9 @@ def index():
 
 @app.route("/health")
 def health():
-    return jsonify({"ok": True, "tenants": len(STATES)})
+    return jsonify({"ok": True,
+                    "bots": sum(len(v) for v in STATES.values())})
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
