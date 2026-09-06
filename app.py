@@ -605,47 +605,6 @@ button{font-family:inherit;cursor:pointer}
 .up{color:var(--good-ink)} .down{color:var(--bad-ink)} .or{color:var(--orange)}
 .kpi.accent{background:linear-gradient(135deg,rgba(240,135,42,.12),var(--surface));border-color:rgba(240,135,42,.3)}
 
-/* ===== BOT SWITCHER ===== */
-function renderBots(list){
-  BOTS=list||[];
-  const sw=$('botsw');
-  if(!BOTS.length){sw.innerHTML='';$('botsBlock').classList.add('hide');$('acctBlock').classList.remove('hide');return;}
-  if(CUR_BOT&&!BOTS.some(b=>b.bot===CUR_BOT))CUR_BOT=null;
-
-  sw.innerHTML='';
-  const mk=(label,val,live)=>{
-    const b=document.createElement('button');
-    b.className=(val===CUR_BOT?'on':'');
-    b.innerHTML='<span class="bdot'+(live?' live':'')+'"></span>'+esc(label);
-    b.addEventListener('click',()=>{CUR_BOT=val;renderBots(BOTS);poll();});
-    sw.appendChild(b);
-  };
-  if(BOTS.length>1)mk('Dhammaan',null,BOTS.some(b=>b.live));
-  BOTS.forEach(b=>mk(b.bot,b.bot,b.live));
-
-  const all=!CUR_BOT&&BOTS.length>1;
-  $('botsBlock').classList.toggle('hide',!all);
-  $('acctBlock').classList.toggle('hide',all);
-  $('stratBlock').classList.toggle('hide',all);
-  $('bots-live').textContent=BOTS.filter(b=>b.live).length+' nool';
-
-  if(all){
-    const box=$('botList');box.innerHTML='';
-    BOTS.forEach(b=>{
-      const row=document.createElement('div');row.className='botcard';
-      const p=+b.profit||0;
-      row.innerHTML='<div style="flex:1;min-width:0">'+
-        '<div class="bn"><span class="bdot'+(b.live?' live':'')+'"></span>'+esc(b.bot)+'</div>'+
-        '<div class="bm">'+(b.live?('Balance '+money(b.balance)+' · '+(b.opentrades||0)+' furan'):
-          (b.reason==='stale'?'Duugoobay '+(b.age||0)+'s':'Xog ma jirto'))+'</div></div>'+
-        '<div class="bp"><div class="v '+(p>=0?'up':'down')+'">'+(b.live?((p>=0?'+':'')+money(Math.abs(p))):'—')+'</div>'+
-        '<div class="l">floating</div></div>';
-      row.addEventListener('click',()=>{CUR_BOT=b.bot;renderBots(BOTS);poll();});
-      box.appendChild(row);
-    });
-  }
-}
-
 /* ===== SYMBOLS ===== */
 .symrow{display:flex;align-items:center;gap:12px;padding:13px 2px;border-bottom:1px solid var(--line)}
 .symrow:last-child{border-bottom:none}
@@ -864,23 +823,6 @@ const money=n=>{const v=+n||0;return (v<0?'-$':'$')+Math.abs(v).toLocaleString('
 /* clock */
 function tick(){$('clock').textContent=new Date().toLocaleTimeString('en-GB');}
 setInterval(tick,1000);tick();
-
-/* ===== BOT SWITCHER ===== */
-.botsw{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;margin-bottom:15px;-webkit-overflow-scrolling:touch}
-.botsw button{flex-shrink:0;display:flex;align-items:center;gap:7px;background:var(--surface);border:1px solid var(--line);color:var(--ink-2);border-radius:999px;padding:9px 15px;font-size:13px;font-weight:600;white-space:nowrap}
-.botsw button.on{background:var(--orange);border-color:var(--orange);color:#0a0a0f}
-.botsw button .bdot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex-shrink:0}
-.botsw button .bdot.live{background:var(--good-ink)}
-.botsw button.on .bdot{background:rgba(0,0,0,.45)}
-.botsw button.on .bdot.live{background:#0a3d1c}
-.botcard{display:flex;align-items:center;gap:12px;padding:13px 2px;border-bottom:1px solid var(--line);cursor:pointer}
-.botcard:last-child{border-bottom:none}
-.botcard .bn{font-size:15px;font-weight:700;display:flex;align-items:center;gap:7px}
-.botcard .bm{font-size:12px;color:var(--muted);margin-top:3px;font-variant-numeric:tabular-nums}
-.botcard .bp{margin-left:auto;text-align:right;flex-shrink:0}
-.botcard .bp .v{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
-.botcard .bp .l{font-size:11px;color:var(--muted);margin-top:2px}
-.hide{display:none!important}
 
 /* ===== TABS ===== */
 function showTab(t){
