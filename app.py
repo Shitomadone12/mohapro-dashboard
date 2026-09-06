@@ -34,7 +34,7 @@ DASHBOARD_FILE = os.path.join(BASE_DIR, "dashboard.html")
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "MohaPro_Live_2026_MySecret")
 MASTER_TOKEN = AUTH_TOKEN
 
-BUILD = "v3.5-2026-09-07"
+BUILD = "v3.6-2026-09-07"
 DEFAULT_BOT = "default"
 MAX_HISTORY = 120
 STALE_SECONDS = 120
@@ -617,9 +617,19 @@ def signal_request():
     if expiry not in EXPIRY_CHOICES:
         expiry = 5
 
+    # Suuqa forex-ku wuu xiran yahay Sabtida iyo Axadda -> xog cusub ma jirto.
+    wd = time.gmtime().tm_wday          # 0=Isniin ... 5=Sabti, 6=Axad
+    hr = time.gmtime().tm_hour
+    closed = (wd == 5) or (wd == 6 and hr < 21) or (wd == 4 and hr >= 21)
+    if closed:
+        return jsonify({"error": "market_closed",
+                        "hint": "Suuqa forex-ku hadda wuu xiran yahay (Sabti/Axad). "
+                                "Signal lama bixin karo ilaa suuqu furmo Axada 21:00 GMT."}), 200
+
     closes, last_dt, err = _fetch_closes(symbol, EXPIRY_CHOICES[expiry], 60)
     if err or not closes or len(closes) < 22:
-        return jsonify({"error": err or "xog kuma filna"}), 200
+        return jsonify({"error": err or "xog kuma filna",
+                        "hint": "Xogta qiimaha lama helin: " + str(err or "kuma filna")}), 200
 
     sig = _compute_signal(closes)
     if sig["direction"] == "NEUTRAL":
@@ -1293,6 +1303,7 @@ function sigCard(r){
 async function requestSignal(){
   if(SIG_BUSY)return;
   SIG_BUSY=true;const btn=$('sigGo');btn.disabled=true;btn.textContent='XISAABINAYA…';
+  $('sigOut').innerHTML='<div class="sigcard flat"><div style="font-size:13px;color:var(--text-secondary)">Xisaabinaya '+esc(SIG_SYM)+'…</div></div>';
   try{
     const r=await fetch('/signal/request',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({token:TOKEN,symbol:SIG_SYM,expiry:SIG_EXP})});
