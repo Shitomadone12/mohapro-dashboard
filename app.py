@@ -34,9 +34,11 @@ DASHBOARD_FILE = os.path.join(BASE_DIR, "dashboard.html")
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "MohaPro_Live_2026_MySecret")
 MASTER_TOKEN = AUTH_TOKEN
 
+BUILD = "v3.5-2026-09-07"
 DEFAULT_BOT = "default"
 MAX_HISTORY = 120
 STALE_SECONDS = 120
+FORGET_SECONDS = 1800   # bot aan wax dirin 30 daqiiqo -> liiska laga saaro
 MAX_QUEUE = 20
 
 # ---------------- SIGNALS (ikhtiyaari) ----------------
@@ -172,7 +174,9 @@ def get_state():
     bots = STATES.get(tok, {})
 
     # --- liiska botyada (had iyo jeer la diraa)
-    summaries = [bot_summary(tok, b, s) for b, s in sorted(bots.items())]
+    now = time.time()
+    summaries = [bot_summary(tok, b, s) for b, s in sorted(bots.items())
+                 if (now - (s.get("updated") or 0)) < FORGET_SECONDS]
 
     if not bots:
         out = blank_state()
@@ -366,6 +370,21 @@ def set_command():
 
 
 # ============ 6) DIAG ============
+@app.route("/admin/forget_bot", methods=["POST", "OPTIONS"])
+def forget_bot():
+    """Bot duug ah liiska ka saar. Haddii uu wali wax dirayo, wuu soo laaban doonaa."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+    tok = get_token(request) or MASTER_TOKEN
+    data = request.get_json(silent=True) or request.form
+    bot = clean_bot(data.get("bot"))
+    removed = STATES.get(tok, {}).pop(bot, None) is not None
+    COMMANDS.get(tok, {}).pop(bot, None)
+    SYMBOL_FLAGS.get(tok, {}).pop(bot, None)
+    SEEN.get(tok, {}).pop(bot, None)
+    return jsonify({"ok": True, "removed": removed, "bot": bot})
+
+
 @app.route("/diag", methods=["GET"])
 def diag():
     rows = []
@@ -402,6 +421,7 @@ def diag():
         hint = "Wax walba way shaqeynayaan. Botyada la helay: %d" % len(rows)
 
     return jsonify({
+        "build": BUILD,
         "server_time": int(time.time()),
         "env_auth_token_preview": (MASTER_TOKEN[:6] + "..." + MASTER_TOKEN[-4:]
                                    if len(MASTER_TOKEN) > 12 else MASTER_TOKEN),
@@ -508,6 +528,133 @@ def signals():
         out.append(item)
     return jsonify({"pairs": out, "interval": SIGNAL_INTERVAL, "generated": int(now)})
 
+
+
+# ============ 7b) BINARY SIGNALS (on-demand + honest tracking) ============
+#
+#  Falsafada qaybtan: signal-ka la bixiyo LA CABBIRAA. Signal kasta natiijadiisa
+#  si toos ah ayaa la hubiyaa marka muddadu dhammaato, saxnaanta dhabta ahna
+#  waxaa la barbar dhigaa break-even-ka payout-kaaga. Ma jirto lambar la
+#  qurxiyay - haddii uu edge-gu maqan yahay, si cad ayaa loo tusayaa.
+
+SIGNALS = {}            # token -> [record]
+MAX_SIGNALS = 300
+SIGNAL_SYMBOLS = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", "EUR/JPY"]
+EXPIRY_CHOICES = {5: "5min", 15: "15min", 60: "1h"}
+_price_cache = {}       # symbol -> (ts, price)
+
+
+def _spot(symbol):
+    """Qiimaha hadda. 20 sekan ayaa la kaydiyaa (rate limit)."""
+    now = time.time()
+    c = _price_cache.get(symbol)
+    if c and now - c[0] < 20:
+        return c[1], None
+    closes, _, err = _fetch_closes(symbol, "1min", 5)
+    if err or not closes:
+        return None, (err or "no_data")
+    _price_cache[symbol] = (now, closes[-1])
+    return closes[-1], None
+
+
+def verify_pending(tok):
+    """Signal-adii muddadoodu dhammaatay natiijadooda hubi."""
+    recs = SIGNALS.get(tok) or []
+    now = time.time()
+    checked = 0
+    for r in recs:
+        if r["status"] != "pending" or r["expires_at"] > now:
+            continue
+        if checked >= 3:          # rate limit: saddex hubin call kasta
+            break
+        checked += 1
+        price, err = _spot(r["symbol"])
+        if price is None:
+            continue
+        r["exit_price"] = price
+        move = price - r["entry_price"]
+        if move == 0:
+            r["status"] = "void"          # isku qiime = broker-ku badanaa waa refund
+        elif (move > 0) == (r["direction"] == "BUY"):
+            r["status"] = "correct"
+        else:
+            r["status"] = "wrong"
+
+
+def signal_stats(tok, payout):
+    recs = [r for r in (SIGNALS.get(tok) or []) if r["status"] in ("correct", "wrong")]
+    total = len(recs)
+    wins = sum(1 for r in recs if r["status"] == "correct")
+    acc = (wins / total * 100.0) if total else None
+    breakeven = 100.0 / (100.0 + float(payout))* 100.0
+    return {
+        "total": total, "wins": wins, "losses": total - wins,
+        "accuracy": round(acc, 1) if acc is not None else None,
+        "breakeven": round(breakeven, 1),
+        "payout": float(payout),
+        "above_breakeven": (acc is not None and acc >= breakeven),
+        "pending": sum(1 for r in (SIGNALS.get(tok) or []) if r["status"] == "pending"),
+    }
+
+
+@app.route("/signal/request", methods=["POST", "OPTIONS"])
+def signal_request():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if not TWELVEDATA_KEY:
+        return jsonify({"error": "no_api_key",
+                        "hint": "Geli TWELVEDATA_KEY env var ee Render (bilaash: twelvedata.com)"}), 200
+
+    tok = get_token(request) or MASTER_TOKEN
+    data = request.get_json(silent=True) or {}
+    symbol = (data.get("symbol") or "EUR/USD").upper()
+    if symbol not in SIGNAL_SYMBOLS:
+        return jsonify({"error": "symbol aan la aqoon"}), 400
+    try:
+        expiry = int(data.get("expiry") or 5)
+    except (TypeError, ValueError):
+        expiry = 5
+    if expiry not in EXPIRY_CHOICES:
+        expiry = 5
+
+    closes, last_dt, err = _fetch_closes(symbol, EXPIRY_CHOICES[expiry], 60)
+    if err or not closes or len(closes) < 22:
+        return jsonify({"error": err or "xog kuma filna"}), 200
+
+    sig = _compute_signal(closes)
+    if sig["direction"] == "NEUTRAL":
+        return jsonify({"neutral": True, "symbol": symbol, "expiry": expiry,
+                        "reasons": sig["reasons"],
+                        "message": "Suuqu isku dheelitiran yahay - signal lama bixinayo."}), 200
+
+    now = time.time()
+    rec = {
+        "id": int(now * 1000) % 10**10,
+        "symbol": symbol, "expiry": expiry,
+        "direction": "BUY" if sig["direction"] == "UP" else "SELL",
+        "score": sig["confidence"], "reasons": sig["reasons"], "rsi": sig["rsi"],
+        "entry_price": closes[-1], "exit_price": None,
+        "created": int(now), "expires_at": now + expiry * 60,
+        "status": "pending", "bar_time": last_dt,
+    }
+    q = SIGNALS.setdefault(tok, [])
+    q.insert(0, rec)
+    del q[MAX_SIGNALS:]
+    return jsonify({"signal": rec})
+
+
+@app.route("/signal/history", methods=["GET"])
+def signal_history():
+    tok = request.args.get("token") or MASTER_TOKEN
+    try:
+        payout = float(request.args.get("payout") or 80)
+    except ValueError:
+        payout = 80.0
+    verify_pending(tok)
+    recs = (SIGNALS.get(tok) or [])[:40]
+    return jsonify({"signals": recs, "stats": signal_stats(tok, payout),
+                    "symbols": SIGNAL_SYMBOLS, "expiries": sorted(EXPIRY_CHOICES),
+                    "has_key": bool(TWELVEDATA_KEY)})
 
 # ============ 8) Pages ============
 EMBEDDED_HTML = """<!DOCTYPE html>
@@ -673,6 +820,32 @@ button{font-family:inherit;cursor:pointer}
 .jst .jv2{font-size:15px;font-weight:700;margin-top:3px}
 .jst .jv2.g{color:var(--good-ink)} .jst .jv2.r{color:var(--bad-ink)} .jst .jv2.o{color:var(--orange)}
 
+/* ===== SIGNALS ===== */
+.tabs{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.tabs div{flex:0 0 auto;padding:9px 14px;white-space:nowrap}
+.chips{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px}
+.chip2{padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink-2);font-size:12.5px;font-weight:600}
+.chip2.on{background:linear-gradient(135deg,var(--orange-2),var(--orange-d));border-color:var(--orange);color:#1a0e00;font-weight:700}
+.exp{display:flex;gap:7px;margin-bottom:15px}
+.exp button{flex:1;padding:9px 0;border-radius:9px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink-2);font-size:12.5px;font-weight:600}
+.exp button.on{background:#2a2333;border-color:var(--orange);color:var(--orange);font-weight:700}
+.bigbtn{width:100%;border:none;border-radius:13px;padding:16px;background:linear-gradient(135deg,var(--orange-2),var(--orange-d));color:#1a0e00;font-size:15px;font-weight:800;letter-spacing:.3px}
+.bigbtn:disabled{opacity:.5}
+.sigcard{border-radius:15px;padding:15px;margin-top:14px}
+.sigcard.buy{background:linear-gradient(135deg,rgba(34,180,85,.16),var(--surface));border:1px solid rgba(34,180,85,.45)}
+.sigcard.sell{background:linear-gradient(135deg,rgba(224,82,79,.16),var(--surface));border:1px solid rgba(224,82,79,.5)}
+.sigcard.flat{background:var(--surface);border:1px solid var(--line)}
+.sigdir{font-size:30px;font-weight:800;line-height:1.1;margin-top:3px}
+.sigrow{display:flex;justify-content:space-between;font-size:12px;padding:3px 0;color:var(--ink-2)}
+.sighist{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+.sighist:last-child{border-bottom:none}
+.acc{background:linear-gradient(135deg,rgba(240,135,42,.1),var(--surface));border:1px solid rgba(240,135,42,.4);border-radius:15px;padding:15px}
+.accbar{height:8px;border-radius:4px;background:var(--line);position:relative;overflow:hidden}
+.accbar i{display:block;height:100%}
+.accmark{position:absolute;top:-3px;width:2px;height:14px;background:#fff}
+.warnbox{background:rgba(224,82,79,.13);border-radius:9px;padding:11px 12px;font-size:12px;color:var(--bad-ink);line-height:1.6;margin-top:11px}
+.okbox{background:rgba(34,180,85,.13);border-radius:9px;padding:11px 12px;font-size:12px;color:var(--good-ink);line-height:1.6;margin-top:11px}
+
 /* ===== NAV ===== */
 .navbar{position:fixed;left:0;right:0;bottom:0;z-index:50;display:flex;justify-content:space-around;background:rgba(14,14,22,.96);border-top:1px solid var(--line);padding:7px 4px calc(7px + env(safe-area-inset-bottom));backdrop-filter:blur(10px)}
 .navbar button{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:5px 2px;background:none;border:none;color:var(--muted);font-size:10.5px;font-weight:600}
@@ -715,6 +888,7 @@ button{font-family:inherit;cursor:pointer}
   <div class="tabs" id="tabs">
     <div data-t="overview" class="on">Guud</div>
     <div data-t="symbols">Symbols</div>
+    <div data-t="signals">Signals</div>
     <div data-t="chart">Chart</div>
     <div data-t="journal">Journal</div>
   </div>
@@ -777,6 +951,49 @@ button{font-family:inherit;cursor:pointer}
     </div>
   </section>
 
+  <!-- ===== SIGNALS ===== -->
+  <section class="pane" data-p="signals">
+    <div class="card block">
+      <h2 class="sec-h">Codso signal <span class="rt" id="sig-key"></span></h2>
+      <p style="font-size:11.5px;color:var(--muted);font-weight:600;margin-bottom:9px">Lammaanaha</p>
+      <div class="chips" id="sigSyms"></div>
+      <p style="font-size:11.5px;color:var(--muted);font-weight:600;margin-bottom:9px">Muddada</p>
+      <div class="exp" id="sigExp">
+        <button data-e="5" class="on">5 min</button>
+        <button data-e="15">15 min</button>
+        <button data-e="60">1 saac</button>
+      </div>
+      <button class="bigbtn" id="sigGo">CODSO SIGNAL</button>
+      <div id="sigOut"></div>
+    </div>
+
+    <div class="card block">
+      <h2 class="sec-h">Signal-adii hore <span class="rt" id="sig-pending"></span></h2>
+      <div id="sigHist"><div class="ot-empty">Signal weli lama codsan</div></div>
+    </div>
+
+    <div class="block">
+      <div class="acc">
+        <div style="font-size:11.5px;color:var(--orange);font-weight:700;margin-bottom:12px">Saxnaantaada dhabta ah</div>
+        <div style="display:flex;align-items:flex-end;gap:13px">
+          <div><div id="accVal" style="font-size:28px;font-weight:800;line-height:1">—</div>
+               <div id="accN" style="font-size:10.5px;color:var(--muted);margin-top:3px">0 signal</div></div>
+          <div style="flex:1">
+            <div class="accbar"><i id="accBar" style="width:0%;background:var(--muted)"></i><span class="accmark" id="accMark" style="left:55.6%"></span></div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:5px">
+              <span>0%</span><span id="accBE">break-even 55.6%</span><span>100%</span></div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:9px;margin-top:13px">
+          <span style="font-size:11.5px;color:var(--ink-2)">Payout broker-kaaga</span>
+          <input id="payout" type="number" min="50" max="100" value="80" style="width:64px;background:var(--surface-2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:7px 9px;font-size:13px;font-variant-numeric:tabular-nums">
+          <span style="font-size:13px;color:var(--ink-2)">%</span>
+        </div>
+        <div id="accNote"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- ===== CHART ===== -->
   <section class="pane" data-p="chart">
     <div class="card block">
@@ -805,7 +1022,7 @@ button{font-family:inherit;cursor:pointer}
     </div>
   </section>
 
-  <div class="foot">MOHA PRO v56 · Bot Control</div>
+  <div class="foot">MOHA PRO · Bot Control · build <span id="buildTag">__BUILD__</span></div>
 </div>
 
 <nav class="navbar" id="nav">
@@ -813,7 +1030,7 @@ button{font-family:inherit;cursor:pointer}
   <button data-t="symbols"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/></svg>Symbols</button>
   <button data-t="chart"><svg viewBox="0 0 24 24"><path d="M3 15l5-5 4 4 8-8"/></svg>Chart</button>
   <button data-t="journal"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="16" y2="13"/></svg>Journal</button>
-  <button id="nav-img"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.6"/><polyline points="21 15 16 10 5 21"/></svg>Sawir</button>
+  <button data-t="signals"><svg viewBox="0 0 24 24"><polyline points="3 17 9 11 13 15 21 6"/><circle cx="9" cy="11" r="1.4"/></svg>Signals</button>
 </nav>
 
 <script>
@@ -834,6 +1051,7 @@ function showTab(t){
   document.querySelectorAll('#tabs div').forEach(d=>d.classList.toggle('on',d.dataset.t===t));
   document.querySelectorAll('#nav button[data-t]').forEach(b=>b.classList.toggle('active',b.dataset.t===t));
   if(t==='chart')initChart(LAST_SYMBOL);
+  if(t==='signals')loadSignals();
   window.scrollTo({top:0,behavior:'smooth'});
 }
 document.querySelectorAll('#tabs div').forEach(d=>d.addEventListener('click',()=>showTab(d.dataset.t)));
@@ -854,7 +1072,7 @@ function initChart(raw){
 (function(){const img=$('banner-img'),inp=$('img-input');
   try{const s=localStorage.getItem('moha_banner');if(s)img.src=s;}catch(e){}
   const open=()=>inp.click();
-  $('change-btn').addEventListener('click',open);$('nav-img').addEventListener('click',open);
+  $('change-btn').addEventListener('click',open);
   inp.addEventListener('change',e=>{const f=e.target.files&&e.target.files[0];if(!f)return;const r=new FileReader();
     r.onload=ev=>{img.src=ev.target.result;try{localStorage.setItem('moha_banner',ev.target.result);}catch(x){}};r.readAsDataURL(f);});
 })();
@@ -916,6 +1134,17 @@ function renderBots(list){
         '<div class="bp"><div class="v '+(p>=0?'up':'down')+'">'+(b.live?((p>=0?'+':'')+money(Math.abs(p))):'—')+'</div>'+
         '<div class="l">floating</div></div>';
       row.addEventListener('click',()=>{CUR_BOT=b.bot;renderBots(BOTS);poll();});
+      let lp=null;
+      const startLP=()=>{lp=setTimeout(()=>{
+        if(confirm(b.bot+' liiska ka saar? Haddii uu wali wax dirayo, wuu soo laaban doonaa.')){
+          fetch('/admin/forget_bot',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({token:TOKEN,bot:b.bot})}).then(()=>{CUR_BOT=null;poll();});
+        }},700);};
+      const endLP=()=>{if(lp){clearTimeout(lp);lp=null;}};
+      row.addEventListener('touchstart',startLP,{passive:true});
+      ['touchend','touchmove','touchcancel'].forEach(e=>row.addEventListener(e,endLP));
+      row.addEventListener('mousedown',startLP);
+      ['mouseup','mouseleave'].forEach(e=>row.addEventListener(e,endLP));
       box.appendChild(row);
     });
   }
@@ -1019,6 +1248,117 @@ function renderJournal(j){
 document.querySelectorAll('#jseg div').forEach(el=>el.addEventListener('click',()=>{
   J_PERIOD=el.dataset.p;document.querySelectorAll('#jseg div').forEach(x=>x.classList.remove('on'));el.classList.add('on');
   if(J_DATA)renderJournal(J_DATA);}));
+
+
+/* ===== BINARY SIGNALS ===== */
+let SIG_SYM='EUR/USD', SIG_EXP=5, SIG_BUSY=false;
+
+function payoutVal(){const v=parseFloat($('payout').value);return (v>=50&&v<=100)?v:80;}
+
+function renderSigSyms(list){
+  const box=$('sigSyms');box.innerHTML='';
+  (list||['EUR/USD','GBP/USD','USD/JPY','AUD/USD']).forEach(sym=>{
+    const b=document.createElement('button');
+    b.className='chip2'+(sym===SIG_SYM?' on':'');b.textContent=sym;
+    b.addEventListener('click',()=>{SIG_SYM=sym;renderSigSyms(list);});
+    box.appendChild(b);
+  });
+}
+document.querySelectorAll('#sigExp button').forEach(b=>b.addEventListener('click',()=>{
+  SIG_EXP=+b.dataset.e;
+  document.querySelectorAll('#sigExp button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');
+}));
+
+function sigCard(r){
+  if(r.neutral){
+    return '<div class="sigcard flat"><div style="font-size:12px;color:var(--muted)">'+esc(r.symbol)+
+      ' · '+r.expiry+' min</div><div class="sigdir" style="color:var(--muted);font-size:22px">WAIT</div>'+
+      '<div style="font-size:12.5px;color:var(--ink-2);margin-top:8px">'+esc(r.message)+'</div></div>';
+  }
+  const buy=r.direction==='BUY';
+  let rows='';
+  (r.reasons||[]).forEach(x=>{rows+='<div class="sigrow"><span>'+esc(x)+'</span></div>';});
+  return '<div class="sigcard '+(buy?'buy':'sell')+'">'+
+    '<div style="display:flex;align-items:flex-start">'+
+      '<div style="flex:1"><div style="font-size:11.5px;color:var(--muted)">'+esc(r.symbol)+' · '+r.expiry+' min</div>'+
+      '<div class="sigdir" style="color:var(--'+(buy?'text-success':'text-danger')+')">'+r.direction+'</div></div>'+
+      '<div style="text-align:right"><div style="font-size:24px;font-weight:800;font-variant-numeric:tabular-nums">'+r.score+'%</div>'+
+      '<div style="font-size:10.5px;color:var(--muted)">score</div></div></div>'+
+    '<div style="border-top:1px solid rgba(255,255,255,.09);margin-top:12px;padding-top:10px">'+rows+'</div>'+
+    '<div style="margin-top:11px;padding-top:10px;border-top:1px solid rgba(255,255,255,.09);font-size:11.5px;color:var(--muted)">'+
+      'Entry '+r.entry_price+' · natiijada '+r.expiry+' daqiiqo kadib ayaa la hubinayaa</div></div>';
+}
+
+async function requestSignal(){
+  if(SIG_BUSY)return;
+  SIG_BUSY=true;const btn=$('sigGo');btn.disabled=true;btn.textContent='XISAABINAYA…';
+  try{
+    const r=await fetch('/signal/request',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({token:TOKEN,symbol:SIG_SYM,expiry:SIG_EXP})});
+    const d=await r.json();
+    if(d.error){
+      $('sigOut').innerHTML='<div class="sigcard flat"><div style="font-size:13px;color:var(--bad-ink)">'+
+        esc(d.hint||d.error)+'</div></div>';
+    }else{
+      $('sigOut').innerHTML=sigCard(d.signal||d);
+      loadSignals();
+    }
+  }catch(e){
+    $('sigOut').innerHTML='<div class="sigcard flat"><div style="font-size:13px;color:var(--bad-ink)">Server-ka lama gaari karin</div></div>';
+  }
+  SIG_BUSY=false;btn.disabled=false;btn.textContent='CODSO SIGNAL';
+}
+$('sigGo').addEventListener('click',requestSignal);
+$('payout').addEventListener('change',loadSignals);
+
+function renderAccuracy(st){
+  const be=st.breakeven, acc=st.accuracy;
+  $('accBE').textContent='break-even '+be+'%';
+  $('accMark').style.left=be+'%';
+  $('accN').textContent=st.total+' signal'+(st.pending?' · '+st.pending+' sugaya':'');
+  if(acc==null){
+    $('accVal').textContent='—';$('accBar').style.width='0%';
+    $('accNote').innerHTML='<div class="warnbox">Xog kuma filna. Ugu yaraan 30 signal ka hor inta aan wax lagu xukumin.</div>';
+    return;
+  }
+  $('accVal').textContent=acc+'%';
+  const good=acc>=be;
+  $('accBar').style.width=Math.min(acc,100)+'%';
+  $('accBar').style.background=good?'var(--good)':'var(--bad)';
+  $('accNote').innerHTML=good
+    ? '<div class="okbox">Payout '+st.payout+'% ayaa u baahan '+be+'%. Hadda '+acc+'% — khadka korkiisa. '+
+      (st.total<30?'Laakiin '+st.total+' signal kuma filna — sug ilaa 100.':'')+'</div>'
+    : '<div class="warnbox">Payout '+st.payout+'% ayaa u baahan '+be+'%. Hadda '+acc+'% — khadka hoostiisa. Lacag dhab ah ha ku ganacsan.</div>';
+}
+
+function renderSigHist(list){
+  const box=$('sigHist');
+  if(!list||!list.length){box.innerHTML='<div class="ot-empty">Signal weli lama codsan</div>';return;}
+  box.innerHTML='';
+  list.slice(0,15).forEach(r=>{
+    const st=r.status;
+    const lbl=st==='correct'?'SAX':st==='wrong'?'KHALAD':st==='void'?'VOID':'SUGAYA';
+    const col=st==='correct'?'var(--text-success)':st==='wrong'?'var(--text-danger)':'var(--text-muted)';
+    const d=document.createElement('div');d.className='sighist';
+    d.innerHTML='<span>'+esc(r.symbol)+' · '+r.direction+' · '+r.score+'%</span>'+
+      '<span style="color:'+col+';font-weight:700">'+lbl+'</span>';
+    box.appendChild(d);
+  });
+}
+
+async function loadSignals(){
+  try{
+    const r=await fetch('/signal/history?token='+encodeURIComponent(TOKEN)+'&payout='+payoutVal(),{cache:'no-store'});
+    const d=await r.json();
+    renderSigSyms(d.symbols);
+    renderSigHist(d.signals);
+    renderAccuracy(d.stats);
+    $('sig-pending').textContent=d.stats.pending?d.stats.pending+' sugaya':'';
+    $('sig-key').textContent=d.has_key?'':'TWELVEDATA_KEY ma jiro';
+  }catch(e){}
+}
+renderSigSyms();
 
 /* ===== STATE ===== */
 const DEMO={balance:10482.55,equity:10531.20,profit:182.55,winrate:76.2,drawdown:3.10,opentrades:2,symbol:"GBPUSD",
@@ -1125,12 +1465,24 @@ def dashboard_html():
 @app.route("/")
 @app.route("/admin")
 def index():
-    return Response(dashboard_html(), mimetype="text/html")
+    html = dashboard_html().replace("__BUILD__", BUILD)
+    r = Response(html, mimetype="text/html")
+    # Browser-ku HA hayn bog duug ah - taasi ayaa hore u dhibtay.
+    r.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    r.headers["Pragma"] = "no-cache"
+    r.headers["Expires"] = "0"
+    r.headers["X-Moha-Build"] = BUILD
+    return r
+
+
+@app.route("/version")
+def version():
+    return jsonify({"build": BUILD})
 
 
 @app.route("/health")
 def health():
-    return jsonify({"ok": True,
+    return jsonify({"ok": True, "build": BUILD,
                     "bots": sum(len(v) for v in STATES.values())})
 
 
