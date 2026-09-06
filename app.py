@@ -180,6 +180,10 @@ def get_state():
                     "symbols": [], "bots": [], "bot": None})
         return jsonify(out)
 
+    # --- hal bot oo keliya: muuqaalka buuxa ayaa la tusayaa, ma aha isu-geynta
+    if not want and len(bots) == 1:
+        want = list(bots.keys())[0]
+
     # --- bot gaar ah
     if want:
         bot = clean_bot(want)
@@ -881,6 +885,7 @@ function renderBots(list){
   const sw=$('botsw');
   if(!BOTS.length){sw.innerHTML='';$('botsBlock').classList.add('hide');$('acctBlock').classList.remove('hide');return;}
   if(CUR_BOT&&!BOTS.some(b=>b.bot===CUR_BOT))CUR_BOT=null;
+  if(!CUR_BOT&&BOTS.length===1)CUR_BOT=BOTS[0].bot;   // hal bot = si toos ah u dooro
 
   sw.innerHTML='';
   const mk=(label,val,live)=>{
@@ -1047,7 +1052,10 @@ function setStatus(s,reason,age){
   el.className='st-pill '+s;
   if(s==='on'){
     el.innerHTML='<span class="dot"></span>LIVE';bl.classList.add('run');bs.textContent='Shaqeynaya';
-    dm.className='banner live';dm.textContent='Xog dhab ah — la cusboonaysiiyay '+(age!=null?age+'s ka hor':'hadda');
+    dm.className='banner live';
+    const noName=BOTS.length&&BOTS.every(b=>b.bot==='default');
+    dm.innerHTML='Xog dhab ah — la cusboonaysiiyay '+(age!=null?age+'s ka hor':'hadda')+
+      (noName?'<br><span style="color:var(--orange-2)">Bootku magac ma laha. Geli InpCloudBotName.</span>':'');
   }else{
     el.innerHTML='<span class="dot"></span>'+(s==='demo'?'DEMO':'OFFLINE');
     bl.classList.remove('run');bs.textContent='Joogsan';
@@ -1057,21 +1065,30 @@ function setStatus(s,reason,age){
   }
 }
 
-function applyState(d){
-  if(d.balance!=null)$('k_balance').textContent=money(d.balance);
-  if(d.equity!=null)$('k_equity').textContent=money(d.equity);
-  if(d.profit!=null){const p=+d.profit,el=$('k_profit');el.textContent=(p>=0?'+':'')+money(Math.abs(p));el.className='val num '+(p>=0?'up':'down');}
-  if(d.winrate!=null)$('k_wr').textContent=(+d.winrate).toFixed(1)+'%';
-  if(d.drawdown!=null)$('k_dd').textContent=(+d.drawdown).toFixed(2)+'%';
-  if(d.opentrades!=null)$('k_open').textContent=d.opentrades;
+function applyState(d,strict){
+  // strict = xog dhab ah. Goob maqan waxay noqonaysaa "—", MARNABA lambar demo ah.
+  const put=(id,val,fmt,cls)=>{
+    const el=$(id);
+    if(val==null||val===''){ if(strict){el.textContent='—';if(cls)el.className='val num';} return; }
+    el.textContent=fmt(val); if(cls)el.className=cls(val);
+  };
+  put('k_balance',d.balance,money);
+  put('k_equity',d.equity,money);
+  put('k_profit',d.profit,v=>((+v>=0?'+':'')+money(Math.abs(+v))),v=>'val num '+(+v>=0?'up':'down'));
+  put('k_wr',d.winrate,v=>(+v).toFixed(1)+'%');
+  put('k_dd',d.drawdown,v=>(+v).toFixed(2)+'%');
+  put('k_open',d.opentrades,v=>String(v));
   if(d.symbol){$('symbol').textContent=d.symbol;LAST_SYMBOL=d.symbol;}
+  else if(strict)$('symbol').textContent='—';
+  if(strict&&!d.journal){J_DATA=null;$('j_grid').innerHTML='';$('j_svg').innerHTML='';
+    ['j_gain','j_gainabs','j_bal','j_eq'].forEach(i=>$(i).textContent='—');}
   renderTrades(d.trades);
   renderSymbols(d.symbols);
   if(d.bots)renderBots(d.bots);
   if(d.journal){J_DATA=d.journal;renderJournal(d.journal);}
 }
 
-function showDemo(reason){applyState(DEMO);setStatus('demo',reason||'no_data');}
+function showDemo(reason){applyState(DEMO,false);setStatus('demo',reason||'no_data');}
 
 async function poll(){
   try{
@@ -1079,7 +1096,7 @@ async function poll(){
     const r=await fetch(url,{cache:'no-store'});
     if(!r.ok)throw 0;
     const d=await r.json();
-    if(d.live){applyState(d);setStatus('on','live',d.age);}
+    if(d.live){applyState(d,true);setStatus('on','live',d.age);}
     else{showDemo(d.reason);}
   }catch(e){showDemo('offline');}
 }
