@@ -34,7 +34,7 @@ DASHBOARD_FILE = os.path.join(BASE_DIR, "dashboard.html")
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "MohaPro_Live_2026_MySecret")
 MASTER_TOKEN = AUTH_TOKEN
 
-BUILD = "v3.6-2026-09-07"
+BUILD = "v4.0-2026-09-08"
 DEFAULT_BOT = "default"
 MAX_HISTORY = 120
 STALE_SECONDS = 120
@@ -666,6 +666,234 @@ def signal_history():
                     "symbols": SIGNAL_SYMBOLS, "expiries": sorted(EXPIRY_CHOICES),
                     "has_key": bool(TWELVEDATA_KEY)})
 
+
+# ============ 9) TRADE JOURNAL (waarta) ============
+#
+#  Ujeeddada: 100+ trade oo la kaydiyo si loo ogaado lammaanahee faa'iido
+#  leh iyo bootku guud ahaan ma faa'iido leeyahay.
+#
+#  Kaydka: PostgreSQL haddii DATABASE_URL la dhigo (Render -> New ->
+#  PostgreSQL -> Internal Database URL). Haddii kale xusuusta, taasoo
+#  baaba'aysa marka server-ku hurdo.
+#
+#  Dedup: (bot, ticket). EA-gu ticket kasta mar kasta wuu soo dirayaa;
+#  isla ticket dib looma kaydinayo.
+
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+_pg = None
+MEM_TRADES = {}          # (token, bot, ticket) -> row
+
+
+def pg():
+    """Xiriirka Postgres. None haddii aan la habeyn."""
+    global _pg
+    if not DATABASE_URL:
+        return None
+    if _pg is not None:
+        try:
+            with _pg.cursor() as c:
+                c.execute("SELECT 1")
+            return _pg
+        except Exception:
+            _pg = None
+    try:
+        import psycopg2
+        _pg = psycopg2.connect(DATABASE_URL, connect_timeout=6)
+        _pg.autocommit = True
+        with _pg.cursor() as c:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS trades (
+                    token      TEXT NOT NULL,
+                    bot        TEXT NOT NULL,
+                    ticket     BIGINT NOT NULL,
+                    symbol     TEXT,
+                    side       TEXT,
+                    strat      TEXT,
+                    lot        DOUBLE PRECISION,
+                    entry      DOUBLE PRECISION,
+                    exitp      DOUBLE PRECISION,
+                    sl         DOUBLE PRECISION,
+                    tp         DOUBLE PRECISION,
+                    profit     DOUBLE PRECISION,
+                    open_time  TEXT,
+                    close_time TEXT,
+                    added      BIGINT,
+                    PRIMARY KEY (token, bot, ticket)
+                )""")
+            c.execute("CREATE INDEX IF NOT EXISTS trades_tok ON trades(token, close_time)")
+        return _pg
+    except Exception as e:
+        print("PG connect failed:", e)
+        _pg = None
+        return None
+
+
+TRADE_FIELDS = ["ticket", "symbol", "side", "strat", "lot", "entry",
+                "exitp", "sl", "tp", "profit", "open_time", "close_time"]
+
+
+def store_trades(tok, bot, rows):
+    """Soo celi tirada CUSUB ee la kaydiyay."""
+    conn = pg()
+    added = 0
+    now = int(time.time())
+    if conn:
+        with conn.cursor() as c:
+            for r in rows:
+                try:
+                    c.execute("""
+                        INSERT INTO trades (token,bot,ticket,symbol,side,strat,lot,
+                                            entry,exitp,sl,tp,profit,open_time,close_time,added)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT (token,bot,ticket) DO NOTHING""",
+                        (tok, bot, int(r["ticket"]), r.get("symbol"), r.get("side"),
+                         r.get("strat"), r.get("lot"), r.get("entry"), r.get("exitp"),
+                         r.get("sl"), r.get("tp"), r.get("profit"),
+                         r.get("open_time"), r.get("close_time"), now))
+                    added += c.rowcount
+                except Exception as e:
+                    print("insert failed:", e)
+        return added
+
+    for r in rows:
+        key = (tok, bot, int(r["ticket"]))
+        if key in MEM_TRADES:
+            continue
+        row = dict(r); row["bot"] = bot; row["added"] = now
+        MEM_TRADES[key] = row
+        added += 1
+    if len(MEM_TRADES) > 5000:
+        for k in list(MEM_TRADES)[:1000]:
+            del MEM_TRADES[k]
+    return added
+
+
+def load_trades(tok, limit=500):
+    conn = pg()
+    if conn:
+        with conn.cursor() as c:
+            c.execute("""SELECT bot,ticket,symbol,side,strat,lot,entry,exitp,sl,tp,
+                                profit,open_time,close_time
+                         FROM trades WHERE token=%s
+                         ORDER BY close_time DESC NULLS LAST, ticket DESC
+                         LIMIT %s""", (tok, limit))
+            cols = ["bot","ticket","symbol","side","strat","lot","entry","exitp",
+                    "sl","tp","profit","open_time","close_time"]
+            return [dict(zip(cols, row)) for row in c.fetchall()]
+    rows = [v for (t, b, tk), v in MEM_TRADES.items() if t == tok]
+    rows.sort(key=lambda r: (r.get("close_time") or "", r.get("ticket") or 0), reverse=True)
+    return rows[:limit]
+
+
+def journal_stats(rows):
+    """Tirooyinka guud + lammaane kasta."""
+    def calc(items):
+        wins  = [r for r in items if (r.get("profit") or 0) > 0]
+        loss  = [r for r in items if (r.get("profit") or 0) < 0]
+        gw = sum(r["profit"] for r in wins)
+        gl = abs(sum(r["profit"] for r in loss))
+        n  = len(wins) + len(loss)
+        return {
+            "trades": n,
+            "wins": len(wins), "losses": len(loss),
+            "winrate": round(len(wins) / n * 100, 1) if n else None,
+            "gross_win": round(gw, 2), "gross_loss": round(gl, 2),
+            "net": round(gw - gl, 2),
+            "pf": round(gw / gl, 2) if gl > 0 else (999.0 if gw > 0 else 0.0),
+            "avg_win": round(gw / len(wins), 2) if wins else 0.0,
+            "avg_loss": round(-gl / len(loss), 2) if loss else 0.0,
+            "best": round(max([r["profit"] for r in wins]), 2) if wins else 0.0,
+            "worst": round(min([r["profit"] for r in loss]), 2) if loss else 0.0,
+        }
+
+    overall = calc(rows)
+    per = {}
+    for r in rows:
+        per.setdefault(r.get("symbol") or "?", []).append(r)
+    symbols = []
+    for sym, items in per.items():
+        st = calc(items)
+        st["symbol"] = sym
+        symbols.append(st)
+    symbols.sort(key=lambda x: -x["net"])
+
+    if overall["trades"] < 30:
+        verdict = "sug"
+        msg = "%d trade. Ugu yaraan 30 ka hor inta aan wax lagu xukumin." % overall["trades"]
+    elif overall["pf"] >= 1.3:
+        verdict = "good"
+        msg = "PF %.2f — xoog leh. Sii wad ilaa 100 trade." % overall["pf"]
+    elif overall["pf"] >= 0.9:
+        verdict = "unclear"
+        msg = "PF %.2f — mugdi. Sample kordhi, wax ha beddelin." % overall["pf"]
+    else:
+        verdict = "bad"
+        msg = "PF %.2f — ma shaqeynayso. Wax beddel." % overall["pf"]
+
+    return {"overall": overall, "symbols": symbols,
+            "verdict": verdict, "message": msg,
+            "persistent": bool(DATABASE_URL)}
+
+
+@app.route("/trades", methods=["POST", "OPTIONS"])
+def post_trades():
+    """EA -> server: trade-yada la xiray (ticket la socda)."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+    tok = get_token(request)
+    if not tok:
+        return jsonify({"error": "no token"}), 401
+    bot = get_bot(request)
+    data = request.get_json(silent=True) or {}
+    raw = data.get("trades") or []
+
+    rows = []
+    for r in raw:
+        try:
+            tk = int(r.get("ticket") or 0)
+        except (TypeError, ValueError):
+            continue
+        if tk <= 0:
+            continue
+        row = {"ticket": tk}
+        for k in TRADE_FIELDS[1:]:
+            row[k] = r.get(k)
+        for k in ("lot", "entry", "exitp", "sl", "tp", "profit"):
+            try:
+                row[k] = float(row[k]) if row[k] is not None else None
+            except (TypeError, ValueError):
+                row[k] = None
+        rows.append(row)
+
+    added = store_trades(tok, bot, rows)
+    return jsonify({"ok": True, "received": len(rows), "new": added,
+                    "persistent": bool(DATABASE_URL)})
+
+
+@app.route("/journal", methods=["GET"])
+def journal():
+    tok = request.args.get("token") or MASTER_TOKEN
+    sym = request.args.get("symbol")
+    rows = load_trades(tok, 500)
+    stats = journal_stats(rows)
+    shown = [r for r in rows if (not sym or r.get("symbol") == sym)]
+    return jsonify({"trades": shown[:120], "stats": stats,
+                    "total_stored": len(rows)})
+
+
+@app.route("/journal.csv", methods=["GET"])
+def journal_csv():
+    tok = request.args.get("token") or MASTER_TOKEN
+    rows = load_trades(tok, 2000)
+    out = ["bot,ticket,symbol,side,strat,lot,entry,exit,sl,tp,profit,open_time,close_time"]
+    for r in rows:
+        out.append(",".join(str(r.get(k) if r.get(k) is not None else "")
+                   for k in ["bot","ticket","symbol","side","strat","lot","entry",
+                             "exitp","sl","tp","profit","open_time","close_time"]))
+    resp = Response("\n".join(out), mimetype="text/csv")
+    resp.headers["Content-Disposition"] = "attachment; filename=moha_trades.csv"
+    return resp
+
 # ============ 8) Pages ============
 EMBEDDED_HTML = """<!DOCTYPE html>
 <html lang="so">
@@ -1014,21 +1242,32 @@ button{font-family:inherit;cursor:pointer}
 
   <!-- ===== JOURNAL ===== -->
   <section class="pane" data-p="journal">
+    <div class="block">
+      <h2 class="sec-h">Journal <span class="rt" id="j-store"></span></h2>
+      <div class="chips" id="jSyms"></div>
+      <div class="kpis" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-bottom:10px">
+        <div class="card kpi"><div class="lbl">Trade guud</div><div class="val num" id="jn_total">-</div><div class="lbl" id="jn_wl" style="margin-top:3px"></div></div>
+        <div class="card kpi"><div class="lbl">Win rate</div><div class="val num or" id="jn_wr">-</div></div>
+      </div>
+      <div class="kpis" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+        <div class="card kpi accent"><div class="lbl">Profit factor</div><div class="val num" id="jn_pf">-</div></div>
+        <div class="card kpi"><div class="lbl">Net</div><div class="val num" id="jn_net">-</div></div>
+      </div>
+      <div id="jn_verdict"></div>
+    </div>
+
     <div class="card block">
-      <h2 class="sec-h">Journal <span class="rt">ilaa 1 sano</span></h2>
-      <div class="tabs" id="jseg" style="margin-bottom:13px">
-        <div data-p="today">Maanta</div><div data-p="week" class="on">Toddobaad</div>
-        <div data-p="month">Bishii</div><div data-p="year">Guud</div>
-      </div>
-      <div class="jhero">
-        <div class="jg"><div class="jl">Faa'iido</div><div class="jv" id="j_gain">—</div><div class="js" id="j_gainabs">—</div></div>
-        <div class="jg d"><div class="jl">Balance</div><div class="jv or" id="j_bal">—</div><div class="js" id="j_eq">—</div></div>
-      </div>
-      <div class="jmon-h">Waxqabadka bille</div>
-      <div id="j_bars"><svg viewBox="0 0 420 130" preserveAspectRatio="none" id="j_svg"></svg>
-        <div class="jmrow"><span>J</span><span>F</span><span>M</span><span>A</span><span>M</span><span>J</span><span>J</span><span>A</span><span>S</span><span>O</span><span>N</span><span>D</span></div>
-      </div>
-      <div class="jgrid" id="j_grid"></div>
+      <h2 class="sec-h">Lammaane kasta</h2>
+      <div id="jSymTable"><div class="ot-empty">Xog weli ma jirto</div></div>
+    </div>
+
+    <div class="card block">
+      <h2 class="sec-h">Trade-yadii u dambeeyay <span class="rt" id="j-count"></span></h2>
+      <div id="jList"><div class="ot-empty">Xog weli ma jirto</div></div>
+    </div>
+
+    <div class="block">
+      <button style="width:100%;height:44px" id="jCsv">Soo dejiso CSV</button>
     </div>
   </section>
 
@@ -1062,6 +1301,7 @@ function showTab(t){
   document.querySelectorAll('#nav button[data-t]').forEach(b=>b.classList.toggle('active',b.dataset.t===t));
   if(t==='chart')initChart(LAST_SYMBOL);
   if(t==='signals')loadSignals();
+  if(t==='journal')loadJournal();
   window.scrollTo({top:0,behavior:'smooth'});
 }
 document.querySelectorAll('#tabs div').forEach(d=>d.addEventListener('click',()=>showTab(d.dataset.t)));
@@ -1232,144 +1472,74 @@ function renderTrades(trades){
 }
 
 /* ===== JOURNAL ===== */
-let J_DATA=null,J_PERIOD='week';
-function renderJournal(j){
-  if(!j)return;
-  const per={today:['Maanta',j.today],week:['Toddobaad',j.week],month:['Bishii',j.month],year:['Guud',j.year]};
-  const sel=per[J_PERIOD]||per.week;const pnl=+sel[1]||0;
-  const gv=$('j_gain'),ga=$('j_gainabs');
-  gv.textContent=J_PERIOD==='year'?((j.gainPct>=0?'+':'')+(+j.gainPct).toFixed(1)+'%'):((pnl>=0?'+':'')+money(Math.abs(pnl)));
-  gv.className='jv'+(pnl<0?' neg':'');
-  ga.textContent=sel[0]+': '+(pnl>=0?'+':'')+money(Math.abs(pnl));
-  $('j_bal').textContent=money(j.balance);$('j_eq').textContent='Equity '+money(j.equity);
-  const m=Array.isArray(j.monthly)?j.monthly:new Array(12).fill(0);
-  const mx=Math.max(1,...m.map(v=>Math.abs(+v||0)));
-  const W=420,H=130,mid=H/2,bw=24,gap=(W-bw*12)/13;
-  let svg='<line x1="0" y1="'+mid+'" x2="'+W+'" y2="'+mid+'" stroke="#282833" stroke-width="1"/>';
-  m.forEach((v,i)=>{const val=+v||0,h=Math.max(3,Math.abs(val)/mx*(mid-8)),x=gap+i*(bw+gap);
-    svg+='<rect x="'+x.toFixed(1)+'" y="'+(val>=0?mid-h:mid).toFixed(1)+'" width="'+bw+'" height="'+h.toFixed(1)+'" rx="2" fill="'+(val>=0?'#22e37a':'#e0524f')+'"/>';});
-  $('j_svg').innerHTML=svg;
-  const g=[['Win rate',(+j.winRate).toFixed(1)+'%','g'],['Profit factor',(+j.pf).toFixed(2),'o'],['Trades',(+j.trades).toLocaleString(),''],
-    ['Pips',(j.pips>=0?'+':'')+Math.round(j.pips).toLocaleString(),j.pips>=0?'g':'r'],['Avg win','+'+money(Math.abs(j.avgWin)),'g'],
-    ['Avg loss','-'+money(Math.abs(j.avgLoss)),'r'],['Drawdown',(+j.dd).toFixed(1)+'%','r'],
-    ['Best','+'+money(Math.abs(j.best)),'g'],['Worst','-'+money(Math.abs(j.worst)),'r']];
-  $('j_grid').innerHTML=g.map(x=>'<div class="jst"><div class="jl2">'+x[0]+'</div><div class="jv2 '+x[2]+'">'+x[1]+'</div></div>').join('');
-}
-document.querySelectorAll('#jseg div').forEach(el=>el.addEventListener('click',()=>{
-  J_PERIOD=el.dataset.p;document.querySelectorAll('#jseg div').forEach(x=>x.classList.remove('on'));el.classList.add('on');
-  if(J_DATA)renderJournal(J_DATA);}));
+let J_SYM=null;
+function jMoney(v){const n=+v||0;return (n>=0?'+':'-')+'$'+Math.abs(n).toFixed(2);}
 
+function renderJournal(d){
+  const st=d.stats, o=st.overall;
+  $('j-store').textContent = st.persistent ? 'waaraya' : 'xusuusta';
+  $('j-count').textContent = d.trades.length;
+  $('jn_total').textContent = o.trades || '0';
+  $('jn_wl').textContent    = o.wins+' W · '+o.losses+' L';
+  $('jn_wr').textContent    = (o.winrate==null?'—':o.winrate+'%');
+  $('jn_pf').textContent    = (o.trades?o.pf.toFixed(2):'—');
+  $('jn_pf').className      = 'val num '+(o.pf>=1.3?'up':o.pf>=0.9?'or':'down');
+  $('jn_net').textContent   = (o.trades?jMoney(o.net):'—');
+  $('jn_net').className     = 'val num '+(o.net>=0?'up':'down');
 
-/* ===== BINARY SIGNALS ===== */
-let SIG_SYM='EUR/USD', SIG_EXP=5, SIG_BUSY=false;
+  const cls = (st.verdict==='good')?'okbox':'warnbox';
+  $('jn_verdict').innerHTML='<div class="'+cls+'" style="margin-top:12px">'+esc(st.message)+'</div>';
 
-function payoutVal(){const v=parseFloat($('payout').value);return (v>=50&&v<=100)?v:80;}
+  const chips=$('jSyms');chips.innerHTML='';
+  const mk=(label,val)=>{const b=document.createElement('button');
+    b.className='chip2'+(val===J_SYM?' on':'');b.textContent=label;
+    b.addEventListener('click',()=>{J_SYM=val;loadJournal();});chips.appendChild(b);};
+  mk('Dhammaan',null);
+  st.symbols.forEach(x=>mk(x.symbol,x.symbol));
 
-function renderSigSyms(list){
-  const box=$('sigSyms');box.innerHTML='';
-  (list||['EUR/USD','GBP/USD','USD/JPY','AUD/USD']).forEach(sym=>{
-    const b=document.createElement('button');
-    b.className='chip2'+(sym===SIG_SYM?' on':'');b.textContent=sym;
-    b.addEventListener('click',()=>{SIG_SYM=sym;renderSigSyms(list);});
-    box.appendChild(b);
-  });
-}
-document.querySelectorAll('#sigExp button').forEach(b=>b.addEventListener('click',()=>{
-  SIG_EXP=+b.dataset.e;
-  document.querySelectorAll('#sigExp button').forEach(x=>x.classList.remove('on'));
-  b.classList.add('on');
-}));
-
-function sigCard(r){
-  if(r.neutral){
-    return '<div class="sigcard flat"><div style="font-size:12px;color:var(--muted)">'+esc(r.symbol)+
-      ' · '+r.expiry+' min</div><div class="sigdir" style="color:var(--muted);font-size:22px">WAIT</div>'+
-      '<div style="font-size:12.5px;color:var(--ink-2);margin-top:8px">'+esc(r.message)+'</div></div>';
+  const t=$('jSymTable');
+  if(!st.symbols.length){t.innerHTML='<div class="ot-empty">Xog weli ma jirto</div>';}
+  else{
+    t.innerHTML='';
+    st.symbols.forEach(x=>{
+      const row=document.createElement('div');row.className='symrow';
+      row.innerHTML='<div class="si"><div class="sn">'+esc(x.symbol)+'</div>'+
+        '<div class="sm">'+x.trades+' trade · '+(x.winrate==null?'—':x.winrate+'%')+
+        ' · PF '+x.pf.toFixed(2)+'</div></div>'+
+        '<div style="text-align:right"><div style="font-size:15px;font-weight:700" class="'+
+        (x.net>=0?'pl-pos':'pl-neg')+'">'+jMoney(x.net)+'</div>'+
+        '<div style="font-size:11px;color:var(--text-muted)">'+
+        (x.trades<30?'sample yar':'sample ku filan')+'</div></div>';
+      t.appendChild(row);
+    });
   }
-  const buy=r.direction==='BUY';
-  let rows='';
-  (r.reasons||[]).forEach(x=>{rows+='<div class="sigrow"><span>'+esc(x)+'</span></div>';});
-  return '<div class="sigcard '+(buy?'buy':'sell')+'">'+
-    '<div style="display:flex;align-items:flex-start">'+
-      '<div style="flex:1"><div style="font-size:11.5px;color:var(--muted)">'+esc(r.symbol)+' · '+r.expiry+' min</div>'+
-      '<div class="sigdir" style="color:var(--'+(buy?'text-success':'text-danger')+')">'+r.direction+'</div></div>'+
-      '<div style="text-align:right"><div style="font-size:24px;font-weight:800;font-variant-numeric:tabular-nums">'+r.score+'%</div>'+
-      '<div style="font-size:10.5px;color:var(--muted)">score</div></div></div>'+
-    '<div style="border-top:1px solid rgba(255,255,255,.09);margin-top:12px;padding-top:10px">'+rows+'</div>'+
-    '<div style="margin-top:11px;padding-top:10px;border-top:1px solid rgba(255,255,255,.09);font-size:11.5px;color:var(--muted)">'+
-      'Entry '+r.entry_price+' · natiijada '+r.expiry+' daqiiqo kadib ayaa la hubinayaa</div></div>';
-}
 
-async function requestSignal(){
-  if(SIG_BUSY)return;
-  SIG_BUSY=true;const btn=$('sigGo');btn.disabled=true;btn.textContent='XISAABINAYA…';
-  $('sigOut').innerHTML='<div class="sigcard flat"><div style="font-size:13px;color:var(--text-secondary)">Xisaabinaya '+esc(SIG_SYM)+'…</div></div>';
-  try{
-    const r=await fetch('/signal/request',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({token:TOKEN,symbol:SIG_SYM,expiry:SIG_EXP})});
-    const d=await r.json();
-    if(d.error){
-      $('sigOut').innerHTML='<div class="sigcard flat"><div style="font-size:13px;color:var(--bad-ink)">'+
-        esc(d.hint||d.error)+'</div></div>';
-    }else{
-      $('sigOut').innerHTML=sigCard(d.signal||d);
-      loadSignals();
-    }
-  }catch(e){
-    $('sigOut').innerHTML='<div class="sigcard flat"><div style="font-size:13px;color:var(--bad-ink)">Server-ka lama gaari karin</div></div>';
-  }
-  SIG_BUSY=false;btn.disabled=false;btn.textContent='CODSO SIGNAL';
-}
-$('sigGo').addEventListener('click',requestSignal);
-$('payout').addEventListener('change',loadSignals);
-
-function renderAccuracy(st){
-  const be=st.breakeven, acc=st.accuracy;
-  $('accBE').textContent='break-even '+be+'%';
-  $('accMark').style.left=be+'%';
-  $('accN').textContent=st.total+' signal'+(st.pending?' · '+st.pending+' sugaya':'');
-  if(acc==null){
-    $('accVal').textContent='—';$('accBar').style.width='0%';
-    $('accNote').innerHTML='<div class="warnbox">Xog kuma filna. Ugu yaraan 30 signal ka hor inta aan wax lagu xukumin.</div>';
-    return;
-  }
-  $('accVal').textContent=acc+'%';
-  const good=acc>=be;
-  $('accBar').style.width=Math.min(acc,100)+'%';
-  $('accBar').style.background=good?'var(--good)':'var(--bad)';
-  $('accNote').innerHTML=good
-    ? '<div class="okbox">Payout '+st.payout+'% ayaa u baahan '+be+'%. Hadda '+acc+'% — khadka korkiisa. '+
-      (st.total<30?'Laakiin '+st.total+' signal kuma filna — sug ilaa 100.':'')+'</div>'
-    : '<div class="warnbox">Payout '+st.payout+'% ayaa u baahan '+be+'%. Hadda '+acc+'% — khadka hoostiisa. Lacag dhab ah ha ku ganacsan.</div>';
-}
-
-function renderSigHist(list){
-  const box=$('sigHist');
-  if(!list||!list.length){box.innerHTML='<div class="ot-empty">Signal weli lama codsan</div>';return;}
-  box.innerHTML='';
-  list.slice(0,15).forEach(r=>{
-    const st=r.status;
-    const lbl=st==='correct'?'SAX':st==='wrong'?'KHALAD':st==='void'?'VOID':'SUGAYA';
-    const col=st==='correct'?'var(--text-success)':st==='wrong'?'var(--text-danger)':'var(--text-muted)';
-    const d=document.createElement('div');d.className='sighist';
-    d.innerHTML='<span>'+esc(r.symbol)+' · '+r.direction+' · '+r.score+'%</span>'+
-      '<span style="color:'+col+';font-weight:700">'+lbl+'</span>';
-    box.appendChild(d);
+  const l=$('jList');
+  if(!d.trades.length){l.innerHTML='<div class="ot-empty">Xog weli ma jirto</div>';return;}
+  l.innerHTML='';
+  d.trades.slice(0,40).forEach(r=>{
+    const p=+r.profit||0, buy=(r.side||'').toUpperCase()==='BUY';
+    const row=document.createElement('div');row.className='symrow';
+    row.innerHTML='<div class="si"><div class="sn" style="font-size:14px">'+esc(r.symbol)+
+      ' <span class="badge '+(buy?'buy':'sell')+'">'+esc(r.side)+'</span></div>'+
+      '<div class="sm">'+esc(r.close_time||'')+' · '+esc(r.strat||'')+'</div></div>'+
+      '<div style="text-align:right"><div style="font-size:15px;font-weight:700" class="'+
+      (p>=0?'pl-pos':'pl-neg')+'">'+jMoney(p)+'</div>'+
+      '<div style="font-size:11px;color:var(--text-muted)">#'+esc(r.ticket)+'</div></div>';
+    l.appendChild(row);
   });
 }
 
-async function loadSignals(){
+async function loadJournal(){
   try{
-    const r=await fetch('/signal/history?token='+encodeURIComponent(TOKEN)+'&payout='+payoutVal(),{cache:'no-store'});
-    const d=await r.json();
-    renderSigSyms(d.symbols);
-    renderSigHist(d.signals);
-    renderAccuracy(d.stats);
-    $('sig-pending').textContent=d.stats.pending?d.stats.pending+' sugaya':'';
-    $('sig-key').textContent=d.has_key?'':'TWELVEDATA_KEY ma jiro';
+    const u='/journal?token='+encodeURIComponent(TOKEN)+(J_SYM?'&symbol='+encodeURIComponent(J_SYM):'');
+    const r=await fetch(u,{cache:'no-store'});
+    renderJournal(await r.json());
   }catch(e){}
 }
-renderSigSyms();
+$('jCsv').addEventListener('click',()=>{
+  window.open('/journal.csv?token='+encodeURIComponent(TOKEN),'_blank');
+});
 
 /* ===== STATE ===== */
 const DEMO={balance:10482.55,equity:10531.20,profit:182.55,winrate:76.2,drawdown:3.10,opentrades:2,symbol:"GBPUSD",
@@ -1431,12 +1601,9 @@ function applyState(d,strict){
   put('k_open',d.opentrades,v=>String(v));
   if(d.symbol){$('symbol').textContent=d.symbol;LAST_SYMBOL=d.symbol;}
   else if(strict)$('symbol').textContent='—';
-  if(strict&&!d.journal){J_DATA=null;$('j_grid').innerHTML='';$('j_svg').innerHTML='';
-    ['j_gain','j_gainabs','j_bal','j_eq'].forEach(i=>$(i).textContent='—');}
   renderTrades(d.trades);
   renderSymbols(d.symbols);
   if(d.bots)renderBots(d.bots);
-  if(d.journal){J_DATA=d.journal;renderJournal(d.journal);}
 }
 
 function showDemo(reason){applyState(DEMO,false);setStatus('demo',reason||'no_data');}
