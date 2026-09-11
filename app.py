@@ -2,7 +2,7 @@
 MOHA PRO - Cloud Dashboard Backend (v3, multi-bot)
 --------------------------------------------------
 Isbeddelka v3:
-  - LABA BOT AMA KA BADAN: bot kastaa wuxuu diraa "bot":"<magac>". Xogtoodu
+  - LABA BOT AMA KA BADAN: bot kastaa wuxuu diraa `"bot":"<magac>"`. Xogtoodu
     gebi ahaanba way kala go'an tahay - state, amarro, symbols.
   - Dashboard-ku wuxuu leeyahay bot switcher: "Dhammaan" ama mid gaar ah.
   - Amarku wuxuu u socdaa BOOTKA la doortay oo keliya.
@@ -23,23 +23,25 @@ import urllib.request
 import urllib.parse
 from flask import Flask, request, jsonify, Response
 
-app = Flask(name)
+app = Flask(__name__)
 
-BASE_DIR = os.path.dirname(os.path.abspath(file))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DASHBOARD_FILE = os.path.join(BASE_DIR, "dashboard.html")
 
 # ---------------- CONFIG ----------------
 # MUHIIM: AUTH_TOKEN waa in uu SAX AHAAN la mid yahay InpCloudToken ee EA-yada.
-# LABADA BOT waxay isticmaalaan ISKU TOKEN - waxa kala saara bot magaca.
+# LABADA BOT waxay isticmaalaan ISKU TOKEN - waxa kala saara `bot` magaca.
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "MohaPro_Live_2026_MySecret")
 MASTER_TOKEN = AUTH_TOKEN
 
-BUILD = "v4.0-2026-09-08"
+BUILD = "v4.1-2026-09-08"
 DEFAULT_BOT = "default"
 MAX_HISTORY = 120
 STALE_SECONDS = 120
-FORGET_SECONDS = 1800   # bot aan wax dirin 30 daqiiqo -> liiska laga saaro
+FORGET_SECONDS = 7*24*3600   # 7 maalmood. Xogtu way sii jirtaa marka PC-gu damsan yahay.
+                             # Bot duug ah gacanta ayaa looga saarayaa (long-press).
 MAX_QUEUE = 20
+MAX_JOURNAL = 100        # immisa trade oo xiran oo la hayo bot kasta
 
 # ---------------- SIGNALS (ikhtiyaari) ----------------
 TWELVEDATA_KEY = os.environ.get("TWELVEDATA_KEY", "")
@@ -54,7 +56,7 @@ def blank_state():
     return {
         "balance": None, "equity": None, "profit": None,
         "winrate": None, "drawdown": None, "opentrades": None,
-        "symbol": None, "trades": None, "journal": None,
+        "symbol": None, "trades": None, "journal": None, "history": None,
         "account": None, "broker": None, "trading": None,
         "updated": None, "equity_history": [],
     }
@@ -118,18 +120,23 @@ def update():
     st = STATES.setdefault(tok, {}).setdefault(bot, blank_state())
 
     for k in ["balance", "equity", "profit", "winrate", "drawdown", "opentrades",
-              "symbol", "trades", "journal", "account", "broker", "trading"]:
+              "symbol", "trades", "journal", "account", "broker", "trading",
+              "history"]:
         if k in data:
             st[k] = data[k]
 
     st["updated"] = int(time.time())
-if st.get("equity") is not None:
+
+    if st.get("equity") is not None:
         try:
             st["equity_history"].append(float(st["equity"]))
             if len(st["equity_history"]) > MAX_HISTORY:
                 del st["equity_history"][0:len(st["equity_history"]) - MAX_HISTORY]
         except (TypeError, ValueError):
             pass
+
+    #--- trade-yada la xiray journal-ka ku dar (ticket = kuwa cusub oo keliya)
+    merge_journal(tok, bot, data.get("trades"))
 
     seen = SEEN.setdefault(tok, {}).setdefault(bot, {"count": 0, "ip": ""})
     seen["count"] += 1
@@ -141,6 +148,8 @@ if st.get("equity") is not None:
 
 # ============ 2) Dashboard <- Server ============
 def live_info(st):
+    """(live, reason, age). reason='stale' macnaheedu waa xog DHAB AH oo duugoobay -
+    ma aha xog la'aan. Dashboard-ku waa inuu wali tusaa, ma aha inuu demo ku beddelo."""
     if not st:
         return False, "no_data", None
     updated = st.get("updated") or 0
@@ -150,6 +159,18 @@ def live_info(st):
     if age >= STALE_SECONDS:
         return False, "stale", age
     return True, "live", age
+
+
+def age_text(age):
+    if age is None:
+        return ""
+    if age < 90:
+        return "%ds ka hor" % age
+    if age < 5400:
+        return "%d daqiiqo ka hor" % (age // 60)
+    if age < 172800:
+        return "%d saac ka hor" % (age // 3600)
+    return "%d maalmood ka hor" % (age // 86400)
 
 
 def bot_summary(tok, bot, st):
@@ -199,6 +220,7 @@ def get_state():
         out = dict(st)
         live, reason, age = live_info(st)
         out.update({"live": live, "reason": reason, "age": age, "bot": bot,
+                    "age_text": age_text(age), "has_data": bool(st.get("updated")),
                     "symbols": build_symbols(tok, bot, st), "bots": summaries})
         return jsonify(out)
 
@@ -226,11 +248,142 @@ def get_state():
         "live": live_any,
         "reason": "live" if live_any else (summaries[0]["reason"] if summaries else "no_data"),
         "age": min([b["age"] for b in summaries if b["age"] is not None], default=None),
+        "has_data": any(b["age"] is not None for b in summaries),
         "bot": None, "bots": summaries, "symbols": syms,
         "profit": round(prof, 2), "opentrades": opens,
         "trades": trades, "aggregate": True,
     })
     return jsonify(out)
+
+
+
+# ============ 2b) JOURNAL - taariikhda trade-yada ============
+#
+#  Bootku wuxuu soo diraa ilaa 100 trade oo xiran wicitaan kasta.
+#  Server-ku ticket-ka ayuu ku kala saaraa, marka mid laba jeer lama
+#  tirinayo. Render markuu hurdo ka soo kaco, xusuustu waa madhan -
+#  laakiin bootku wuxuu dib u buuxinayaa 5 sekan gudahood. Sidaas
+#  darteed database looma baahna: MT5 history-gu waa isha runta ah.
+
+JOURNAL = {}   # token -> bot -> {ticket: trade}
+
+
+def merge_journal(tok, bot, trades):
+    if not isinstance(trades, list):
+        return
+    store = JOURNAL.setdefault(tok, {}).setdefault(bot, {})
+    for t in trades:
+        if (t.get("st") or "").upper() != "CLOSED":
+            continue
+        tk = t.get("tk")
+        if tk is None:
+            continue
+        store[str(tk)] = t
+    # kaliya 100-ka ugu dambeeya (waqtiga xiritaanka)
+    if len(store) > MAX_JOURNAL:
+        keep = sorted(store.items(), key=lambda kv: kv[1].get("ct") or 0,
+                      reverse=True)[:MAX_JOURNAL]
+        JOURNAL[tok][bot] = dict(keep)
+
+
+def journal_rows(tok, bot=None):
+    tenant = JOURNAL.get(tok, {})
+    rows = []
+    for b, store in tenant.items():
+        if bot and b != bot:
+            continue
+        for t in store.values():
+            r = dict(t)
+            r["bot"] = b
+            rows.append(r)
+    rows.sort(key=lambda r: r.get("ct") or 0, reverse=True)
+    return rows
+
+
+def _pips(t):
+    """Farqiga qiimaha oo points ah. Symbol-ka digits-kiisa lama hayo,
+    marka waxaa la isticmaalayaa qiyaas ku salaysan qiimaha."""
+    try:
+        e, x = float(t.get("entry") or 0), float(t.get("exit") or 0)
+    except (TypeError, ValueError):
+        return None
+    if e <= 0 or x <= 0:
+        return None
+    d = (x - e) if (t.get("type") == "BUY") else (e - x)
+    scale = 100.0 if e > 20 else 10000.0     # JPY/dahab vs lammaanaha kale
+    return round(d * scale, 1)
+
+
+def stats_for(rows):
+    wins = [r for r in rows if (r.get("profit") or 0) > 0]
+    loss = [r for r in rows if (r.get("profit") or 0) < 0]
+    gp = sum(float(r.get("profit") or 0) for r in wins)
+    gl = abs(sum(float(r.get("profit") or 0) for r in loss))
+    n = len(wins) + len(loss)
+    return {
+        "trades": n, "wins": len(wins), "losses": len(loss),
+        "winrate": round(len(wins) / n * 100, 1) if n else None,
+        "gross_profit": round(gp, 2), "gross_loss": round(gl, 2),
+        "net": round(gp - gl, 2),
+        "pf": round(gp / gl, 2) if gl > 0 else (999.0 if gp > 0 else 0.0),
+        "avg_win": round(gp / len(wins), 2) if wins else 0.0,
+        "avg_loss": round(-gl / len(loss), 2) if loss else 0.0,
+        "best": round(max([float(r.get("profit") or 0) for r in rows], default=0), 2),
+        "worst": round(min([float(r.get("profit") or 0) for r in rows], default=0), 2),
+    }
+
+
+@app.route("/journal", methods=["GET"])
+def journal():
+    tok = request.args.get("token") or MASTER_TOKEN
+    bot = request.args.get("bot")
+    sym = (request.args.get("symbol") or "").upper()
+
+    rows = journal_rows(tok, clean_bot(bot) if bot else None)
+    for r in rows:
+        r["pips"] = _pips(r)
+
+    # --- kala saarid symbol kasta (halkan ayaa jawaabtu ku jirto)
+    per = {}
+    for r in rows:
+        per.setdefault((r.get("sym") or "?").upper(), []).append(r)
+    by_symbol = []
+    for k, v in per.items():
+        st = stats_for(v)
+        st["symbol"] = k
+        by_symbol.append(st)
+    by_symbol.sort(key=lambda x: -x["net"])
+
+    shown = [r for r in rows if not sym or (r.get("sym") or "").upper() == sym]
+
+    return jsonify({
+        "trades": shown[:MAX_JOURNAL],
+        "overall": stats_for(rows),
+        "by_symbol": by_symbol,
+        "symbols": sorted(per.keys()),
+        "stored": len(rows),
+        "capacity": MAX_JOURNAL,
+    })
+
+
+@app.route("/journal.csv", methods=["GET"])
+def journal_csv():
+    tok = request.args.get("token") or MASTER_TOKEN
+    rows = journal_rows(tok)
+    out = ["ticket,bot,symbol,type,strategy,lot,entry,exit,open_time,close_time,pips,profit"]
+    for r in rows:
+        out.append(",".join(str(x) for x in [
+            r.get("tk", ""), r.get("bot", ""), r.get("sym", ""), r.get("type", ""),
+            (r.get("strat") or "").replace(",", " "), r.get("lot", ""),
+            r.get("entry", ""), r.get("exit", ""),
+            time.strftime("%Y-%m-%d %H:%M", time.gmtime(r.get("ot") or 0)) if r.get("ot") else "",
+            time.strftime("%Y-%m-%d %H:%M", time.gmtime(r.get("ct") or 0)) if r.get("ct") else "",
+            _pips(r) if _pips(r) is not None else "", r.get("profit", ""),
+        ]))
+    csv = "\n".join(out)
+    return Response(csv, mimetype="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=moha_trades.csv"})
+
 # ============ 3) SYMBOLS ============
 def build_symbols(tok, bot, st):
     if not st:
@@ -349,7 +502,8 @@ def set_command():
             return jsonify({"error": "bot lama helin"}), 404
     else:
         targets = [clean_bot(raw)]
-sent = []
+
+    sent = []
     for bot in targets:
         if cmd.startswith("SYMBOL_ON:"):
             SYMBOL_FLAGS.setdefault(tok, {}).setdefault(bot, {})[cmd.split(":", 1)[1]] = True
@@ -456,6 +610,8 @@ def _rsi(values, period=14):
     if al == 0:
         return 100.0
     return 100.0 - 100.0 / (1.0 + ag / al)
+
+
 def _fetch_closes(symbol, interval, size=60):
     if not TWELVEDATA_KEY:
         return None, None, "no_key"
@@ -553,7 +709,7 @@ def _spot(symbol):
 
 def verify_pending(tok):
     """Signal-adii muddadoodu dhammaatay natiijadooda hubi."""
-recs = SIGNALS.get(tok) or []
+    recs = SIGNALS.get(tok) or []
     now = time.time()
     checked = 0
     for r in recs:
@@ -648,4 +804,870 @@ def signal_request():
 
 
 @app.route("/signal/history", methods=["GET"])
+def signal_history():
+    tok = request.args.get("token") or MASTER_TOKEN
+    try:
+        payout = float(request.args.get("payout") or 80)
+    except ValueError:
+        payout = 80.0
+    verify_pending(tok)
+    recs = (SIGNALS.get(tok) or [])[:40]
+    return jsonify({"signals": recs, "stats": signal_stats(tok, payout),
+                    "symbols": SIGNAL_SYMBOLS, "expiries": sorted(EXPIRY_CHOICES),
+                    "has_key": bool(TWELVEDATA_KEY)})
 
+
+
+# ============ 8) Pages ============
+EMBEDDED_HTML = """<!DOCTYPE html>
+<html lang="so">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+<meta name="theme-color" content="#0a0a0f">
+<title>MOHA PRO — Bot Control</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='78' font-size='78'>&#9889;</text></svg>">
+<style>
+:root{
+  --bg:#0a0a0f; --surface:#15151e; --surface-2:#1c1c27; --line:#282833; --line-2:#34343f;
+  --ink:#fff; --ink-2:#a6a6ba; --muted:#6f6f85;
+  --orange:#f0872a; --orange-2:#ff9a3c; --orange-d:#c9661a;
+  --good:#22b455; --good-ink:#3ad46e; --bad:#e0524f; --bad-ink:#f0736f; --info:#3987e5;
+  --font:system-ui,-apple-system,"Segoe UI",sans-serif; --mono:ui-monospace,"Roboto Mono",monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);padding-bottom:80px;-webkit-font-smoothing:antialiased}
+.num{font-variant-numeric:tabular-nums;font-family:var(--mono)}
+.wrap{max-width:820px;margin:0 auto;padding:0 15px}
+button{font-family:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--orange);outline-offset:2px}
+
+/* ===== HERO ===== */
+.hero{position:relative;width:100%;overflow:hidden;min-height:210px;background:#120a06}
+.hero img{width:100%;height:auto;display:block;min-height:210px;object-fit:cover}
+.hero-grad{position:absolute;inset:0;background:linear-gradient(180deg,rgba(10,10,15,.3) 0%,rgba(10,10,15,0) 35%,rgba(10,10,15,.55) 70%,var(--bg) 100%)}
+.hero-top{position:absolute;top:14px;left:0;right:0;padding:0 16px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:7px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.5);backdrop-filter:blur(6px);color:#fff}
+.chip:active{opacity:.6}
+.st-pill{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:700;padding:7px 13px;border-radius:999px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.55);backdrop-filter:blur(6px);letter-spacing:.4px}
+.st-pill .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.st-pill.on{color:var(--good-ink)} .st-pill.on .dot{background:var(--good-ink);animation:pulse 2s infinite}
+.st-pill.demo{color:var(--orange-2)} .st-pill.demo .dot{background:var(--orange-2)}
+.st-pill.off{color:var(--bad-ink)} .st-pill.off .dot{background:var(--bad-ink)}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(34,180,85,.5)}70%{box-shadow:0 0 0 7px rgba(34,180,85,0)}100%{box-shadow:0 0 0 0 rgba(34,180,85,0)}}
+.hero-title{position:absolute;left:18px;bottom:16px;right:18px}
+.hero-title h1{font-size:36px;font-weight:800;letter-spacing:-1px;line-height:.95;text-shadow:0 3px 16px rgba(0,0,0,.8)}
+.hero-title h1 .v{color:var(--orange)}
+.hero-title p{font-size:12px;color:#e0bfa0;margin-top:6px;font-weight:500;text-shadow:0 2px 8px rgba(0,0,0,.9)}
+
+/* ===== BOT LINE ===== */
+.botline{display:flex;align-items:center;gap:9px;margin:16px 2px 12px;font-size:14px;font-weight:600}
+.botline .bd{width:10px;height:10px;border-radius:50%;background:var(--bad)}
+.botline.run .bd{background:var(--good);box-shadow:0 0 0 4px rgba(34,180,85,.2)}
+.botline .clock{margin-left:auto;font-family:var(--mono);font-size:12.5px;color:var(--muted);font-weight:500}
+
+/* ===== ACTIONS ===== */
+.actions{display:grid;grid-template-columns:1fr 1fr 1fr;background:linear-gradient(135deg,var(--orange-2),var(--orange-d));border-radius:16px;overflow:hidden;margin-bottom:14px}
+.actions button{border:none;background:transparent;color:#1a0e00;padding:15px 6px;display:flex;flex-direction:column;align-items:center;gap:5px;position:relative;transition:background .15s}
+.actions button:not(:last-child){border-right:1px solid rgba(0,0,0,.15)}
+.actions button:active{background:rgba(0,0,0,.12)}
+.actions button svg{width:23px;height:23px;stroke:#1a0e00;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.actions button .al{font-size:12.5px;font-weight:700;letter-spacing:.4px}
+.cmd-note{text-align:center;font-size:12px;color:var(--muted);min-height:16px;margin-bottom:14px}
+
+/* ===== BANNER ===== */
+.banner{border-radius:12px;padding:11px 14px;font-size:12.5px;font-weight:600;text-align:center;margin-bottom:15px;line-height:1.5}
+.banner.demo{background:rgba(240,135,42,.13);border:1px solid rgba(240,135,42,.4);color:var(--orange-2)}
+.banner.live{background:rgba(34,180,85,.13);border:1px solid rgba(34,180,85,.45);color:var(--good-ink)}
+.banner.stale{background:rgba(57,135,229,.12);border:1px solid rgba(57,135,229,.45);color:#7fb4f0}
+.st-pill.stale{color:#7fb4f0} .st-pill.stale .dot{background:#7fb4f0}
+.banner a{color:inherit}
+
+/* ===== BOT SWITCHER ===== */
+.botsw{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;margin-bottom:15px;-webkit-overflow-scrolling:touch}
+.botsw button{flex-shrink:0;display:flex;align-items:center;gap:7px;background:var(--surface);border:1px solid var(--line);color:var(--ink-2);border-radius:999px;padding:9px 15px;font-size:13px;font-weight:600;white-space:nowrap}
+.botsw button.on{background:var(--orange);border-color:var(--orange);color:#0a0a0f}
+.botsw button .bdot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex-shrink:0}
+.botsw button .bdot.live{background:var(--good-ink)}
+.botsw button.on .bdot{background:rgba(0,0,0,.45)}
+.botsw button.on .bdot.live{background:#0a3d1c}
+.botcard{display:flex;align-items:center;gap:12px;padding:13px 2px;border-bottom:1px solid var(--line);cursor:pointer}
+.botcard:last-child{border-bottom:none}
+.botcard .bn{font-size:15px;font-weight:700;display:flex;align-items:center;gap:7px}
+.botcard .bm{font-size:12px;color:var(--muted);margin-top:3px;font-variant-numeric:tabular-nums}
+.botcard .bp{margin-left:auto;text-align:right;flex-shrink:0}
+.botcard .bp .v{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
+.botcard .bp .l{font-size:11px;color:var(--muted);margin-top:2px}
+.hide{display:none!important}
+
+/* ===== TABS ===== */
+.tabs{display:flex;background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:3px;gap:3px;margin-bottom:16px}
+.tabs div{flex:1;text-align:center;font-size:13px;font-weight:600;color:var(--ink-2);padding:9px 0;border-radius:8px;cursor:pointer;transition:.15s}
+.tabs div.on{background:var(--orange);color:#0a0a0f}
+.pane{display:none} .pane.on{display:block}
+
+/* ===== SECTIONS ===== */
+.sec-h{font-size:13px;color:var(--orange);font-weight:700;margin:0 2px 12px;display:flex;align-items:center;gap:8px}
+.sec-h::before{content:"";width:4px;height:14px;border-radius:2px;background:var(--orange)}
+.sec-h .rt{margin-left:auto;font-size:11.5px;color:var(--muted);font-weight:500}
+.block{margin-bottom:18px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:15px;padding:14px}
+
+/* ===== KPI ===== */
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.kpi .lbl{font-size:11px;color:var(--muted);font-weight:600}
+.kpi .val{font-size:19px;font-weight:700;margin-top:6px;letter-spacing:-.4px}
+.up{color:var(--good-ink)} .down{color:var(--bad-ink)} .or{color:var(--orange)}
+.kpi.accent{background:linear-gradient(135deg,rgba(240,135,42,.12),var(--surface));border-color:rgba(240,135,42,.3)}
+
+/* ===== SYMBOLS ===== */
+.symrow{display:flex;align-items:center;gap:12px;padding:13px 2px;border-bottom:1px solid var(--line)}
+.symrow:last-child{border-bottom:none}
+.symrow .si{flex:1;min-width:0}
+.symrow .sn{font-size:15px;font-weight:700;letter-spacing:-.2px}
+.symrow .sm{font-size:12px;color:var(--muted);margin-top:2px;font-variant-numeric:tabular-nums}
+.symrow .sm b{font-weight:600}
+.sw{width:44px;height:26px;border-radius:13px;background:var(--line-2);border:none;padding:0;position:relative;flex-shrink:0;transition:background .18s}
+.sw::after{content:"";position:absolute;left:3px;top:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform .18s}
+.sw.on{background:var(--good)}
+.sw.on::after{transform:translateX(18px)}
+.sym-empty{color:var(--muted);text-align:center;padding:26px 10px;font-size:13px;line-height:1.6}
+.addrow{display:flex;gap:8px;margin-top:14px}
+.addrow input{flex:1;background:var(--surface-2);border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:10px 12px;font-family:var(--mono);font-size:13px;text-transform:uppercase}
+.addrow input::placeholder{color:var(--muted);text-transform:none;font-family:var(--font)}
+.addrow button{background:var(--orange);color:#0a0a0f;border:none;border-radius:9px;padding:0 18px;font-weight:700;font-size:13px}
+
+/* ===== STRATEGY ===== */
+.strats{display:flex;gap:9px;flex-wrap:wrap}
+.strat{padding:9px 17px;border-radius:999px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink-2);font-size:13px;font-weight:600;transition:all .15s}
+.strat.active{background:linear-gradient(135deg,var(--orange-2),var(--orange-d));color:#1a0e00;border-color:var(--orange)}
+
+/* ===== TABLE ===== */
+.tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{text-align:left;font-size:11px;color:var(--muted);font-weight:600;padding:9px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+.tbl td{padding:10px;border-bottom:1px solid rgba(255,255,255,.05);font-variant-numeric:tabular-nums;white-space:nowrap}
+.tbl tbody tr:last-child td{border-bottom:none}
+.tbl .sym{font-weight:700}
+.badge{display:inline-block;padding:3px 9px;border-radius:6px;font-size:10.5px;font-weight:700}
+.badge.buy{color:var(--good-ink);background:rgba(34,180,85,.14)}
+.badge.sell{color:var(--bad-ink);background:rgba(224,82,79,.14)}
+.badge.strat{color:var(--orange);background:rgba(240,135,42,.14)}
+.badge.op{color:var(--info);background:rgba(57,135,229,.16)}
+.badge.cl{color:var(--muted);background:rgba(119,119,140,.16)}
+.pl-pos{color:var(--good-ink);font-weight:700} .pl-neg{color:var(--bad-ink);font-weight:700}
+.trow{cursor:pointer} .trow:active{background:rgba(240,135,42,.08)}
+.carcell{width:20px;padding-right:0!important} .car{color:var(--orange);font-size:12px}
+.detrow td{padding:0!important;border:none!important}
+.tdet{background:var(--surface-2);border-radius:0 0 10px 10px;padding:12px 14px!important}
+.det-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.dc{background:#13131c;border:1px solid var(--line);border-radius:8px;padding:9px 11px}
+.dc span{display:block;font-size:10px;color:var(--muted);margin-bottom:4px;font-weight:600}
+.dc b{font-size:14px;font-variant-numeric:tabular-nums}
+@media(max-width:640px){.det-grid{grid-template-columns:repeat(2,1fr)}}
+.ot-empty{color:var(--muted);text-align:center;padding:20px;font-size:13px}
+
+/* ===== JOURNAL ===== */
+.jhero{display:flex;gap:10px;margin-bottom:13px}
+.jhero .jg{flex:1;background:linear-gradient(135deg,rgba(34,227,122,.13),var(--surface));border:1px solid rgba(34,227,122,.5);border-radius:13px;padding:12px 14px}
+.jhero .jg.d{background:linear-gradient(135deg,rgba(240,135,42,.12),var(--surface));border-color:var(--orange)}
+.jhero .jl{font-size:11px;color:var(--ink-2);font-weight:600}
+.jhero .jv{font-size:21px;font-weight:800;margin-top:3px;color:var(--good-ink)}
+.jhero .jv.or{color:var(--orange)} .jhero .jv.neg{color:var(--bad)}
+.jhero .js{font-size:11px;color:var(--muted);margin-top:2px}
+.jmon-h{font-size:12px;color:var(--ink-2);font-weight:600;margin:6px 0 8px}
+#j_bars svg{display:block;width:100%;height:130px}
+.jmrow{display:flex;justify-content:space-between;font-size:9.5px;color:var(--muted);margin-top:5px;padding:0 2px}
+.jgrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px;margin-top:14px}
+.jst{background:#0f0f17;border:1px solid var(--line);border-radius:11px;padding:10px 11px}
+.jst .jl2{font-size:10px;color:var(--ink-2);font-weight:600}
+.jst .jv2{font-size:15px;font-weight:700;margin-top:3px}
+.jst .jv2.g{color:var(--good-ink)} .jst .jv2.r{color:var(--bad-ink)} .jst .jv2.o{color:var(--orange)}
+
+/* ===== SIGNALS ===== */
+.tabs{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.tabs div{flex:0 0 auto;padding:9px 14px;white-space:nowrap}
+.chips{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px}
+.chip2{padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink-2);font-size:12.5px;font-weight:600}
+.chip2.on{background:linear-gradient(135deg,var(--orange-2),var(--orange-d));border-color:var(--orange);color:#1a0e00;font-weight:700}
+.exp{display:flex;gap:7px;margin-bottom:15px}
+.exp button{flex:1;padding:9px 0;border-radius:9px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink-2);font-size:12.5px;font-weight:600}
+.exp button.on{background:#2a2333;border-color:var(--orange);color:var(--orange);font-weight:700}
+.bigbtn{width:100%;border:none;border-radius:13px;padding:16px;background:linear-gradient(135deg,var(--orange-2),var(--orange-d));color:#1a0e00;font-size:15px;font-weight:800;letter-spacing:.3px}
+.bigbtn:disabled{opacity:.5}
+.sigcard{border-radius:15px;padding:15px;margin-top:14px}
+.sigcard.buy{background:linear-gradient(135deg,rgba(34,180,85,.16),var(--surface));border:1px solid rgba(34,180,85,.45)}
+.sigcard.sell{background:linear-gradient(135deg,rgba(224,82,79,.16),var(--surface));border:1px solid rgba(224,82,79,.5)}
+.sigcard.flat{background:var(--surface);border:1px solid var(--line)}
+.sigdir{font-size:30px;font-weight:800;line-height:1.1;margin-top:3px}
+.sigrow{display:flex;justify-content:space-between;font-size:12px;padding:3px 0;color:var(--ink-2)}
+.sighist{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+.sighist:last-child{border-bottom:none}
+.acc{background:linear-gradient(135deg,rgba(240,135,42,.1),var(--surface));border:1px solid rgba(240,135,42,.4);border-radius:15px;padding:15px}
+.accbar{height:8px;border-radius:4px;background:var(--line);position:relative;overflow:hidden}
+.accbar i{display:block;height:100%}
+.accmark{position:absolute;top:-3px;width:2px;height:14px;background:#fff}
+.warnbox{background:rgba(224,82,79,.13);border-radius:9px;padding:11px 12px;font-size:12px;color:var(--bad-ink);line-height:1.6;margin-top:11px}
+.okbox{background:rgba(34,180,85,.13);border-radius:9px;padding:11px 12px;font-size:12px;color:var(--good-ink);line-height:1.6;margin-top:11px}
+
+/* ===== JOURNAL v2 ===== */
+.jsum{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:11px}
+.jbox{background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:.9rem}
+.jbox .l{font-size:11.5px;color:var(--muted)}
+.jbox .v{font-size:22px;font-weight:700;margin-top:3px;font-variant-numeric:tabular-nums}
+.jbox .s{font-size:11px;color:var(--muted);margin-top:2px}
+.jbox.good{background:linear-gradient(135deg,rgba(34,180,85,.13),var(--surface));border-color:rgba(34,180,85,.4)}
+.jbox.bad{background:linear-gradient(135deg,rgba(224,82,79,.13),var(--surface));border-color:rgba(224,82,79,.4)}
+.verdict{border-radius:13px;padding:12px 14px;margin-bottom:15px;font-size:12.5px;line-height:1.6}
+.verdict.good{background:rgba(34,180,85,.12);border:1px solid rgba(34,180,85,.45);color:var(--good-ink)}
+.verdict.bad{background:rgba(224,82,79,.12);border:1px solid rgba(224,82,79,.45);color:var(--bad-ink)}
+.verdict.wait,.verdict.unclear{background:rgba(240,135,42,.12);border:1px solid rgba(240,135,42,.4);color:var(--orange-2)}
+.trow2{display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--line)}
+.trow2:last-child{border-bottom:none}
+.trow2 .sy{font-size:14px;font-weight:600}
+.trow2 .mt{font-size:11.5px;color:var(--muted);margin-top:3px;font-variant-numeric:tabular-nums}
+.trow2 .pl{text-align:right;flex-shrink:0}
+.trow2 .pl .v{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums}
+.trow2 .pl .s{font-size:10.5px;color:var(--muted)}
+.symrow2{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--line);font-size:13px}
+.symrow2:last-child{border-bottom:none}
+
+/* ===== JOURNAL v2 ===== */
+.jstat{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:11px}
+.jbox{background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:.9rem}
+.jbox .l{font-size:11.5px;color:var(--muted)}
+.jbox .v{font-size:22px;font-weight:700;margin-top:3px;font-variant-numeric:tabular-nums}
+.jbox .s{font-size:11px;color:var(--muted);margin-top:2px}
+.jbox.good{background:linear-gradient(135deg,rgba(34,180,85,.13),var(--surface));border-color:rgba(34,180,85,.4)}
+.jbox.bad{background:linear-gradient(135deg,rgba(224,82,79,.13),var(--surface));border-color:rgba(224,82,79,.4)}
+.trow2{display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--line)}
+.trow2:last-child{border-bottom:none}
+.trow2 .m{font-size:11.5px;color:var(--muted);margin-top:3px;font-variant-numeric:tabular-nums}
+.trow2 .p{text-align:right;flex-shrink:0}
+.trow2 .p .v{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums}
+.trow2 .p .s{font-size:10.5px;color:var(--muted)}
+.tag{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:5px;margin-left:5px}
+.tag.b{color:var(--text-success);background:rgba(34,180,85,.14)}
+.tag.s{color:var(--text-danger);background:rgba(224,82,79,.14)}
+.symstat{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--line)}
+.symstat:last-child{border-bottom:none}
+
+/* ===== NAV ===== */
+.navbar{position:fixed;left:0;right:0;bottom:0;z-index:50;display:flex;justify-content:space-around;background:rgba(14,14,22,.96);border-top:1px solid var(--line);padding:7px 4px calc(7px + env(safe-area-inset-bottom));backdrop-filter:blur(10px)}
+.navbar button{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:5px 2px;background:none;border:none;color:var(--muted);font-size:10.5px;font-weight:600}
+.navbar button svg{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.navbar button.active{color:var(--orange)}
+.foot{text-align:center;color:var(--muted);font-size:10.5px;padding:8px 0 14px}
+</style>
+</head>
+<body>
+
+<div class="hero" id="top">
+  <img id="banner-img" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='300'%3E%3Crect width='800' height='300' fill='%23120a06'/%3E%3C/svg%3E" alt="MOHA PRO">
+  <input type="file" id="img-input" accept="image/*" style="display:none">
+  <div class="hero-grad"></div>
+  <div class="hero-top">
+    <span id="status" class="st-pill off"><span class="dot"></span>OFFLINE</span>
+    <button class="chip" id="change-btn">Beddel sawirka</button>
+  </div>
+  <div class="hero-title">
+    <h1>MOHA PRO <span class="v">v56</span></h1>
+    <p>MT4 / MT5 · Bot control</p>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div class="botline" id="botline"><span class="bd"></span><span>Bot <span id="botstate">Stopped</span></span><span class="clock" id="clock">--:--:--</span></div>
+
+  <div class="actions">
+    <button onclick="sendCmd('START')"><svg viewBox="0 0 24 24"><polygon points="6 4 20 12 6 20 6 4"/></svg><span class="al">START</span></button>
+    <button onclick="sendCmd('STOP')"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg><span class="al">STOP</span></button>
+    <button onclick="if(confirm('Xir dhammaan trade-yada?'))sendCmd('CLOSE_ALL')"><svg viewBox="0 0 24 24"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg><span class="al">CLOSE</span></button>
+  </div>
+  <div class="cmd-note" id="cmdNote"></div>
+
+  <div class="banner demo" id="dataMode">Xogta lama helin weli</div>
+
+  <div class="botsw" id="botsw"></div>
+
+  <div class="tabs" id="tabs">
+    <div data-t="overview" class="on">Guud</div>
+    <div data-t="symbols">Symbols</div>
+    <div data-t="signals">Signals</div>
+    <div data-t="chart">Chart</div>
+    <div data-t="journal">Journal</div>
+  </div>
+
+  <!-- ===== OVERVIEW ===== -->
+  <section class="pane on" data-p="overview">
+    <div class="card block hide" id="botsBlock">
+      <h2 class="sec-h">Botyada <span class="rt" id="bots-live">0 nool</span></h2>
+      <div id="botList"></div>
+    </div>
+
+    <div class="block" id="acctBlock">
+      <h2 class="sec-h">Akoonka <span class="rt" id="symbol">—</span></h2>
+      <div class="kpis">
+        <div class="card kpi accent"><div class="lbl">Balance</div><div class="val num" id="k_balance">$0.00</div></div>
+        <div class="card kpi"><div class="lbl">Equity</div><div class="val num" id="k_equity">$0.00</div></div>
+        <div class="card kpi"><div class="lbl">Faa'iido</div><div class="val num up" id="k_profit">+$0.00</div></div>
+        <div class="card kpi"><div class="lbl">Win rate</div><div class="val num or" id="k_wr">0.0%</div></div>
+        <div class="card kpi"><div class="lbl">Drawdown</div><div class="val num down" id="k_dd">0.0%</div></div>
+        <div class="card kpi"><div class="lbl">Furan</div><div class="val num" id="k_open">0</div></div>
+      </div>
+    </div>
+
+    <div class="card block" id="stratBlock">
+      <h2 class="sec-h">Xeeladda <span class="rt">guji si aad u beddesho</span></h2>
+      <div class="strats" id="strats">
+        <button class="strat" data-s="SR">SR</button><button class="strat" data-s="BB">BB</button>
+        <button class="strat" data-s="EMA">EMA</button><button class="strat" data-s="SMC">SMC</button>
+        <button class="strat" data-s="VSA">VSA</button><button class="strat" data-s="POC">POC</button>
+      </div>
+    </div>
+
+    <div class="card block">
+      <h2 class="sec-h">Ganacsiyada <span class="rt" id="trades-count">0</span></h2>
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead><tr><th></th><th>Lammaane</th><th>Nooc</th><th>Xeelad</th><th>P&amp;L</th><th>Xaalad</th></tr></thead>
+          <tbody id="tradesBody"><tr><td colspan="6" class="ot-empty">Trade ma jiro</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== SYMBOLS ===== -->
+  <section class="pane" data-p="symbols">
+    <div class="card block">
+      <h2 class="sec-h">Symbols <span class="rt" id="sym-count">0 firfircoon</span></h2>
+      <div id="symList"><div class="sym-empty">Symbol lama helin weli.<br>Marka bootku trade furo, halkan ayuu ka soo muuqan doonaa.</div></div>
+      <div class="addrow">
+        <input id="symInput" placeholder="Ku dar symbol, tusaale XAUUSD" maxlength="16">
+        <button onclick="addSymbol()">Ku dar</button>
+      </div>
+    </div>
+    <div class="card block">
+      <h2 class="sec-h">Fiiro gaar ah</h2>
+      <p style="font-size:13px;color:var(--ink-2);line-height:1.7">
+        Damintu waxay amar u dirtaa bootka. EA-gu wuxuu qaataa markuu xiga poll-ka
+        (3–10 sekan). Trade-yada horeba u furan ma xirmaan — isticmaal CLOSE.
+      </p>
+    </div>
+  </section>
+
+  <!-- ===== SIGNALS ===== -->
+  <section class="pane" data-p="signals">
+    <div class="card block">
+      <h2 class="sec-h">Codso signal <span class="rt" id="sig-key"></span></h2>
+      <p style="font-size:11.5px;color:var(--muted);font-weight:600;margin-bottom:9px">Lammaanaha</p>
+      <div class="chips" id="sigSyms"></div>
+      <p style="font-size:11.5px;color:var(--muted);font-weight:600;margin-bottom:9px">Muddada</p>
+      <div class="exp" id="sigExp">
+        <button data-e="5" class="on">5 min</button>
+        <button data-e="15">15 min</button>
+        <button data-e="60">1 saac</button>
+      </div>
+      <button class="bigbtn" id="sigGo">CODSO SIGNAL</button>
+      <div id="sigOut"></div>
+    </div>
+
+    <div class="card block">
+      <h2 class="sec-h">Signal-adii hore <span class="rt" id="sig-pending"></span></h2>
+      <div id="sigHist"><div class="ot-empty">Signal weli lama codsan</div></div>
+    </div>
+
+    <div class="block">
+      <div class="acc">
+        <div style="font-size:11.5px;color:var(--orange);font-weight:700;margin-bottom:12px">Saxnaantaada dhabta ah</div>
+        <div style="display:flex;align-items:flex-end;gap:13px">
+          <div><div id="accVal" style="font-size:28px;font-weight:800;line-height:1">—</div>
+               <div id="accN" style="font-size:10.5px;color:var(--muted);margin-top:3px">0 signal</div></div>
+          <div style="flex:1">
+            <div class="accbar"><i id="accBar" style="width:0%;background:var(--muted)"></i><span class="accmark" id="accMark" style="left:55.6%"></span></div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:5px">
+              <span>0%</span><span id="accBE">break-even 55.6%</span><span>100%</span></div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:9px;margin-top:13px">
+          <span style="font-size:11.5px;color:var(--ink-2)">Payout broker-kaaga</span>
+          <input id="payout" type="number" min="50" max="100" value="80" style="width:64px;background:var(--surface-2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:7px 9px;font-size:13px;font-variant-numeric:tabular-nums">
+          <span style="font-size:13px;color:var(--ink-2)">%</span>
+        </div>
+        <div id="accNote"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== CHART ===== -->
+  <section class="pane" data-p="chart">
+    <div class="card block">
+      <h2 class="sec-h">Chart <span class="rt" id="chartsym">GBPUSD · M5</span></h2>
+      <div id="tvchart" style="height:340px;border-radius:10px;overflow:hidden"></div>
+    </div>
+  </section>
+
+  <!-- ===== JOURNAL ===== -->
+  <section class="pane" data-p="journal">
+    <div class="block">
+      <div class="chips" id="jSyms"></div>
+      <div class="jstat">
+        <div class="jbox"><div class="l">Trade guud</div><div class="v" id="jTot">—</div><div class="s" id="jWL">—</div></div>
+        <div class="jbox"><div class="l">Win rate</div><div class="v or" id="jWR">—</div><div class="s" id="jNeed">—</div></div>
+      </div>
+      <div class="jstat">
+        <div class="jbox" id="jPFbox"><div class="l">Profit factor</div><div class="v" id="jPF">—</div></div>
+        <div class="jbox"><div class="l">Net</div><div class="v" id="jNet">—</div></div>
+      </div>
+      <div id="jVerdict"></div>
+    </div>
+
+    <div class="card block">
+      <h2 class="sec-h">Lammaane kasta <span class="rt">kan wanaagsan / kan liita</span></h2>
+      <div id="jBySym"><div class="ot-empty">Xog weli ma jirto</div></div>
+    </div>
+
+    <div class="card block">
+      <h2 class="sec-h">Trade-yada <span class="rt" id="jStored"></span></h2>
+      <div id="jRows"><div class="ot-empty">Xog weli ma jirto</div></div>
+    </div>
+
+    <div class="block" style="display:grid;grid-template-columns:1fr;gap:10px">
+      <button onclick="dlCSV()" style="height:44px">Soo dejiso CSV</button>
+    </div>
+  </section>
+
+  <div class="foot">MOHA PRO · Bot Control · build <span id="buildTag">__BUILD__</span></div>
+</div>
+
+<nav class="navbar" id="nav">
+  <button data-t="overview" class="active"><svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Guud</button>
+  <button data-t="symbols"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/></svg>Symbols</button>
+  <button data-t="chart"><svg viewBox="0 0 24 24"><path d="M3 15l5-5 4 4 8-8"/></svg>Chart</button>
+  <button data-t="journal"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="16" y2="13"/></svg>Journal</button>
+  <button data-t="signals"><svg viewBox="0 0 24 24"><polyline points="3 17 9 11 13 15 21 6"/><circle cx="9" cy="11" r="1.4"/></svg>Signals</button>
+</nav>
+
+<script>
+const $=id=>document.getElementById(id);
+const TOKEN=new URLSearchParams(location.search).get('token')||"MohaPro_Live_2026_MySecret";
+const POLL_MS=5000;
+let CUR_BOT=null;      // null = Dhammaan
+let BOTS=[];
+const money=n=>{const v=+n||0;return (v<0?'-$':'$')+Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});};
+
+/* clock */
+function tick(){$('clock').textContent=new Date().toLocaleTimeString('en-GB');}
+setInterval(tick,1000);tick();
+
+/* ===== TABS ===== */
+function showTab(t){
+  document.querySelectorAll('.pane').forEach(p=>p.classList.toggle('on',p.dataset.p===t));
+  document.querySelectorAll('#tabs div').forEach(d=>d.classList.toggle('on',d.dataset.t===t));
+  document.querySelectorAll('#nav button[data-t]').forEach(b=>b.classList.toggle('active',b.dataset.t===t));
+  if(t==='chart')initChart(LAST_SYMBOL);
+  if(t==='signals')loadSignals();
+  if(t==='journal')loadJournal();
+  if(t==='journal')loadJournal();
+  if(t==='journal')loadJournal();
+  if(t==='journal')loadJournal();
+  if(t==='journal')loadJournal();
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+document.querySelectorAll('#tabs div').forEach(d=>d.addEventListener('click',()=>showTab(d.dataset.t)));
+document.querySelectorAll('#nav button[data-t]').forEach(b=>b.addEventListener('click',()=>showTab(b.dataset.t)));
+
+/* ===== CHART ===== */
+let tvStarted=false,tvSym='',LAST_SYMBOL='GBPUSD';
+function tvSymbolFor(raw){let s=(raw||'GBPUSD').toUpperCase().replace(/[^A-Z].*$/,'');if(s.length<6)s='GBPUSD';return 'FX:'+s.slice(0,6);}
+function loadTV(cb){if(window.TradingView){cb();return;}if(!tvStarted){tvStarted=true;const s=document.createElement('script');s.src='https://s3.tradingview.com/tv.js';s.onload=cb;document.head.appendChild(s);}else{setTimeout(()=>loadTV(cb),300);}}
+function initChart(raw){
+  const sym=tvSymbolFor(raw);if(sym===tvSym)return;tvSym=sym;
+  $('chartsym').textContent=sym.replace('FX:','')+' · M5';
+  loadTV(()=>{const el=$('tvchart');if(!el||!window.TradingView)return;el.innerHTML='';
+    new TradingView.widget({container_id:'tvchart',autosize:true,symbol:sym,interval:'5',timezone:'Etc/UTC',theme:'dark',style:'1',locale:'en',toolbar_bg:'#15151e',hide_side_toolbar:true,allow_symbol_change:true});});
+}
+
+/* ===== BANNER ===== */
+(function(){const img=$('banner-img'),inp=$('img-input');
+  try{const s=localStorage.getItem('moha_banner');if(s)img.src=s;}catch(e){}
+  const open=()=>inp.click();
+  $('change-btn').addEventListener('click',open);
+  inp.addEventListener('change',e=>{const f=e.target.files&&e.target.files[0];if(!f)return;const r=new FileReader();
+    r.onload=ev=>{img.src=ev.target.result;try{localStorage.setItem('moha_banner',ev.target.result);}catch(x){}};r.readAsDataURL(f);});
+})();
+
+/* ===== STRATEGY ===== */
+document.querySelectorAll('.strat').forEach(el=>el.addEventListener('click',()=>{
+  sendCmd('STRATEGY:'+el.dataset.s);
+  document.querySelectorAll('.strat').forEach(x=>x.classList.remove('active'));el.classList.add('active');}));
+
+/* ===== COMMANDS ===== */
+async function sendCmd(cmd){
+  if(!CUR_BOT && BOTS.length>1 && (cmd==='CLOSE_ALL'||cmd==='STOP'||cmd==='CLOSE_PROFIT')){
+    if(!confirm(cmd+' waxay u socotaa DHAMMAAN botyada ('+BOTS.length+'). Sii wad?'))return;
+  }
+  const note=$('cmdNote');note.style.color='var(--muted)';note.textContent='Diraya '+cmd+'…';
+  try{
+    const r=await fetch('/admin/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:TOKEN,bot:(CUR_BOT||'*'),command:cmd})});
+    const d=await r.json();
+    if(d.ok){note.style.color='var(--good-ink)';
+      note.textContent=cmd+' → '+(d.bots||[]).join(', ')+' (~3s gudahood)';}
+    else{note.style.color='var(--bad-ink)';note.textContent=d.error||'Amarka lama aqbalin';}
+  }catch(e){note.style.color='var(--bad-ink)';note.textContent='Server-ka lama gaari karin';}
+}
+
+/* ===== BOT SWITCHER ===== */
+function renderBots(list){
+  BOTS=list||[];
+  const sw=$('botsw');
+  if(!BOTS.length){sw.innerHTML='';$('botsBlock').classList.add('hide');$('acctBlock').classList.remove('hide');return;}
+  if(CUR_BOT&&!BOTS.some(b=>b.bot===CUR_BOT))CUR_BOT=null;
+  if(!CUR_BOT&&BOTS.length===1)CUR_BOT=BOTS[0].bot;   // hal bot = si toos ah u dooro
+
+  sw.innerHTML='';
+  const mk=(label,val,live)=>{
+    const b=document.createElement('button');
+    b.className=(val===CUR_BOT?'on':'');
+    b.innerHTML='<span class="bdot'+(live?' live':'')+'"></span>'+esc(label);
+    b.addEventListener('click',()=>{CUR_BOT=val;renderBots(BOTS);poll();});
+    sw.appendChild(b);
+  };
+  if(BOTS.length>1)mk('Dhammaan',null,BOTS.some(b=>b.live));
+  BOTS.forEach(b=>mk(b.bot,b.bot,b.live));
+
+  const all=!CUR_BOT&&BOTS.length>1;
+  $('botsBlock').classList.toggle('hide',!all);
+  $('acctBlock').classList.toggle('hide',all);
+  $('stratBlock').classList.toggle('hide',all);
+  $('bots-live').textContent=BOTS.filter(b=>b.live).length+' nool';
+
+  if(all){
+    const box=$('botList');box.innerHTML='';
+    BOTS.forEach(b=>{
+      const row=document.createElement('div');row.className='botcard';
+      const p=+b.profit||0;
+      row.innerHTML='<div style="flex:1;min-width:0">'+
+        '<div class="bn"><span class="bdot'+(b.live?' live':'')+'"></span>'+esc(b.bot)+'</div>'+
+        '<div class="bm">'+(b.live?('Balance '+money(b.balance)+' · '+(b.opentrades||0)+' furan'):
+          (b.reason==='stale'?'Duugoobay '+(b.age||0)+'s':'Xog ma jirto'))+'</div></div>'+
+        '<div class="bp"><div class="v '+(p>=0?'up':'down')+'">'+(b.live?((p>=0?'+':'')+money(Math.abs(p))):'—')+'</div>'+
+        '<div class="l">floating</div></div>';
+      row.addEventListener('click',()=>{CUR_BOT=b.bot;renderBots(BOTS);poll();});
+      let lp=null;
+      const startLP=()=>{lp=setTimeout(()=>{
+        if(confirm(b.bot+' liiska ka saar? Haddii uu wali wax dirayo, wuu soo laaban doonaa.')){
+          fetch('/admin/forget_bot',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({token:TOKEN,bot:b.bot})}).then(()=>{CUR_BOT=null;poll();});
+        }},700);};
+      const endLP=()=>{if(lp){clearTimeout(lp);lp=null;}};
+      row.addEventListener('touchstart',startLP,{passive:true});
+      ['touchend','touchmove','touchcancel'].forEach(e=>row.addEventListener(e,endLP));
+      row.addEventListener('mousedown',startLP);
+      ['mouseup','mouseleave'].forEach(e=>row.addEventListener(e,endLP));
+      box.appendChild(row);
+    });
+  }
+}
+
+/* ===== SYMBOLS ===== */
+let SYMS=[];
+function renderSymbols(list){
+  SYMS=list||[];const box=$('symList');
+  const on=SYMS.filter(s=>s.enabled!==false).length;
+  $('sym-count').textContent=on+' firfircoon';
+  if(!SYMS.length){box.innerHTML='<div class="sym-empty">Symbol lama helin weli.<br>Marka bootku trade furo, halkan ayuu ka soo muuqan doonaa.</div>';return;}
+  box.innerHTML='';
+  SYMS.forEach(s=>{
+    const row=document.createElement('div');row.className='symrow';
+    const pnl=+s.open_pnl||0;
+    const meta=s.open>0
+      ? s.open+' furan · <b class="'+(pnl>=0?'pl-pos':'pl-neg')+'">'+(pnl>=0?'+':'')+money(Math.abs(pnl))+'</b>'
+      : (s.enabled===false?'Damisan':'Bannaan');
+    const strat=s.strategies&&s.strategies.length?' · '+s.strategies.join(', '):'';
+    const who=s.bot?' · '+esc(s.bot):'';
+    row.innerHTML='<div class="si"><div class="sn">'+esc(s.symbol)+'</div><div class="sm">'+meta+strat+who+'</div></div>';
+    const sw=document.createElement('button');
+    sw.className='sw'+(s.enabled===false?'':' on');
+    sw.setAttribute('aria-label',(s.enabled===false?'Fur ':'Dami ')+s.symbol);
+    sw.addEventListener('click',()=>{
+      const turnOn=!sw.classList.contains('on');
+      sw.classList.toggle('on',turnOn);
+      const keep=CUR_BOT;if(s.bot)CUR_BOT=s.bot;
+      sendCmd((turnOn?'SYMBOL_ON:':'SYMBOL_OFF:')+s.symbol);CUR_BOT=keep;
+    });
+    row.appendChild(sw);box.appendChild(row);
+  });
+}
+function addSymbol(){
+  const v=($('symInput').value||'').trim().toUpperCase();
+  if(!v){$('symInput').focus();return;}
+  sendCmd('SYMBOL_ON:'+v);$('symInput').value='';
+  setTimeout(poll,600);
+}
+
+/* ===== TRADES ===== */
+function esc(s){const d=document.createElement('div');d.textContent=(s==null?'':s);return d.innerHTML;}
+function f5(v){return (+v||0).toFixed(5);}
+function detHTML(t,open){
+  return '<div class="det-grid">'+
+    '<div class="dc"><span>Entry</span><b>'+f5(t.entry)+'</b></div>'+
+    '<div class="dc"><span>'+(open?'Hadda':'Close')+'</span><b>'+f5(t.cur)+'</b></div>'+
+    '<div class="dc"><span>Stop loss</span><b class="pl-neg">'+f5(t.sl)+'</b></div>'+
+    '<div class="dc"><span>Take profit</span><b class="pl-pos">'+f5(t.tp)+'</b></div>'+
+    '<div class="dc"><span>Lot</span><b>'+(+t.lot||0).toFixed(2)+'</b></div>'+
+    '<div class="dc"><span>P&L</span><b class="'+((+t.profit||0)>=0?'pl-pos':'pl-neg')+'">'+money(+t.profit||0)+'</b></div>'+
+  '</div>';
+}
+function renderTrades(trades){
+  const tb=$('tradesBody'),cnt=$('trades-count');
+  if(!trades||!trades.length){tb.innerHTML='<tr><td colspan="6" class="ot-empty">Trade ma jiro weli</td></tr>';cnt.textContent='0';return;}
+  cnt.textContent=trades.length;tb.innerHTML='';
+  trades.slice(0,20).forEach((t,i)=>{
+    const p=+t.profit||0,buy=(t.type||'').toUpperCase()==='BUY',open=(t.st||'')==='OPEN';
+    const tr=document.createElement('tr');tr.className='trow';
+    tr.innerHTML='<td class="carcell"><span class="car" id="car'+i+'">&#9656;</span></td>'+
+      '<td class="sym">'+esc(t.sym)+'</td>'+
+      '<td><span class="badge '+(buy?'buy':'sell')+'">'+esc(t.type)+'</span></td>'+
+      '<td><span class="badge strat">'+esc(t.strat)+'</span></td>'+
+      '<td class="'+(p>=0?'pl-pos':'pl-neg')+'">'+(p>=0?'+':'')+money(p)+'</td>'+
+      '<td><span class="badge '+(open?'op':'cl')+'">'+(open?'FURAN':'XIRAN')+'</span></td>';
+    tr.addEventListener('click',()=>{const d=$('det'+i),c=$('car'+i);const sh=d.style.display==='none';
+      d.style.display=sh?'table-row':'none';if(c)c.innerHTML=sh?'&#9662;':'&#9656;';});
+    tb.appendChild(tr);
+    const dr=document.createElement('tr');dr.id='det'+i;dr.style.display='none';dr.className='detrow';
+    dr.innerHTML='<td colspan="6" class="tdet">'+detHTML(t,open)+'</td>';
+    tb.appendChild(dr);
+  });
+}
+
+/* ===== JOURNAL v2 ===== */
+let J_SYM='';
+function dlCSV(){window.open('/journal.csv?token='+encodeURIComponent(TOKEN),'_blank');}
+
+function jMoney(v){const n=+v||0;return (n>=0?'+':'-')+money(Math.abs(n));}
+
+function renderJSyms(list){
+  const box=$('jSyms');box.innerHTML='';
+  const mk=(label,val)=>{
+    const b=document.createElement('button');
+    b.className='chip2'+(val===J_SYM?' on':'');b.textContent=label;
+    b.addEventListener('click',()=>{J_SYM=val;loadJournal();});
+    box.appendChild(b);
+  };
+  mk('Dhammaan','');
+  (list||[]).forEach(sy=>mk(sy,sy));
+}
+
+function renderJournal2(d){
+  const o=d.overall;
+  $('jTot').textContent=o.trades;
+  $('jWL').textContent=o.wins+' W · '+o.losses+' L';
+  $('jWR').textContent=o.winrate==null?'—':o.winrate+'%';
+  $('jPF').textContent=o.pf;
+  $('jPF').className='v '+(o.pf>=1?'up':'down');
+  $('jPFbox').className='jbox '+(o.pf>=1?'good':'bad');
+  $('jNet').textContent=jMoney(o.net);
+  $('jNet').className='v '+(o.net>=0?'up':'down');
+  $('jStored').textContent=d.stored+' / '+d.capacity;
+
+  // break-even-ka laga soo saaray celceliska guul/khasaare ee DHABTA ah
+  let need=null;
+  if(o.avg_win>0&&o.avg_loss<0){const R=o.avg_win/Math.abs(o.avg_loss);need=(100/(1+R)).toFixed(1);}
+  $('jNeed').textContent=need?('u baahan '+need+'%'):'—';
+
+  const v=$('jVerdict');
+  if(o.trades<30){
+    v.innerHTML='<div class="banner demo">'+o.trades+' trade — sample kuma filna. '+
+      (30-o.trades)+' ayaa haray ka hor inta aan wax lagu xukumin.</div>';
+  }else if(o.pf>=1.3){
+    v.innerHTML='<div class="banner live">PF '+o.pf+' — wax dhab ah ayaa jira. Sii wad ilaa 100 trade.</div>';
+  }else if(o.pf>=0.9){
+    v.innerHTML='<div class="banner demo">PF '+o.pf+' — mugdi. Sample kordhi, wax ha beddelin.</div>';
+  }else{
+    v.innerHTML='<div class="banner demo" style="border-color:var(--border-danger);color:var(--text-danger);background:rgba(224,82,79,.12)">PF '+o.pf+' — ma shaqeynayso. Xeelad kale u gudub.</div>';
+  }
+
+  // ---- lammaane kasta
+  const bs=$('jBySym');
+  if(!d.by_symbol||!d.by_symbol.length){bs.innerHTML='<div class="ot-empty">Xog weli ma jirto</div>';}
+  else{
+    bs.innerHTML='';
+    d.by_symbol.forEach(x=>{
+      const el=document.createElement('div');el.className='symstat';
+      el.innerHTML='<div style="flex:1;min-width:0">'+
+        '<div style="font-size:14.5px;font-weight:700">'+esc(x.symbol)+'</div>'+
+        '<div class="m">'+x.trades+' trade · '+(x.winrate==null?'—':x.winrate+'%')+' · PF '+x.pf+'</div></div>'+
+        '<div style="text-align:right"><div style="font-size:15px;font-weight:700;font-variant-numeric:tabular-nums" class="'+
+        (x.net>=0?'pl-pos':'pl-neg')+'">'+jMoney(x.net)+'</div></div>';
+      bs.appendChild(el);
+    });
+  }
+
+  // ---- safafka
+  const box=$('jRows');
+  if(!d.trades||!d.trades.length){box.innerHTML='<div class="ot-empty">Xog weli ma jirto</div>';return;}
+  box.innerHTML='';
+  d.trades.slice(0,60).forEach(t=>{
+    const buy=(t.type||'')==='BUY',p=+t.profit||0;
+    const ct=t.ct?new Date(t.ct*1000):null;
+    const when=ct?(ct.getDate()+' '+['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][ct.getMonth()]+' '+String(ct.getHours()).padStart(2,'0')+':'+String(ct.getMinutes()).padStart(2,'0')):'';
+    const el=document.createElement('div');el.className='trow2';
+    el.innerHTML='<div style="flex:1;min-width:0">'+
+      '<div style="font-size:14px;font-weight:600">'+esc(t.sym)+'<span class="tag '+(buy?'b':'s')+'">'+(buy?'BUY':'SELL')+'</span></div>'+
+      '<div class="m">'+when+' · '+(+t.entry||0)+' → '+(+t.exit||0)+'</div></div>'+
+      '<div class="p"><div class="v '+(p>=0?'up':'down')+'">'+jMoney(p)+'</div>'+
+      '<div class="s">'+esc(t.strat||'')+(t.pips!=null?' · '+t.pips+' pip':'')+'</div></div>';
+    box.appendChild(el);
+  });
+}
+
+async function loadJournal(){
+  try{
+    const u='/journal?token='+encodeURIComponent(TOKEN)+(CUR_BOT?'&bot='+encodeURIComponent(CUR_BOT):'')
+            +(J_SYM?'&symbol='+encodeURIComponent(J_SYM):'');
+    const r=await fetch(u,{cache:'no-store'});
+    const d=await r.json();
+    renderJSyms(d.symbols);
+    renderJournal2(d);
+  }catch(e){}
+}
+
+/* ===== STATE ===== */
+const DEMO={balance:10482.55,equity:10531.20,profit:182.55,winrate:76.2,drawdown:3.10,opentrades:2,symbol:"GBPUSD",
+  trades:[
+    {bot:"MOHA PRO V56",sym:"GBPUSD",type:"BUY",strat:"VSA",profit:64.20,st:"OPEN",entry:1.27140,cur:1.27204,sl:1.26950,tp:1.27520,lot:0.20},
+    {sym:"USDJPY",type:"SELL",strat:"SR",profit:16.93,st:"OPEN",entry:157.320,cur:157.280,sl:157.520,tp:156.920,lot:0.15},
+    {sym:"GBPUSD",type:"BUY",strat:"VSA",profit:88.30,st:"CLOSED",entry:1.26980,cur:1.27290,sl:1.26800,tp:1.27340,lot:0.20},
+    {sym:"AUDUSD",type:"SELL",strat:"VSA",profit:137.09,st:"CLOSED",entry:0.66420,cur:0.66150,sl:0.66600,tp:0.66060,lot:0.30},
+    {sym:"USDCAD",type:"SELL",strat:"SR",profit:-48.34,st:"CLOSED",entry:1.36540,cur:1.36680,sl:1.36700,tp:1.36180,lot:0.15}
+  ],
+  symbols:[
+    {symbol:"GBPUSD",open:1,open_pnl:64.20,strategies:["VSA"],enabled:true},
+    {symbol:"USDJPY",open:1,open_pnl:16.93,strategies:["SR"],enabled:true},
+    {symbol:"AUDUSD",open:0,open_pnl:0,strategies:["VSA"],enabled:true},
+    {symbol:"USDCAD",open:0,open_pnl:0,strategies:["SR"],enabled:false}
+  ],
+  bots:[{bot:"MOHA PRO GOLD",live:true,balance:10482.55,equity:10531.20,profit:81.13,opentrades:2,symbols:[]},
+        {bot:"MOHA PRO V56",live:true,balance:6210.00,equity:6288.40,profit:78.40,opentrades:1,symbols:[]}],
+  journal:{gainPct:18.4,balance:11842.55,equity:11905.20,today:82.55,week:1842.55,month:1842.55,year:1842.55,
+    trades:1078,winRate:76.2,pf:1.62,pips:4820,avgWin:34,avgLoss:-21,best:137,worst:-50,dd:3.1,
+    monthly:[320,540,-180,410,730,-90,560,880,210,-210,640,780]}};
+
+const REASONS={
+  no_data:"Bootku weli xog ma soo dirin. Fur /diag si aad u aragto sababta.",
+  stale:"Xogtii ugu dambeysay way duugowday. Bootku ma shaqaynayo ama server-ku wuu hurday.",
+  offline:"Server-ka lama gaari karin."
+};
+
+function setStatus(s,reason,age,ageTxt){
+  const el=$('status'),bl=$('botline'),bs=$('botstate'),dm=$('dataMode');
+  el.className='st-pill '+s;
+  if(s==='on'){
+    el.innerHTML='<span class="dot"></span>LIVE';bl.classList.add('run');bs.textContent='Shaqeynaya';
+    dm.className='banner live';
+    const noName=BOTS.length&&BOTS.every(b=>b.bot==='default');
+    dm.innerHTML='Xog dhab ah — la cusboonaysiiyay '+(ageTxt||'hadda')+
+      (noName?'<br><span style="color:var(--orange-2)">Bootku magac ma laha. Geli InpCloudBotName.</span>':'');
+  }else if(s==='stale'){
+    // Xog DHAB AH oo duugoobay. PC-gu wuu damsan yahay - laakiin xogtu waa taada.
+    el.innerHTML='<span class="dot"></span>OFFLINE';
+    bl.classList.remove('run');bs.textContent='Offline';
+    dm.className='banner stale';
+    dm.innerHTML='Xogtaada dhabta ah — bootku offline buu yahay.<br>'+
+      'Kan waa xaaladdii ugu dambeysay, '+(ageTxt||'')+'.';
+  }else{
+    el.innerHTML='<span class="dot"></span>'+(s==='demo'?'DEMO':'OFFLINE');
+    bl.classList.remove('run');bs.textContent='Joogsan';
+    dm.className='banner demo';
+    dm.innerHTML='Xog tusaale ah — lacagtaadu maaha.<br>'+(REASONS[reason]||REASONS.no_data)+
+      ' <a href="/diag" target="_blank">Fur /diag</a>';
+  }
+}
+
+function applyState(d,strict){
+  // strict = xog dhab ah. Goob maqan waxay noqonaysaa "—", MARNABA lambar demo ah.
+  const put=(id,val,fmt,cls)=>{
+    const el=$(id);
+    if(val==null||val===''){ if(strict){el.textContent='—';if(cls)el.className='val num';} return; }
+    el.textContent=fmt(val); if(cls)el.className=cls(val);
+  };
+  put('k_balance',d.balance,money);
+  put('k_equity',d.equity,money);
+  put('k_profit',d.profit,v=>((+v>=0?'+':'')+money(Math.abs(+v))),v=>'val num '+(+v>=0?'up':'down'));
+  put('k_wr',d.winrate,v=>(+v).toFixed(1)+'%');
+  put('k_dd',d.drawdown,v=>(+v).toFixed(2)+'%');
+  put('k_open',d.opentrades,v=>String(v));
+  if(d.symbol){$('symbol').textContent=d.symbol;LAST_SYMBOL=d.symbol;}
+  else if(strict)$('symbol').textContent='—';
+  renderTrades(d.trades);
+  renderSymbols(d.symbols);
+  if(d.bots)renderBots(d.bots);
+}
+
+function showDemo(reason){applyState(DEMO,false);setStatus('demo',reason||'no_data',null,null);}
+
+async function poll(){
+  try{
+    const url='/state?token='+encodeURIComponent(TOKEN)+(CUR_BOT?'&bot='+encodeURIComponent(CUR_BOT):'');
+    const r=await fetch(url,{cache:'no-store'});
+    if(!r.ok)throw 0;
+    const d=await r.json();
+    if(d.live){ applyState(d,true); setStatus('on','live',d.age,d.age_text); }
+    else if(d.reason==='stale' || d.has_data){
+      // Bootku offline buu yahay, laakiin xogtu waa DHAB. Demo LOOMA beddelayo.
+      applyState(d,true); setStatus('stale',d.reason,d.age,d.age_text);
+    }
+    else{ showDemo(d.reason); }
+  }catch(e){showDemo('offline');}
+}
+showDemo();poll();setInterval(poll,POLL_MS);
+</script>
+</body>
+</html>
+"""
+
+
+_dashboard_cache = {"mtime": 0, "html": None}
+
+
+def dashboard_html():
+    try:
+        mtime = os.path.getmtime(DASHBOARD_FILE)
+        if _dashboard_cache["html"] is None or mtime != _dashboard_cache["mtime"]:
+            with open(DASHBOARD_FILE, "r", encoding="utf-8") as f:
+                _dashboard_cache["html"] = f.read()
+            _dashboard_cache["mtime"] = mtime
+        return _dashboard_cache["html"]
+    except OSError:
+        return EMBEDDED_HTML
+
+
+@app.route("/")
+@app.route("/admin")
+def index():
+    html = dashboard_html().replace("__BUILD__", BUILD)
+    r = Response(html, mimetype="text/html")
+    # Browser-ku HA hayn bog duug ah - taasi ayaa hore u dhibtay.
+    r.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    r.headers["Pragma"] = "no-cache"
+    r.headers["Expires"] = "0"
+    r.headers["X-Moha-Build"] = BUILD
+    return r
+
+
+@app.route("/version")
+def version():
+    return jsonify({"build": BUILD})
+
+
+@app.route("/health")
+def health():
+    return jsonify({"ok": True, "build": BUILD,
+                    "bots": sum(len(v) for v in STATES.values())})
+
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
