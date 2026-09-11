@@ -1,3 +1,1179 @@
+Maxamed c/risaaq, [11.09.2026 17:30]
+"""
+MOHA PRO - Cloud Dashboard Backend (v3, multi-bot)
+--------------------------------------------------
+Isbeddelka v3:
+  - LABA BOT AMA KA BADAN: bot kastaa wuxuu diraa "bot":"<magac>". Xogtoodu
+    gebi ahaanba way kala go'an tahay - state, amarro, symbols.
+  - Dashboard-ku wuxuu leeyahay bot switcher: "Dhammaan" ama mid gaar ah.
+  - Amarku wuxuu u socdaa BOOTKA la doortay oo keliya.
+
+Endpoints:
+  POST /update                        - bootka -> xogta   (body: token, bot, ...)
+  GET  /state?token=&bot=             - dashboard <- xogta bot gaar ah
+  GET  /state?token=                  - dashboard <- liiska botyada oo dhan
+  GET  /api/commands?token=&bot=      - bootka <- amarka soo socda
+  POST /admin/command                 - dashboard -> dir amar (token, bot, command)
+  GET  /diag                          - sababta DEMO
+  GET  /signals, /health
+"""
+import os
+import time
+import json
+import urllib.request
+import urllib.parse
+from flask import Flask, request, jsonify, Response
+
+app = Flask(name)
+
+BASE_DIR = os.path.dirname(os.path.abspath(file))
+DASHBOARD_FILE = os.path.join(BASE_DIR, "dashboard.html")
+
+# ---------------- CONFIG ----------------
+# MUHIIM: AUTH_TOKEN waa in uu SAX AHAAN la mid yahay InpCloudToken ee EA-yada.
+# LABADA BOT waxay isticmaalaan ISKU TOKEN - waxa kala saara bot magaca.
+AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "MohaPro_Live_2026_MySecret")
+MASTER_TOKEN = AUTH_TOKEN
+
+BUILD = "v4.0-2026-09-08"
+DEFAULT_BOT = "default"
+MAX_HISTORY = 120
+STALE_SECONDS = 120
+FORGET_SECONDS = 1800   # bot aan wax dirin 30 daqiiqo -> liiska laga saaro
+MAX_QUEUE = 20
+
+# ---------------- SIGNALS (ikhtiyaari) ----------------
+TWELVEDATA_KEY = os.environ.get("TWELVEDATA_KEY", "")
+SIGNAL_PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", "EUR/JPY"]
+SIGNAL_INTERVAL = os.environ.get("SIGNAL_INTERVAL", "5min")
+SIGNAL_CACHE_SEC = 60
+_signal_cache = {}
+
+
+# ---------------- STATE ----------------
+def blank_state():
+    return {
+        "balance": None, "equity": None, "profit": None,
+        "winrate": None, "drawdown": None, "opentrades": None,
+        "symbol": None, "trades": None, "journal": None,
+        "account": None, "broker": None, "trading": None,
+        "updated": None, "equity_history": [],
+    }
+
+
+# token -> bot -> state
+STATES = {}
+# token -> bot -> [amarro]
+COMMANDS = {}
+# token -> bot -> {"XAUUSD": True}
+SYMBOL_FLAGS = {}
+# token -> bot -> {"count": n, "ip": str}
+SEEN = {}
+
+
+def clean_bot(name):
+    n = (name or "").strip()
+    if not n:
+        return DEFAULT_BOT
+    return n[:40]
+
+
+def get_token(req):
+    auth = req.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        t = auth[7:].strip()
+        if t:
+            return t
+    data = req.get_json(silent=True) or {}
+    if data.get("token"):
+        return str(data.get("token"))
+    if req.args.get("token"):
+        return req.args.get("token")
+    return None
+
+
+def get_bot(req):
+    data = req.get_json(silent=True) or {}
+    return clean_bot(data.get("bot") or req.args.get("bot"))
+
+
+@app.after_request
+def add_cors(resp):
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    return resp
+
+
+# ============ 1) Bootka -> Server ============
+@app.route("/update", methods=["POST", "OPTIONS"])
+def update():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    tok = get_token(request)
+    if not tok:
+        return jsonify({"error": "no token"}), 401
+
+    bot = get_bot(request)
+    data = request.get_json(silent=True) or {}
+    st = STATES.setdefault(tok, {}).setdefault(bot, blank_state())
+
+    for k in ["balance", "equity", "profit", "winrate", "drawdown", "opentrades",
+              "symbol", "trades", "journal", "account", "broker", "trading"]:
+        if k in data:
+            st[k] = data[k]
+
+    st["updated"] = int(time.time())
+
+Maxamed c/risaaq, [11.09.2026 17:30]
+if st.get("equity") is not None:
+        try:
+            st["equity_history"].append(float(st["equity"]))
+            if len(st["equity_history"]) > MAX_HISTORY:
+                del st["equity_history"][0:len(st["equity_history"]) - MAX_HISTORY]
+        except (TypeError, ValueError):
+            pass
+
+    seen = SEEN.setdefault(tok, {}).setdefault(bot, {"count": 0, "ip": ""})
+    seen["count"] += 1
+    seen["ip"] = request.headers.get("X-Forwarded-For", request.remote_addr or "")
+
+    return jsonify({"ok": True, "bot": bot,
+                    "queued_commands": len(COMMANDS.get(tok, {}).get(bot, []))})
+
+
+# ============ 2) Dashboard <- Server ============
+def live_info(st):
+    if not st:
+        return False, "no_data", None
+    updated = st.get("updated") or 0
+    if not updated:
+        return False, "no_data", None
+    age = int(time.time() - updated)
+    if age >= STALE_SECONDS:
+        return False, "stale", age
+    return True, "live", age
+
+
+def bot_summary(tok, bot, st):
+    live, reason, age = live_info(st)
+    return {
+        "bot": bot, "live": live, "reason": reason, "age": age,
+        "balance": st.get("balance"), "equity": st.get("equity"),
+        "profit": st.get("profit"), "opentrades": st.get("opentrades"),
+        "symbol": st.get("symbol"), "winrate": st.get("winrate"),
+        "drawdown": st.get("drawdown"), "account": st.get("account"),
+        "broker": st.get("broker"), "trading": st.get("trading"),
+        "symbols": build_symbols(tok, bot, st),
+        "pending": len(COMMANDS.get(tok, {}).get(bot, [])),
+    }
+
+
+@app.route("/state", methods=["GET"])
+def get_state():
+    tok = request.args.get("token") or MASTER_TOKEN
+    want = request.args.get("bot")
+    bots = STATES.get(tok, {})
+
+    # --- liiska botyada (had iyo jeer la diraa)
+    now = time.time()
+    summaries = [bot_summary(tok, b, s) for b, s in sorted(bots.items())
+                 if (now - (s.get("updated") or 0)) < FORGET_SECONDS]
+
+    if not bots:
+        out = blank_state()
+        out.update({"live": False, "reason": "no_data", "age": None,
+                    "symbols": [], "bots": [], "bot": None})
+        return jsonify(out)
+
+    # --- hal bot oo keliya: muuqaalka buuxa ayaa la tusayaa, ma aha isu-geynta
+    if not want and len(bots) == 1:
+        want = list(bots.keys())[0]
+
+    # --- bot gaar ah
+    if want:
+        bot = clean_bot(want)
+        st = bots.get(bot)
+        if not st:
+            out = blank_state()
+            out.update({"live": False, "reason": "no_data", "age": None,
+                        "symbols": [], "bots": summaries, "bot": bot})
+            return jsonify(out)
+        out = dict(st)
+        live, reason, age = live_info(st)
+        out.update({"live": live, "reason": reason, "age": age, "bot": bot,
+                    "symbols": build_symbols(tok, bot, st), "bots": summaries})
+        return jsonify(out)
+
+    # --- "Dhammaan": ma isku darno balance-ka (waxay noqon kartaa isku akoon
+    #     ama laba akoon oo kala duwan). Waxaa la diraa liiska botyada,
+    #     iyo kaliya waxa si sax ah loo isku daro: profit + trades furan.
+    out = blank_state()
+    live_any = any(b["live"] for b in summaries)
+    prof = sum((b["profit"] or 0) for b in summaries if b["live"])
+    opens = sum((b["opentrades"] or 0) for b in summaries if b["live"])
+    syms = []
+    for b in summaries:
+        for s in b["symbols"]:
+            row = dict(s)
+            row["bot"] = b["bot"]
+            syms.append(row)
+    trades = []
+    for b, s in sorted(bots.items()):
+        for t in (s.get("trades") or []):
+            row = dict(t)
+            row["bot"] = b
+            trades.append(row)
+
+    out.update({
+        "live": live_any,
+        "reason": "live" if live_any else (summaries[0]["reason"] if summaries else "no_data"),
+        "age": min([b["age"] for b in summaries if b["age"] is not None], default=None),
+        "bot": None, "bots": summaries, "symbols": syms,
+        "profit": round(prof, 2), "opentrades": opens,
+        "trades": trades, "aggregate": True,
+    })
+    return jsonify(out)
+
+Maxamed c/risaaq, [11.09.2026 17:30]
+# ============ 3) SYMBOLS ============
+def build_symbols(tok, bot, st):
+    if not st:
+        return []
+    explicit = st.get("symbols")
+    if isinstance(explicit, list) and explicit:
+        return explicit
+
+    trades = st.get("trades") or []
+    flags = SYMBOL_FLAGS.setdefault(tok, {}).setdefault(bot, {})
+    agg = {}
+
+    for t in trades:
+        sym = (t.get("sym") or "").upper()
+        if not sym:
+            continue
+        row = agg.setdefault(sym, {
+            "symbol": sym, "open": 0, "closed": 0,
+            "open_pnl": 0.0, "closed_pnl": 0.0,
+            "strategies": [], "enabled": flags.get(sym, True),
+        })
+        try:
+            pnl = float(t.get("profit") or 0)
+        except (TypeError, ValueError):
+            pnl = 0.0
+        if (t.get("st") or "").upper() == "OPEN":
+            row["open"] += 1
+            row["open_pnl"] += pnl
+        else:
+            row["closed"] += 1
+            row["closed_pnl"] += pnl
+        strat = t.get("strat")
+        if strat and strat not in row["strategies"]:
+            row["strategies"].append(strat)
+
+    for sym, on in flags.items():
+        if sym not in agg:
+            agg[sym] = {"symbol": sym, "open": 0, "closed": 0,
+                        "open_pnl": 0.0, "closed_pnl": 0.0,
+                        "strategies": [], "enabled": on}
+
+    rows = list(agg.values())
+    for r in rows:
+        r["open_pnl"] = round(r["open_pnl"], 2)
+        r["closed_pnl"] = round(r["closed_pnl"], 2)
+    rows.sort(key=lambda r: (-r["open"], -abs(r["open_pnl"]), r["symbol"]))
+    return rows
+
+
+@app.route("/symbols", methods=["GET"])
+def symbols_endpoint():
+    tok = request.args.get("token") or MASTER_TOKEN
+    bot = clean_bot(request.args.get("bot"))
+    st = STATES.get(tok, {}).get(bot)
+    return jsonify({"bot": bot,
+                    "symbols": build_symbols(tok, bot, st),
+                    "flags": SYMBOL_FLAGS.get(tok, {}).get(bot, {})})
+
+
+# ============ 4) Bootka <- Server: amarrada ============
+@app.route("/api/commands", methods=["GET"])
+def commands():
+    tok = get_token(request)
+    if not tok:
+        return jsonify({"error": "no token"}), 401
+    bot = get_bot(request)
+    q = COMMANDS.get(tok, {}).get(bot) or []
+    cmd = q.pop(0) if q else ""
+    payload = json.dumps({"token": tok, "bot": bot, "command": cmd},
+                         separators=(",", ":"))
+    return Response(payload, mimetype="application/json")
+
+
+# ============ 5) Admin -> Server ============
+SIMPLE_COMMANDS = {"START", "STOP", "PAUSE", "RESUME", "CLOSE_ALL", "CLOSE_PROFIT"}
+STRATEGIES = {"SR", "BB", "EMA", "SMC", "VSA", "RSI", "POC", "SCALP", "GRID"}
+
+
+def validate(cmd):
+    if cmd in SIMPLE_COMMANDS:
+        return True, ""
+    if cmd.startswith("STRATEGY:"):
+        s = cmd.split(":", 1)[1]
+        return (True, "") if s in STRATEGIES else (False, "strategy aan la aqoon: " + s)
+    if cmd.startswith("SYMBOL_ON:") or cmd.startswith("SYMBOL_OFF:"):
+        s = cmd.split(":", 1)[1]
+        if s and s.replace(".", "").replace("_", "").isalnum() and len(s) <= 16:
+            return True, ""
+        return False, "symbol aan sax ahayn: " + s
+    return False, "amar aan la aqoon"
+
+
+@app.route("/admin/command", methods=["POST", "OPTIONS"])
+def set_command():
+    if request.method == "OPTIONS":
+        return ("", 204)
+
+    tok = get_token(request) or MASTER_TOKEN
+    data = request.get_json(silent=True) or request.form
+    cmd = (data.get("command") or "").strip().upper()
+
+    ok, msg = validate(cmd)
+    if not ok:
+        return jsonify({
+            "error": msg,
+            "allowed": sorted(SIMPLE_COMMANDS)
+                       + ["STRATEGY:" + s for s in sorted(STRATEGIES)]
+                       + ["SYMBOL_ON:<SYM>", "SYMBOL_OFF:<SYM>"],
+        }), 400
+
+    # bot: mid gaar ah, ama "*" = dhammaan botyada la yaqaan
+    raw = (data.get("bot") or "").strip()
+    if raw == "*":
+        targets = sorted(STATES.get(tok, {}).keys())
+        if not targets:
+            return jsonify({"error": "bot lama helin"}), 404
+    else:
+        targets = [clean_bot(raw)]
+
+Maxamed c/risaaq, [11.09.2026 17:30]
+sent = []
+    for bot in targets:
+        if cmd.startswith("SYMBOL_ON:"):
+            SYMBOL_FLAGS.setdefault(tok, {}).setdefault(bot, {})[cmd.split(":", 1)[1]] = True
+        elif cmd.startswith("SYMBOL_OFF:"):
+            SYMBOL_FLAGS.setdefault(tok, {}).setdefault(bot, {})[cmd.split(":", 1)[1]] = False
+
+        q = COMMANDS.setdefault(tok, {}).setdefault(bot, [])
+        q.append(cmd)
+        if len(q) > MAX_QUEUE:
+            del q[0:len(q) - MAX_QUEUE]
+        sent.append(bot)
+
+    return jsonify({"ok": True, "queued": cmd, "bots": sent})
+
+
+# ============ 6) DIAG ============
+@app.route("/admin/forget_bot", methods=["POST", "OPTIONS"])
+def forget_bot():
+    """Bot duug ah liiska ka saar. Haddii uu wali wax dirayo, wuu soo laaban doonaa."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+    tok = get_token(request) or MASTER_TOKEN
+    data = request.get_json(silent=True) or request.form
+    bot = clean_bot(data.get("bot"))
+    removed = STATES.get(tok, {}).pop(bot, None) is not None
+    COMMANDS.get(tok, {}).pop(bot, None)
+    SYMBOL_FLAGS.get(tok, {}).pop(bot, None)
+    SEEN.get(tok, {}).pop(bot, None)
+    return jsonify({"ok": True, "removed": removed, "bot": bot})
+
+
+@app.route("/diag", methods=["GET"])
+def diag():
+    rows = []
+    for tok, bots in STATES.items():
+        for bot, st in sorted(bots.items()):
+            live, reason, age = live_info(st)
+            seen = SEEN.get(tok, {}).get(bot, {})
+            rows.append({
+                "bot": bot,
+                "token_preview": (tok[:6] + "..." + tok[-4:]) if len(tok) > 12 else tok,
+                "token_matches_env": tok == MASTER_TOKEN,
+                "live": live, "reason": reason, "age_seconds": age,
+                "updates_received": seen.get("count", 0),
+                "last_ip": seen.get("ip", ""),
+                "symbols_found": len(build_symbols(tok, bot, st)),
+                "pending_commands": len(COMMANDS.get(tok, {}).get(bot, [])),
+            })
+
+    default_named = [r for r in rows if r["bot"] == DEFAULT_BOT]
+
+    if not rows:
+        hint = ("Boot NA soo gaarin. Hubi: (1) URL-ka /update ee EA-ga, "
+                "(2) URL-ka ku jira liiska 'Allow WebRequest' ee MT4/MT5, "
+                "(3) in EA-gu shaqeynayo oo AutoTrading la furay.")
+    elif not any(r["token_matches_env"] for r in rows):
+        hint = ("Boot wuu soo gaaray laakiin token-kiisu kama mid aha AUTH_TOKEN "
+                "ee Render. Taasi waa sababta DEMO.")
+    elif not any(r["live"] for r in rows):
+        hint = ("Xog hore ayaa timid laakiin way duugowday (>%ds)." % STALE_SECONDS)
+    elif len(rows) == 1 and default_named:
+        hint = ("Hal bot ayaa soo gaaraya, magacna ma laha. Geli InpCloudBotName "
+                "EA kasta si ay dashboard-ka ugu kala muuqdaan.")
+    else:
+        hint = "Wax walba way shaqeynayaan. Botyada la helay: %d" % len(rows)
+
+    return jsonify({
+        "build": BUILD,
+        "server_time": int(time.time()),
+        "env_auth_token_preview": (MASTER_TOKEN[:6] + "..." + MASTER_TOKEN[-4:]
+                                   if len(MASTER_TOKEN) > 12 else MASTER_TOKEN),
+        "stale_after_seconds": STALE_SECONDS,
+        "bots": rows,
+        "diagnosis": hint,
+    })
+
+
+# ============ 7) SIGNALS ============
+def _ema(values, period):
+    if len(values) < period:
+        return None
+    k = 2.0 / (period + 1)
+    e = sum(values[:period]) / period
+    for v in values[period:]:
+        e = v * k + e * (1 - k)
+    return e
+
+
+def _rsi(values, period=14):
+    if len(values) <= period:
+        return None
+    gains = losses = 0.0
+    for i in range(1, period + 1):
+        d = values[i] - values[i - 1]
+        if d >= 0:
+            gains += d
+        else:
+            losses -= d
+    ag, al = gains / period, losses / period
+    for i in range(period + 1, len(values)):
+        d = values[i] - values[i - 1]
+        ag = (ag * (period - 1) + (d if d > 0 else 0.0)) / period
+        al = (al * (period - 1) + (-d if d < 0 else 0.0)) / period
+    if al == 0:
+        return 100.0
+    return 100.0 - 100.0 / (1.0 + ag / al)
+
+Maxamed c/risaaq, [11.09.2026 17:30]
+def _fetch_closes(symbol, interval, size=60):
+    if not TWELVEDATA_KEY:
+        return None, None, "no_key"
+    q = urllib.parse.urlencode({"symbol": symbol, "interval": interval,
+                                "outputsize": size, "apikey": TWELVEDATA_KEY,
+                                "format": "JSON"})
+    try:
+        with urllib.request.urlopen("https://api.twelvedata.com/time_series?" + q,
+                                    timeout=8) as r:
+            data = json.loads(r.read().decode())
+    except Exception as e:
+        return None, None, "fetch_error: " + str(e)
+    if isinstance(data, dict) and data.get("status") == "error":
+        return None, None, data.get("message", "api_error")
+    vals = data.get("values") or []
+    if not vals:
+        return None, None, "no_data"
+    closes = [float(x["close"]) for x in vals]
+    closes.reverse()
+    return closes, vals[0].get("datetime"), None
+
+
+def _compute_signal(closes):
+    e9, e21 = _ema(closes, 9), _ema(closes, 21)
+    r = _rsi(closes, 14)
+    mom = closes[-1] - closes[-4] if len(closes) >= 4 else 0.0
+    score, reasons = 0.0, []
+    if e9 is not None and e21 is not None:
+        if e9 > e21:
+            score += 1; reasons.append("EMA up")
+        else:
+            score -= 1; reasons.append("EMA down")
+    if r is not None:
+        score += (1 if r > 50 else -1) * min(abs(r - 50) / 20.0, 1.0)
+        reasons.append("RSI %.0f" % r)
+    if mom > 0:
+        score += 1; reasons.append("Momentum up")
+    elif mom < 0:
+        score -= 1; reasons.append("Momentum down")
+    return {"direction": "UP" if score > 0.5 else ("DOWN" if score < -0.5 else "NEUTRAL"),
+            "confidence": int(min(abs(score) / 3.0 * 100, 99)),
+            "rsi": round(r, 1) if r is not None else None,
+            "reasons": reasons}
+
+
+@app.route("/signals", methods=["GET"])
+def signals():
+    if not TWELVEDATA_KEY:
+        return jsonify({"error": "no_api_key",
+                        "hint": "Geli TWELVEDATA_KEY env var"}), 200
+    out, now = [], time.time()
+    for sym in SIGNAL_PAIRS:
+        cached = _signal_cache.get(sym)
+        if cached and (now - cached[0] < SIGNAL_CACHE_SEC):
+            out.append(cached[1]); continue
+        closes, last_dt, err = _fetch_closes(sym, SIGNAL_INTERVAL)
+        if err or not closes or len(closes) < 22:
+            item = {"symbol": sym, "direction": "N/A", "confidence": 0,
+                    "rsi": None, "reasons": [err or "insufficient"], "time": last_dt}
+        else:
+            item = _compute_signal(closes)
+            item["symbol"], item["time"] = sym, last_dt
+        _signal_cache[sym] = (now, item)
+        out.append(item)
+    return jsonify({"pairs": out, "interval": SIGNAL_INTERVAL, "generated": int(now)})
+
+
+
+# ============ 7b) BINARY SIGNALS (on-demand + honest tracking) ============
+#
+#  Falsafada qaybtan: signal-ka la bixiyo LA CABBIRAA. Signal kasta natiijadiisa
+#  si toos ah ayaa la hubiyaa marka muddadu dhammaato, saxnaanta dhabta ahna
+#  waxaa la barbar dhigaa break-even-ka payout-kaaga. Ma jirto lambar la
+#  qurxiyay - haddii uu edge-gu maqan yahay, si cad ayaa loo tusayaa.
+
+SIGNALS = {}            # token -> [record]
+MAX_SIGNALS = 300
+SIGNAL_SYMBOLS = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", "EUR/JPY"]
+EXPIRY_CHOICES = {5: "5min", 15: "15min", 60: "1h"}
+_price_cache = {}       # symbol -> (ts, price)
+
+
+def _spot(symbol):
+    """Qiimaha hadda. 20 sekan ayaa la kaydiyaa (rate limit)."""
+    now = time.time()
+    c = _price_cache.get(symbol)
+    if c and now - c[0] < 20:
+        return c[1], None
+    closes, _, err = _fetch_closes(symbol, "1min", 5)
+    if err or not closes:
+        return None, (err or "no_data")
+    _price_cache[symbol] = (now, closes[-1])
+    return closes[-1], None
+
+
+def verify_pending(tok):
+    """Signal-adii muddadoodu dhammaatay natiijadooda hubi."""
+
+Maxamed c/risaaq, [11.09.2026 17:30]
+recs = SIGNALS.get(tok) or []
+    now = time.time()
+    checked = 0
+    for r in recs:
+        if r["status"] != "pending" or r["expires_at"] > now:
+            continue
+        if checked >= 3:          # rate limit: saddex hubin call kasta
+            break
+        checked += 1
+        price, err = _spot(r["symbol"])
+        if price is None:
+            continue
+        r["exit_price"] = price
+        move = price - r["entry_price"]
+        if move == 0:
+            r["status"] = "void"          # isku qiime = broker-ku badanaa waa refund
+        elif (move > 0) == (r["direction"] == "BUY"):
+            r["status"] = "correct"
+        else:
+            r["status"] = "wrong"
+
+
+def signal_stats(tok, payout):
+    recs = [r for r in (SIGNALS.get(tok) or []) if r["status"] in ("correct", "wrong")]
+    total = len(recs)
+    wins = sum(1 for r in recs if r["status"] == "correct")
+    acc = (wins / total * 100.0) if total else None
+    breakeven = 100.0 / (100.0 + float(payout))* 100.0
+    return {
+        "total": total, "wins": wins, "losses": total - wins,
+        "accuracy": round(acc, 1) if acc is not None else None,
+        "breakeven": round(breakeven, 1),
+        "payout": float(payout),
+        "above_breakeven": (acc is not None and acc >= breakeven),
+        "pending": sum(1 for r in (SIGNALS.get(tok) or []) if r["status"] == "pending"),
+    }
+
+
+@app.route("/signal/request", methods=["POST", "OPTIONS"])
+def signal_request():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if not TWELVEDATA_KEY:
+        return jsonify({"error": "no_api_key",
+                        "hint": "Geli TWELVEDATA_KEY env var ee Render (bilaash: twelvedata.com)"}), 200
+
+    tok = get_token(request) or MASTER_TOKEN
+    data = request.get_json(silent=True) or {}
+    symbol = (data.get("symbol") or "EUR/USD").upper()
+    if symbol not in SIGNAL_SYMBOLS:
+        return jsonify({"error": "symbol aan la aqoon"}), 400
+    try:
+        expiry = int(data.get("expiry") or 5)
+    except (TypeError, ValueError):
+        expiry = 5
+    if expiry not in EXPIRY_CHOICES:
+        expiry = 5
+
+    # Suuqa forex-ku wuu xiran yahay Sabtida iyo Axadda -> xog cusub ma jirto.
+    wd = time.gmtime().tm_wday          # 0=Isniin ... 5=Sabti, 6=Axad
+    hr = time.gmtime().tm_hour
+    closed = (wd == 5) or (wd == 6 and hr < 21) or (wd == 4 and hr >= 21)
+    if closed:
+        return jsonify({"error": "market_closed",
+                        "hint": "Suuqa forex-ku hadda wuu xiran yahay (Sabti/Axad). "
+                                "Signal lama bixin karo ilaa suuqu furmo Axada 21:00 GMT."}), 200
+
+    closes, last_dt, err = _fetch_closes(symbol, EXPIRY_CHOICES[expiry], 60)
+    if err or not closes or len(closes) < 22:
+        return jsonify({"error": err or "xog kuma filna",
+                        "hint": "Xogta qiimaha lama helin: " + str(err or "kuma filna")}), 200
+
+    sig = _compute_signal(closes)
+    if sig["direction"] == "NEUTRAL":
+        return jsonify({"neutral": True, "symbol": symbol, "expiry": expiry,
+                        "reasons": sig["reasons"],
+                        "message": "Suuqu isku dheelitiran yahay - signal lama bixinayo."}), 200
+
+    now = time.time()
+    rec = {
+        "id": int(now * 1000) % 10**10,
+        "symbol": symbol, "expiry": expiry,
+        "direction": "BUY" if sig["direction"] == "UP" else "SELL",
+        "score": sig["confidence"], "reasons": sig["reasons"], "rsi": sig["rsi"],
+        "entry_price": closes[-1], "exit_price": None,
+        "created": int(now), "expires_at": now + expiry * 60,
+        "status": "pending", "bar_time": last_dt,
+    }
+    q = SIGNALS.setdefault(tok, [])
+    q.insert(0, rec)
+    del q[MAX_SIGNALS:]
+    return jsonify({"signal": rec})
+
+
+@app.route("/signal/history", methods=["GET"])
+
+Maxamed c/risaaq, [11.09.2026 17:30]
+def signal_history():
+    tok = request.args.get("token") or MASTER_TOKEN
+    try:
+        payout = float(request.args.get("payout") or 80)
+    except ValueError:
+        payout = 80.0
+    verify_pending(tok)
+    recs = (SIGNALS.get(tok) or [])[:40]
+    return jsonify({"signals": recs, "stats": signal_stats(tok, payout),
+                    "symbols": SIGNAL_SYMBOLS, "expiries": sorted(EXPIRY_CHOICES),
+                    "has_key": bool(TWELVEDATA_KEY)})
+
+
+# ============ 9) TRADE JOURNAL (waarta) ============
+#
+#  Ujeeddada: 100+ trade oo la kaydiyo si loo ogaado lammaanahee faa'iido
+#  leh iyo bootku guud ahaan ma faa'iido leeyahay.
+#
+#  Kaydka: PostgreSQL haddii DATABASE_URL la dhigo (Render -> New ->
+#  PostgreSQL -> Internal Database URL). Haddii kale xusuusta, taasoo
+#  baaba'aysa marka server-ku hurdo.
+#
+#  Dedup: (bot, ticket). EA-gu ticket kasta mar kasta wuu soo dirayaa;
+#  isla ticket dib looma kaydinayo.
+
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+_pg = None
+MEM_TRADES = {}          # (token, bot, ticket) -> row
+
+
+def pg():
+    """Xiriirka Postgres. None haddii aan la habeyn."""
+    global _pg
+    if not DATABASE_URL:
+        return None
+    if _pg is not None:
+        try:
+            with _pg.cursor() as c:
+                c.execute("SELECT 1")
+            return _pg
+        except Exception:
+            _pg = None
+    try:
+        import psycopg2
+        _pg = psycopg2.connect(DATABASE_URL, connect_timeout=6)
+        _pg.autocommit = True
+        with _pg.cursor() as c:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS trades (
+                    token      TEXT NOT NULL,
+                    bot        TEXT NOT NULL,
+                    ticket     BIGINT NOT NULL,
+                    symbol     TEXT,
+                    side       TEXT,
+                    strat      TEXT,
+                    lot        DOUBLE PRECISION,
+                    entry      DOUBLE PRECISION,
+                    exitp      DOUBLE PRECISION,
+                    sl         DOUBLE PRECISION,
+                    tp         DOUBLE PRECISION,
+                    profit     DOUBLE PRECISION,
+                    open_time  TEXT,
+                    close_time TEXT,
+                    added      BIGINT,
+                    PRIMARY KEY (token, bot, ticket)
+                )""")
+            c.execute("CREATE INDEX IF NOT EXISTS trades_tok ON trades(token, close_time)")
+        return _pg
+    except Exception as e:
+        print("PG connect failed:", e)
+        _pg = None
+        return None
+
+
+TRADE_FIELDS = ["ticket", "symbol", "side", "strat", "lot", "entry",
+                "exitp", "sl", "tp", "profit", "open_time", "close_time"]
+
+
+def store_trades(tok, bot, rows):
+    """Soo celi tirada CUSUB ee la kaydiyay."""
+    conn = pg()
+    added = 0
+    now = int(time.time())
+    if conn:
+        with conn.cursor() as c:
+            for r in rows:
+                try:
+                    c.execute("""
+                        INSERT INTO trades (token,bot,ticket,symbol,side,strat,lot,
+                                            entry,exitp,sl,tp,profit,open_time,close_time,added)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT (token,bot,ticket) DO NOTHING""",
+                        (tok, bot, int(r["ticket"]), r.get("symbol"), r.get("side"),
+                         r.get("strat"), r.get("lot"), r.get("entry"), r.get("exitp"),
+                         r.get("sl"), r.get("tp"), r.get("profit"),
+                         r.get("open_time"), r.get("close_time"), now))
+                    added += c.rowcount
+                except Exception as e:
+                    print("insert failed:", e)
+        return added
+
+    for r in rows:
+        key = (tok, bot, int(r["ticket"]))
+        if key in MEM_TRADES:
+            continue
+        row = dict(r); row["bot"] = bot; row["added"] = now
+        MEM_TRADES[key] = row
+        added += 1
+    if len(MEM_TRADES) > 5000:
+        for k in list(MEM_TRADES)[:1000]:
+            del MEM_TRADES[k]
+    return added
+
+Maxamed c/risaaq, [11.09.2026 17:30]
+def load_trades(tok, limit=500):
+    conn = pg()
+    if conn:
+        with conn.cursor() as c:
+            c.execute("""SELECT bot,ticket,symbol,side,strat,lot,entry,exitp,sl,tp,
+                                profit,open_time,close_time
+                         FROM trades WHERE token=%s
+                         ORDER BY close_time DESC NULLS LAST, ticket DESC
+                         LIMIT %s""", (tok, limit))
+            cols = ["bot","ticket","symbol","side","strat","lot","entry","exitp",
+                    "sl","tp","profit","open_time","close_time"]
+            return [dict(zip(cols, row)) for row in c.fetchall()]
+    rows = [v for (t, b, tk), v in MEM_TRADES.items() if t == tok]
+    rows.sort(key=lambda r: (r.get("close_time") or "", r.get("ticket") or 0), reverse=True)
+    return rows[:limit]
+
+
+def journal_stats(rows):
+    """Tirooyinka guud + lammaane kasta."""
+    def calc(items):
+        wins  = [r for r in items if (r.get("profit") or 0) > 0]
+        loss  = [r for r in items if (r.get("profit") or 0) < 0]
+        gw = sum(r["profit"] for r in wins)
+        gl = abs(sum(r["profit"] for r in loss))
+        n  = len(wins) + len(loss)
+        return {
+            "trades": n,
+            "wins": len(wins), "losses": len(loss),
+            "winrate": round(len(wins) / n * 100, 1) if n else None,
+            "gross_win": round(gw, 2), "gross_loss": round(gl, 2),
+            "net": round(gw - gl, 2),
+            "pf": round(gw / gl, 2) if gl > 0 else (999.0 if gw > 0 else 0.0),
+            "avg_win": round(gw / len(wins), 2) if wins else 0.0,
+            "avg_loss": round(-gl / len(loss), 2) if loss else 0.0,
+            "best": round(max([r["profit"] for r in wins]), 2) if wins else 0.0,
+            "worst": round(min([r["profit"] for r in loss]), 2) if loss else 0.0,
+        }
+
+    overall = calc(rows)
+    per = {}
+    for r in rows:
+        per.setdefault(r.get("symbol") or "?", []).append(r)
+    symbols = []
+    for sym, items in per.items():
+        st = calc(items)
+        st["symbol"] = sym
+        symbols.append(st)
+    symbols.sort(key=lambda x: -x["net"])
+
+    if overall["trades"] < 30:
+        verdict = "sug"
+        msg = "%d trade. Ugu yaraan 30 ka hor inta aan wax lagu xukumin." % overall["trades"]
+    elif overall["pf"] >= 1.3:
+        verdict = "good"
+        msg = "PF %.2f — xoog leh. Sii wad ilaa 100 trade." % overall["pf"]
+    elif overall["pf"] >= 0.9:
+        verdict = "unclear"
+        msg = "PF %.2f — mugdi. Sample kordhi, wax ha beddelin." % overall["pf"]
+    else:
+        verdict = "bad"
+        msg = "PF %.2f — ma shaqeynayso. Wax beddel." % overall["pf"]
+
+    return {"overall": overall, "symbols": symbols,
+            "verdict": verdict, "message": msg,
+            "persistent": bool(DATABASE_URL)}
+
+
+@app.route("/trades", methods=["POST", "OPTIONS"])
+def post_trades():
+    """EA -> server: trade-yada la xiray (ticket la socda)."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+    tok = get_token(request)
+    if not tok:
+        return jsonify({"error": "no token"}), 401
+    bot = get_bot(request)
+    data = request.get_json(silent=True) or {}
+    raw = data.get("trades") or []
+
+    rows = []
+    for r in raw:
+        try:
+            tk = int(r.get("ticket") or 0)
+        except (TypeError, ValueError):
+            continue
+        if tk <= 0:
+            continue
+        row = {"ticket": tk}
+        for k in TRADE_FIELDS[1:]:
+            row[k] = r.get(k)
+        for k in ("lot", "entry", "exitp", "sl", "tp", "profit"):
+            try:
+                row[k] = float(row[k]) if row[k] is not None else None
+            except (TypeError, ValueError):
+                row[k] = None
+        rows.append(row)
+
+    added = store_trades(tok, bot, rows)
+    return jsonify({"ok": True, "received": len(rows), "new": added,
+                    "persistent": bool(DATABASE_URL)})
+
+Maxamed c/risaaq, [11.09.2026 17:30]
+@app.route("/journal", methods=["GET"])
+def journal():
+    tok = request.args.get("token") or MASTER_TOKEN
+    sym = request.args.get("symbol")
+    rows = load_trades(tok, 500)
+    stats = journal_stats(rows)
+    shown = [r for r in rows if (not sym or r.get("symbol") == sym)]
+    return jsonify({"trades": shown[:120], "stats": stats,
+                    "total_stored": len(rows)})
+
+
+@app.route("/journal.csv", methods=["GET"])
+def journal_csv():
+    tok = request.args.get("token") or MASTER_TOKEN
+    rows = load_trades(tok, 2000)
+    out = ["bot,ticket,symbol,side,strat,lot,entry,exit,sl,tp,profit,open_time,close_time"]
+    for r in rows:
+        out.append(",".join(str(r.get(k) if r.get(k) is not None else "")
+                   for k in ["bot","ticket","symbol","side","strat","lot","entry",
+                             "exitp","sl","tp","profit","open_time","close_time"]))
+    resp = Response("\n".join(out), mimetype="text/csv")
+    resp.headers["Content-Disposition"] = "attachment; filename=moha_trades.csv"
+    return resp
+
+# ============ 8) Pages ============
+EMBEDDED_HTML = """<!DOCTYPE html>
+<html lang="so">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+<meta name="theme-color" content="#0a0a0f">
+<title>MOHA PRO — Bot Control</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='78' font-size='78'>&#9889;</text></svg>">
+<style>
+:root{
+  --bg:#0a0a0f; --surface:#15151e; --surface-2:#1c1c27; --line:#282833; --line-2:#34343f;
+  --ink:#fff; --ink-2:#a6a6ba; --muted:#6f6f85;
+  --orange:#f0872a; --orange-2:#ff9a3c; --orange-d:#c9661a;
+  --good:#22b455; --good-ink:#3ad46e; --bad:#e0524f; --bad-ink:#f0736f; --info:#3987e5;
+  --font:system-ui,-apple-system,"Segoe UI",sans-serif; --mono:ui-monospace,"Roboto Mono",monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);padding-bottom:80px;-webkit-font-smoothing:antialiased}
+.num{font-variant-numeric:tabular-nums;font-family:var(--mono)}
+.wrap{max-width:820px;margin:0 auto;padding:0 15px}
+button{font-family:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--orange);outline-offset:2px}
+
+/* ===== HERO ===== */
+.hero{position:relative;width:100%;overflow:hidden;min-height:210px;background:#120a06}
+.hero img{width:100%;height:auto;display:block;min-height:210px;object-fit:cover}
+.hero-grad{position:absolute;inset:0;background:linear-gradient(180deg,rgba(10,10,15,.3) 0%,rgba(10,10,15,0) 35%,rgba(10,10,15,.55) 70%,var(--bg) 100%)}
+.hero-top{position:absolute;top:14px;left:0;right:0;padding:0 16px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:7px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.5);backdrop-filter:blur(6px);color:#fff}
+.chip:active{opacity:.6}
+.st-pill{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:700;padding:7px 13px;border-radius:999px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.55);backdrop-filter:blur(6px);letter-spacing:.4px}
+.st-pill .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.st-pill.on{color:var(--good-ink)} .st-pill.on .dot{background:var(--good-ink);animation:pulse 2s infinite}
+.st-pill.demo{color:var(--orange-2)} .st-pill.demo .dot{background:var(--orange-2)}
+.st-pill.off{color:var(--bad-ink)} .st-pill.off .dot{background:var(--bad-ink)}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(34,180,85,.5)}70%{box-shadow:0 0 0 7px rgba(34,180,85,0)}100%{box-shadow:0 0 0 0 rgba(34,180,85,0)}}
+.hero-title{position:absolute;left:18px;bottom:16px;right:18px}
+.hero-title h1{font-size:36px;font-weight:800;letter-spacing:-1px;line-height:.95;text-shadow:0 3px 16px rgba(0,0,0,.8)}
+.hero-title h1 .v{color:var(--orange)}
+.hero-title p{font-size:12px;color:#e0bfa0;margin-top:6px;font-weight:500;text-shadow:0 2px 8px rgba(0,0,0,.9)}
+
+Maxamed c/risaaq, [11.09.2026 17:30]
+/* ===== BOT LINE ===== */
+.botline{display:flex;align-items:center;gap:9px;margin:16px 2px 12px;font-size:14px;font-weight:600}
+.botline .bd{width:10px;height:10px;border-radius:50%;background:var(--bad)}
+.botline.run .bd{background:var(--good);box-shadow:0 0 0 4px rgba(34,180,85,.2)}
+.botline .clock{margin-left:auto;font-family:var(--mono);font-size:12.5px;color:var(--muted);font-weight:500}
+
+/* ===== ACTIONS ===== */
+.actions{display:grid;grid-template-columns:1fr 1fr 1fr;background:linear-gradient(135deg,var(--orange-2),var(--orange-d));border-radius:16px;overflow:hidden;margin-bottom:14px}
+.actions button{border:none;background:transparent;color:#1a0e00;padding:15px 6px;display:flex;flex-direction:column;align-items:center;gap:5px;position:relative;transition:background .15s}
+.actions button:not(:last-child){border-right:1px solid rgba(0,0,0,.15)}
+.actions button:active{background:rgba(0,0,0,.12)}
+.actions button svg{width:23px;height:23px;stroke:#1a0e00;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.actions button .al{font-size:12.5px;font-weight:700;letter-spacing:.4px}
+.cmd-note{text-align:center;font-size:12px;color:var(--muted);min-height:16px;margin-bottom:14px}
+
+/* ===== BANNER ===== */
+.banner{border-radius:12px;padding:11px 14px;font-size:12.5px;font-weight:600;text-align:center;margin-bottom:15px;line-height:1.5}
+.banner.demo{background:rgba(240,135,42,.13);border:1px solid rgba(240,135,42,.4);color:var(--orange-2)}
+.banner.live{background:rgba(34,180,85,.13);border:1px solid rgba(34,180,85,.45);color:var(--good-ink)}
+.banner a{color:inherit}
+
+/* ===== BOT SWITCHER ===== */
+.botsw{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;margin-bottom:15px;-webkit-overflow-scrolling:touch}
+.botsw button{flex-shrink:0;display:flex;align-items:center;gap:7px;background:var(--surface);border:1px solid var(--line);color:var(--ink-2);border-radius:999px;padding:9px 15px;font-size:13px;font-weight:600;white-space:nowrap}
+.botsw button.on{background:var(--orange);border-color:var(--orange);color:#0a0a0f}
+.botsw button .bdot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex-shrink:0}
+.botsw button .bdot.live{background:var(--good-ink)}
+.botsw button.on .bdot{background:rgba(0,0,0,.45)}
+.botsw button.on .bdot.live{background:#0a3d1c}
+.botcard{display:flex;align-items:center;gap:12px;padding:13px 2px;border-bottom:1px solid var(--line);cursor:pointer}
+.botcard:last-child{border-bottom:none}
+.botcard .bn{font-size:15px;font-weight:700;display:flex;align-items:center;gap:7px}
+.botcard .bm{font-size:12px;color:var(--muted);margin-top:3px;font-variant-numeric:tabular-nums}
+.botcard .bp{margin-left:auto;text-align:right;flex-shrink:0}
+.botcard .bp .v{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
+.botcard .bp .l{font-size:11px;color:var(--muted);margin-top:2px}
+.hide{display:none!important}
+
+/* ===== TABS ===== */
+.tabs{display:flex;background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:3px;gap:3px;margin-bottom:16px}
+.tabs div{flex:1;text-align:center;font-size:13px;font-weight:600;color:var(--ink-2);padding:9px 0;border-radius:8px;cursor:pointer;transition:.15s}
+.tabs div.on{background:var(--orange);color:#0a0a0f}
+.pane{display:none} .pane.on{display:block}
+
+/* ===== SECTIONS ===== */
+.sec-h{font-size:13px;color:var(--orange);font-weight:700;margin:0 2px 12px;display:flex;align-items:center;gap:8px}
+.sec-h::before{content:"";width:4px;height:14px;border-radius:2px;background:var(--orange)}
+.sec-h .rt{margin-left:auto;font-size:11.5px;color:var(--muted);font-weight:500}
+.block{margin-bottom:18px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:15px;padding:14px}
+
+/* ===== KPI ===== */
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+
+Maxamed c/risaaq, [11.09.2026 17:30]
+.kpi .lbl{font-size:11px;color:var(--muted);font-weight:600}
+.kpi .val{font-size:19px;font-weight:700;margin-top:6px;letter-spacing:-.4px}
+.up{color:var(--good-ink)} .down{color:var(--bad-ink)} .or{color:var(--orange)}
+.kpi.accent{background:linear-gradient(135deg,rgba(240,135,42,.12),var(--surface));border-color:rgba(240,135,42,.3)}
+
+/* ===== SYMBOLS ===== */
+.symrow{display:flex;align-items:center;gap:12px;padding:13px 2px;border-bottom:1px solid var(--line)}
+.symrow:last-child{border-bottom:none}
+.symrow .si{flex:1;min-width:0}
+.symrow .sn{font-size:15px;font-weight:700;letter-spacing:-.2px}
+.symrow .sm{font-size:12px;color:var(--muted);margin-top:2px;font-variant-numeric:tabular-nums}
+.symrow .sm b{font-weight:600}
+.sw{width:44px;height:26px;border-radius:13px;background:var(--line-2);border:none;padding:0;position:relative;flex-shrink:0;transition:background .18s}
+.sw::after{content:"";position:absolute;left:3px;top:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform .18s}
+.sw.on{background:var(--good)}
+.sw.on::after{transform:translateX(18px)}
+.sym-empty{color:var(--muted);text-align:center;padding:26px 10px;font-size:13px;line-height:1.6}
+.addrow{display:flex;gap:8px;margin-top:14px}
+.addrow input{flex:1;background:var(--surface-2);border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:10px 12px;font-family:var(--mono);font-size:13px;text-transform:uppercase}
+.addrow input::placeholder{color:var(--muted);text-transform:none;font-family:var(--font)}
+.addrow button{background:var(--orange);color:#0a0a0f;border:none;border-radius:9px;padding:0 18px;font-weight:700;font-size:13px}
+
+/* ===== STRATEGY ===== */
+.strats{display:flex;gap:9px;flex-wrap:wrap}
+.strat{padding:9px 17px;border-radius:999px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink-2);font-size:13px;font-weight:600;transition:all .15s}
+.strat.active{background:linear-gradient(135deg,var(--orange-2),var(--orange-d));color:#1a0e00;border-color:var(--orange)}
+
+/* ===== TABLE ===== */
+.tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{text-align:left;font-size:11px;color:var(--muted);font-weight:600;padding:9px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+.tbl td{padding:10px;border-bottom:1px solid rgba(255,255,255,.05);font-variant-numeric:tabular-nums;white-space:nowrap}
+.tbl tbody tr:last-child td{border-bottom:none}
+.tbl .sym{font-weight:700}
+.badge{display:inline-block;padding:3px 9px;border-radius:6px;font-size:10.5px;font-weight:700}
+.badge.buy{color:var(--good-ink);background:rgba(34,180,85,.14)}
+.badge.sell{color:var(--bad-ink);background:rgba(224,82,79,.14)}
+.badge.strat{color:var(--orange);background:rgba(240,135,42,.14)}
+.badge.op{color:var(--info);background:rgba(57,135,229,.16)}
+.badge.cl{color:var(--muted);background:rgba(119,119,140,.16)}
+.pl-pos{color:var(--good-ink);font-weight:700} .pl-neg{color:var(--bad-ink);font-weight:700}
+.trow{cursor:pointer} .trow:active{background:rgba(240,135,42,.08)}
+.carcell{width:20px;padding-right:0!important} .car{color:var(--orange);font-size:12px}
+.detrow td{padding:0!important;border:none!important}
+.tdet{background:var(--surface-2);border-radius:0 0 10px 10px;padding:12px 14px!important}
+.det-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.dc{background:#13131c;border:1px solid var(--line);border-radius:8px;padding:9px 11px}
+.dc span{display:block;font-size:10px;color:var(--muted);margin-bottom:4px;font-weight:600}
+.dc b{font-size:14px;font-variant-numeric:tabular-nums}
+@media(max-width:640px){.det-grid{grid-template-columns:repeat(2,1fr)}}
+.ot-empty{color:var(--muted);text-align:center;padding:20px;font-size:13px}
+
+/* ===== JOURNAL ===== */
+
+Maxamed c/risaaq, [11.09.2026 17:30]
+.jhero{display:flex;gap:10px;margin-bottom:13px}
+.jhero .jg{flex:1;background:linear-gradient(135deg,rgba(34,227,122,.13),var(--surface));border:1px solid rgba(34,227,122,.5);border-radius:13px;padding:12px 14px}
+.jhero .jg.d{background:linear-gradient(135deg,rgba(240,135,42,.12),var(--surface));border-color:var(--orange)}
+.jhero .jl{font-size:11px;color:var(--ink-2);font-weight:600}
+.jhero .jv{font-size:21px;font-weight:800;margin-top:3px;color:var(--good-ink)}
+.jhero .jv.or{color:var(--orange)} .jhero .jv.neg{color:var(--bad)}
+.jhero .js{font-size:11px;color:var(--muted);margin-top:2px}
+.jmon-h{font-size:12px;color:var(--ink-2);font-weight:600;margin:6px 0 8px}
+#j_bars svg{display:block;width:100%;height:130px}
+.jmrow{display:flex;justify-content:space-between;font-size:9.5px;color:var(--muted);margin-top:5px;padding:0 2px}
+.jgrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px;margin-top:14px}
+.jst{background:#0f0f17;border:1px solid var(--line);border-radius:11px;padding:10px 11px}
+.jst .jl2{font-size:10px;color:var(--ink-2);font-weight:600}
+.jst .jv2{font-size:15px;font-weight:700;margin-top:3px}
+.jst .jv2.g{color:var(--good-ink)} .jst .jv2.r{color:var(--bad-ink)} .jst .jv2.o{color:var(--orange)}
+
+/* ===== SIGNALS ===== */
+.tabs{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.tabs div{flex:0 0 auto;padding:9px 14px;white-space:nowrap}
+.chips{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px}
+.chip2{padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink-2);font-size:12.5px;font-weight:600}
+.chip2.on{background:linear-gradient(135deg,var(--orange-2),var(--orange-d));border-color:var(--orange);color:#1a0e00;font-weight:700}
+.exp{display:flex;gap:7px;margin-bottom:15px}
+.exp button{flex:1;padding:9px 0;border-radius:9px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink-2);font-size:12.5px;font-weight:600}
+.exp button.on{background:#2a2333;border-color:var(--orange);color:var(--orange);font-weight:700}
+.bigbtn{width:100%;border:none;border-radius:13px;padding:16px;background:linear-gradient(135deg,var(--orange-2),var(--orange-d));color:#1a0e00;font-size:15px;font-weight:800;letter-spacing:.3px}
+.bigbtn:disabled{opacity:.5}
+.sigcard{border-radius:15px;padding:15px;margin-top:14px}
+.sigcard.buy{background:linear-gradient(135deg,rgba(34,180,85,.16),var(--surface));border:1px solid rgba(34,180,85,.45)}
+.sigcard.sell{background:linear-gradient(135deg,rgba(224,82,79,.16),var(--surface));border:1px solid rgba(224,82,79,.5)}
+.sigcard.flat{background:var(--surface);border:1px solid var(--line)}
+.sigdir{font-size:30px;font-weight:800;line-height:1.1;margin-top:3px}
+.sigrow{display:flex;justify-content:space-between;font-size:12px;padding:3px 0;color:var(--ink-2)}
+.sighist{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+.sighist:last-child{border-bottom:none}
+.acc{background:linear-gradient(135deg,rgba(240,135,42,.1),var(--surface));border:1px solid rgba(240,135,42,.4);border-radius:15px;padding:15px}
+.accbar{height:8px;border-radius:4px;background:var(--line);position:relative;overflow:hidden}
+.accbar i{display:block;height:100%}
+.accmark{position:absolute;top:-3px;width:2px;height:14px;background:#fff}
+.warnbox{background:rgba(224,82,79,.13);border-radius:9px;padding:11px 12px;font-size:12px;color:var(--bad-ink);line-height:1.6;margin-top:11px}
+.okbox{background:rgba(34,180,85,.13);border-radius:9px;padding:11px 12px;font-size:12px;color:var(--good-ink);line-height:1.6;margin-top:11px}
+
+/* ===== NAV ===== */
+.navbar{position:fixed;left:0;right:0;bottom:0;z-index:50;display:flex;justify-content:space-around;background:rgba(14,14,22,.96);border-top:1px solid var(--line);padding:7px 4px calc(7px + env(safe-area-inset-bottom));backdrop-filter:blur(10px)}
+
+Maxamed c/risaaq, [11.09.2026 17:30]
+.navbar button{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:5px 2px;background:none;border:none;color:var(--muted);font-size:10.5px;font-weight:600}
+.navbar button svg{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.navbar button.active{color:var(--orange)}
+.foot{text-align:center;color:var(--muted);font-size:10.5px;padding:8px 0 14px}
+</style>
+</head>
+<body>
+
+<div class="hero" id="top">
+  <img id="banner-img" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='300'%3E%3Crect width='800' height='300' fill='%23120a06'/%3E%3C/svg%3E" alt="MOHA PRO">
+  <input type="file" id="img-input" accept="image/*" style="display:none">
+  <div class="hero-grad"></div>
+  <div class="hero-top">
+    <span id="status" class="st-pill off"><span class="dot"></span>OFFLINE</span>
+    <button class="chip" id="change-btn">Beddel sawirka</button>
+  </div>
+  <div class="hero-title">
+    <h1>MOHA PRO <span class="v">v56</span></h1>
+    <p>MT4 / MT5 · Bot control</p>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div class="botline" id="botline"><span class="bd"></span><span>Bot <span id="botstate">Stopped</span></span><span class="clock" id="clock">--:--:--</span></div>
+
+  <div class="actions">
+    <button onclick="sendCmd('START')"><svg viewBox="0 0 24 24"><polygon points="6 4 20 12 6 20 6 4"/></svg><span class="al">START</span></button>
+    <button onclick="sendCmd('STOP')"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg><span class="al">STOP</span></button>
+    <button onclick="if(confirm('Xir dhammaan trade-yada?'))sendCmd('CLOSE_ALL')"><svg viewBox="0 0 24 24"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg><span class="al">CLOSE</span></button>
+  </div>
+  <div class="cmd-note" id="cmdNote"></div>
+
+  <div class="banner demo" id="dataMode">Xogta lama helin weli</div>
+
+  <div class="botsw" id="botsw"></div>
+
+  <div class="tabs" id="tabs">
+    <div data-t="overview" class="on">Guud</div>
+    <div data-t="symbols">Symbols</div>
+    <div data-t="signals">Signals</div>
+    <div data-t="chart">Chart</div>
+    <div data-t="journal">Journal</div>
+  </div>
+
+  <!-- ===== OVERVIEW ===== -->
+  <section class="pane on" data-p="overview">
+    <div class="card block hide" id="botsBlock">
+      <h2 class="sec-h">Botyada <span class="rt" id="bots-live">0 nool</span></h2>
+      <div id="botList"></div>
+    </div>
+
+    <div class="block" id="acctBlock">
+      <h2 class="sec-h">Akoonka <span class="rt" id="symbol">—</span></h2>
+      <div class="kpis">
+        <div class="card kpi accent"><div class="lbl">Balance</div><div class="val num" id="k_balance">$0.00</div></div>
+        <div class="card kpi"><div class="lbl">Equity</div><div class="val num" id="k_equity">$0.00</div></div>
+        <div class="card kpi"><div class="lbl">Faa'iido</div><div class="val num up" id="k_profit">+$0.00</div></div>
+        <div class="card kpi"><div class="lbl">Win rate</div><div class="val num or" id="k_wr">0.0%</div></div>
+        <div class="card kpi"><div class="lbl">Drawdown</div><div class="val num down" id="k_dd">0.0%</div></div>
+        <div class="card kpi"><div class="lbl">Furan</div><div class="val num" id="k_open">0</div></div>
+      </div>
+    </div>
+
+    <div class="card block" id="stratBlock">
+      <h2 class="sec-h">Xeeladda <span class="rt">guji si aad u beddesho</span></h2>
+      <div class="strats" id="strats">
+        <button class="strat" data-s="SR">SR</button><button class="strat" data-s="BB">BB</button>
+        <button class="strat" data-s="EMA">EMA</button><button class="strat" data-s="SMC">SMC</button>
+        <button class="strat" data-s="VSA">VSA</button><button class="strat" data-s="POC">POC</button>
+      </div>
+    </div>
+
+Maxamed c/risaaq, [11.09.2026 17:30]
 <div class="card block">
       <h2 class="sec-h">Ganacsiyada <span class="rt" id="trades-count">0</span></h2>
       <div class="tbl-wrap">
@@ -78,6 +1254,8 @@
       <div id="tvchart" style="height:340px;border-radius:10px;overflow:hidden"></div>
     </div>
   </section>
+
+Maxamed c/risaaq, [11.09.2026 17:30]
 <!-- ===== JOURNAL ===== -->
   <section class="pane" data-p="journal">
     <div class="block">
@@ -149,6 +1327,8 @@ document.querySelectorAll('#nav button[data-t]').forEach(b=>b.addEventListener('
 let tvStarted=false,tvSym='',LAST_SYMBOL='GBPUSD';
 function tvSymbolFor(raw){let s=(raw||'GBPUSD').toUpperCase().replace(/[^A-Z].*$/,'');if(s.length<6)s='GBPUSD';return 'FX:'+s.slice(0,6);}
 function loadTV(cb){if(window.TradingView){cb();return;}if(!tvStarted){tvStarted=true;const s=document.createElement('script');s.src='https://s3.tradingview.com/tv.js';s.onload=cb;document.head.appendChild(s);}else{setTimeout(()=>loadTV(cb),300);}}
+
+Maxamed c/risaaq, [11.09.2026 17:30]
 function initChart(raw){
   const sym=tvSymbolFor(raw);if(sym===tvSym)return;tvSym=sym;
   $('chartsym').textContent=sym.replace('FX:','')+' · M5';
@@ -221,6 +1401,8 @@ function renderBots(list){
           (b.reason==='stale'?'Duugoobay '+(b.age||0)+'s':'Xog ma jirto'))+'</div></div>'+
         '<div class="bp"><div class="v '+(p>=0?'up':'down')+'">'+(b.live?((p>=0?'+':'')+money(Math.abs(p))):'—')+'</div>'+
         '<div class="l">floating</div></div>';
+
+Maxamed c/risaaq, [11.09.2026 17:30]
 row.addEventListener('click',()=>{CUR_BOT=b.bot;renderBots(BOTS);poll();});
       let lp=null;
       const startLP=()=>{lp=setTimeout(()=>{
@@ -296,6 +1478,8 @@ function renderTrades(trades){
     const tr=document.createElement('tr');tr.className='trow';
     tr.innerHTML='<td class="carcell"><span class="car" id="car'+i+'">&#9656;</span></td>'+
       '<td class="sym">'+esc(t.sym)+'</td>'+
+
+Maxamed c/risaaq, [11.09.2026 17:30]
 '<td><span class="badge '+(buy?'buy':'sell')+'">'+esc(t.type)+'</span></td>'+
       '<td><span class="badge strat">'+esc(t.strat)+'</span></td>'+
       '<td class="'+(p>=0?'pl-pos':'pl-neg')+'">'+(p>=0?'+':'')+money(p)+'</td>'+
@@ -378,6 +1562,8 @@ async function loadJournal(){
 $('jCsv').addEventListener('click',()=>{
   window.open('/journal.csv?token='+encodeURIComponent(TOKEN),'_blank');
 });
+
+Maxamed c/risaaq, [11.09.2026 17:30]
 /* ===== STATE ===== */
 const DEMO={balance:10482.55,equity:10531.20,profit:182.55,winrate:76.2,drawdown:3.10,opentrades:2,symbol:"GBPUSD",
   trades:[
@@ -449,6 +1635,8 @@ async function poll(){
   try{
     const url='/state?token='+encodeURIComponent(TOKEN)+(CUR_BOT?'&bot='+encodeURIComponent(CUR_BOT):'');
     const r=await fetch(url,{cache:'no-store'});
+
+Maxamed c/risaaq, [11.09.2026 17:30]
 if(!r.ok)throw 0;
     const d=await r.json();
     if(d.live){applyState(d,true);setStatus('on','live',d.age);}
