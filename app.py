@@ -18,6 +18,7 @@ Endpoints:
 """
 import os
 import time
+import calendar
 import json
 import urllib.request
 import urllib.parse
@@ -34,7 +35,7 @@ DASHBOARD_FILE = os.path.join(BASE_DIR, "dashboard.html")
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "MohaPro_Live_2026_MySecret")
 MASTER_TOKEN = AUTH_TOKEN
 
-BUILD = "v4.1-2026-09-08"
+BUILD = "v4.3-2026-09-12"
 DEFAULT_BOT = "default"
 MAX_HISTORY = 120
 STALE_SECONDS = 120
@@ -269,6 +270,103 @@ def get_state():
 JOURNAL = {}   # token -> bot -> {ticket: trade}
 
 
+
+# ============ DATABASE — xogtu waa inay sii jirtaa ============
+#
+#  Render free tier: server-ku wuu hurdaa 15 daqiiqo ka dib, deploy
+#  kastana wuu dib u bilaabmaa. Xusuusta wax lagu kaydiyo way baaba'ayaan.
+#  Sidaas darteed journal-ka waxaa lagu kaydiyaa Postgres.
+#
+#  DATABASE_URL env var haddii la dhigo -> Postgres (xogtu way sii jirtaa).
+#  Haddii aan la dhigin       -> xusuusta (tijaabo kaliya, way baaba'aysaa).
+#
+#  Postgres bilaash ah: neon.tech ama supabase.com -> connection string
+#  ka qaado, Render -> Environment -> DATABASE_URL.
+
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+DB_OK = False
+DB_ERR = ""
+_pg = None
+
+if DATABASE_URL:
+    try:
+        import psycopg
+        _pg = psycopg
+        url = DATABASE_URL
+        if url.startswith("postgres://"):
+            url = "postgresql://" + url[len("postgres://"):]
+        DATABASE_URL = url
+        with _pg.connect(DATABASE_URL, connect_timeout=8) as cx:
+            with cx.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS journal (
+                        token   TEXT   NOT NULL,
+                        tk      TEXT   NOT NULL,
+                        bot     TEXT,
+                        sym     TEXT,
+                        ct      BIGINT,
+                        profit  DOUBLE PRECISION,
+                        data    TEXT   NOT NULL,
+                        PRIMARY KEY (token, tk)
+                    )""")
+                cur.execute("CREATE INDEX IF NOT EXISTS journal_ct ON journal (token, ct DESC)")
+            cx.commit()
+        DB_OK = True
+    except Exception as e:
+        DB_ERR = str(e)[:200]
+
+
+def db_save(tok, bot, rows):
+    """Trade xiran kaydi. Ticket ahaan - isma celcelinayaan."""
+    if not DB_OK or not rows:
+        return False
+    try:
+        with _pg.connect(DATABASE_URL, connect_timeout=8) as cx:
+            with cx.cursor() as cur:
+                for t in rows:
+                    cur.execute(
+                        """INSERT INTO journal (token,tk,bot,sym,ct,profit,data)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s)
+                           ON CONFLICT (token,tk) DO NOTHING""",
+                        (tok, str(t.get("tk")), bot, (t.get("sym") or "").upper(),
+                         int(t.get("ct") or 0), float(t.get("profit") or 0),
+                         json.dumps(t)))
+            cx.commit()
+        return True
+    except Exception as e:
+        globals()["DB_ERR"] = str(e)[:200]
+        return False
+
+
+def db_load(tok, bot=None, limit=20000):
+    if not DB_OK:
+        return None
+    try:
+        with _pg.connect(DATABASE_URL, connect_timeout=8) as cx:
+            with cx.cursor() as cur:
+                if bot:
+                    cur.execute("SELECT data FROM journal WHERE token=%s AND bot=%s "
+                                "ORDER BY ct DESC LIMIT %s", (tok, bot, limit))
+                else:
+                    cur.execute("SELECT data FROM journal WHERE token=%s "
+                                "ORDER BY ct DESC LIMIT %s", (tok, limit))
+                return [json.loads(r[0]) for r in cur.fetchall()]
+    except Exception as e:
+        globals()["DB_ERR"] = str(e)[:200]
+        return None
+
+
+def db_count(tok):
+    if not DB_OK:
+        return 0
+    try:
+        with _pg.connect(DATABASE_URL, connect_timeout=8) as cx:
+            with cx.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM journal WHERE token=%s", (tok,))
+                return cur.fetchone()[0]
+    except Exception:
+        return 0
+
 def _norm_trade(t):
     """
     Laba qaab ayaa timaada:
@@ -277,16 +375,25 @@ def _norm_trade(t):
     Halkan mid ayaa laga dhigayaa.
     """
     out = dict(t)
-    # waqtiyada
-    if out.get("ct") is None and t.get("ctime") is not None:
-        out["ct"] = t.get("ctime")
-    if out.get("ot") is None and t.get("otime") is not None:
-        out["ot"] = t.get("otime")
+    # waqtiyada (qaab kasta oo EA-gu diro)
+    for dst, srcs in (("ct", ("ctime", "close_t", "closetime")),
+                      ("ot", ("otime", "open_t", "opentime"))):
+        if out.get(dst) is None:
+            for k in srcs:
+                if t.get(k) is not None:
+                    out[dst] = t.get(k); break
     # qiimaha
-    if out.get("entry") is None and t.get("open") is not None:
-        out["entry"] = t.get("open")
-    if out.get("exitp") is None and t.get("close") is not None:
-        out["exitp"] = t.get("close")
+    if out.get("entry") is None:
+        for k in ("open", "openprice"):
+            if t.get(k) is not None:
+                out["entry"] = t.get(k); break
+    if out.get("exitp") is None:
+        for k in ("close", "cur", "closeprice"):
+            if t.get(k) is not None:
+                out["exitp"] = t.get(k); break
+    # ticket
+    if out.get("tk") is None and t.get("ticket") is not None:
+        out["tk"] = t.get("ticket")
     # aqoonsi: haddii tk maqan yahay, mid ka samee xogta
     if out.get("tk") is None:
         out["tk"] = "%s|%s|%s|%s" % (out.get("sym"), out.get("ot"),
@@ -310,6 +417,10 @@ def merge_journal(tok, bot, trades):
         if t.get("ct") is None:
             continue
         store[str(t["tk"])] = t
+    #  Xusuusta way ku jiraan; database-kuna wuu kaydiyaa si ay u sii jiraan
+    #  marka server-ku hurdo ama dib u bilaabmo.
+    db_save(tok, bot, list(store.values()))
+
     # kaliya 100-ka ugu dambeeya (waqtiga xiritaanka)
     if len(store) > MAX_JOURNAL:
         keep = sorted(store.items(), key=lambda kv: kv[1].get("ct") or 0,
@@ -318,6 +429,12 @@ def merge_journal(tok, bot, trades):
 
 
 def journal_rows(tok, bot=None):
+    #  Database-ku waa runta. Xusuustu waa kaash kaliya.
+    fromdb = db_load(tok, bot)
+    if fromdb is not None:
+        fromdb.sort(key=lambda r: (r.get("ct") or 0), reverse=True)
+        return fromdb
+
     tenant = JOURNAL.get(tok, {})
     rows = []
     for b, store in tenant.items():
@@ -364,6 +481,36 @@ def stats_for(rows):
     }
 
 
+
+def _range_args():
+    """from / to / days -> (from_epoch, to_epoch). None = xad la'aan."""
+    def ep(txt, eod=False):
+        try:
+            e = int(calendar.timegm(time.strptime(txt.strip()[:10], "%Y-%m-%d")))
+            return e + 86399 if eod else e
+        except Exception:
+            return None
+    a = ep(request.args.get("from") or "")
+    b = ep(request.args.get("to") or "", eod=True)
+    d = request.args.get("days")
+    if d and a is None:
+        try:
+            n = int(d)
+            #  days=0 macnaheedu waa "dhammaan" - xad ma leh.
+            a = (int(time.time()) - n * 86400) if n > 0 else None
+        except ValueError:
+            a = None
+    return a, b
+
+
+def _apply_range(rows, a, b):
+    if a is not None:
+        rows = [r for r in rows if (r.get("ct") or 0) >= a]
+    if b is not None:
+        rows = [r for r in rows if (r.get("ct") or 0) <= b]
+    return rows
+
+
 @app.route("/journal", methods=["GET"])
 def journal():
     tok = request.args.get("token") or MASTER_TOKEN
@@ -373,6 +520,16 @@ def journal():
     rows = journal_rows(tok, clean_bot(bot) if bot else None)
     for r in rows:
         r["pips"] = _pips(r)
+
+    # ---- taariikhda: from / to (YYYY-MM-DD), ama days=30 ----
+    d_from, d_to = _range_args()
+    rows = _apply_range(rows, d_from, d_to)
+
+    span = None
+    if rows:
+        cts = [r.get("ct") or 0 for r in rows if r.get("ct")]
+        if cts:
+            span = {"first": min(cts), "last": max(cts)}
 
     # --- kala saarid symbol kasta (halkan ayaa jawaabtu ku jirto)
     per = {}
@@ -387,11 +544,31 @@ def journal():
 
     shown = [r for r in rows if not sym or (r.get("sym") or "").upper() == sym]
 
+    overall = stats_for(shown if sym else rows)
+
+    #  Win rate-ka loo BAAHAN YAHAY, marka la eego nisbadda dhabta ah.
+    #  Lambar keligiis wax ma sheegayo - barbar dhigga ayaa sheegaya.
+    aw, al = overall["avg_win"], abs(overall["avg_loss"])
+    overall["need_winrate"] = round(al / (aw + al) * 100.0, 1) if (aw > 0 and al > 0) else None
+
+    n, pf = overall["trades"], overall["pf"]
+    if n < 30:
+        verdict, msg = "wait", "%d trade — %d ayaa haray ka hor inta aan wax lagu xukumin." % (n, 30 - n)
+    elif pf >= 1.3:
+        verdict, msg = "good", "%d trade, PF %.2f — xoog leh. Sii wad ilaa 100." % (n, pf)
+    elif pf >= 0.9:
+        verdict, msg = "mixed", "%d trade, PF %.2f — mugdi. Sample kordhi, wax ha beddelin." % (n, pf)
+    else:
+        verdict, msg = "bad", "%d trade, PF %.2f — ma shaqeynayso. Wax beddel." % (n, pf)
+
     return jsonify({
-        "trades": shown[:MAX_JOURNAL],
-        "overall": stats_for(rows),
+        "trades": shown[:500],
+        "range": {"from": d_from, "to": d_to, "span": span},
+        "overall": overall,
+        "stats": overall,
         "by_symbol": by_symbol,
         "symbols": sorted(per.keys()),
+        "verdict": verdict, "message": msg,
         "stored": len(rows),
         "capacity": MAX_JOURNAL,
     })
@@ -399,8 +576,14 @@ def journal():
 
 @app.route("/journal.csv", methods=["GET"])
 def journal_csv():
+    # taariikhda isla sida /journal
     tok = request.args.get("token") or MASTER_TOKEN
-    rows = journal_rows(tok)
+    rows = _apply_range(journal_rows(tok), *_range_args())
+    sym = (request.args.get("symbol") or "").upper()
+    if sym:
+        rows = [r for r in rows if (r.get("sym") or "").upper() == sym]
+    for r in rows:
+        r["pips"] = _pips(r)
     out = ["ticket,bot,symbol,type,strategy,lot,entry,exit,open_time,close_time,pips,profit"]
     for r in rows:
         out.append(",".join(str(x) for x in [
@@ -603,6 +786,10 @@ def diag():
 
     return jsonify({
         "build": BUILD,
+        "database": ("postgres — xogtu way sii jiraysaa" if DB_OK else
+                     ("KHALAD: " + DB_ERR if DB_ERR else
+                      "xusuusta kaliya — DATABASE_URL ma jiro, xogtu way baaba'aysaa")),
+        "journal_rows": db_count(MASTER_TOKEN) if DB_OK else None,
         "server_time": int(time.time()),
         "env_auth_token_preview": (MASTER_TOKEN[:6] + "..." + MASTER_TOKEN[-4:]
                                    if len(MASTER_TOKEN) > 12 else MASTER_TOKEN),
@@ -1243,30 +1430,46 @@ button{font-family:inherit;cursor:pointer}
   <!-- ===== JOURNAL ===== -->
   <section class="pane" data-p="journal">
     <div class="block">
-      <div class="chips" id="jSyms"></div>
-      <div class="jstat">
-        <div class="jbox"><div class="l">Trade guud</div><div class="v" id="jTot">—</div><div class="s" id="jWL">—</div></div>
-        <div class="jbox"><div class="l">Win rate</div><div class="v or" id="jWR">—</div><div class="s" id="jNeed">—</div></div>
+      <h2 class="sec-h">Journal <span class="rt" id="jn-stored"></span></h2>
+
+      <div class="chips" id="jnRange"></div>
+      <div id="jnCustom" class="hide" style="display:flex;gap:8px;align-items:center;margin-bottom:14px">
+        <input type="date" id="jnFrom" style="flex:1;background:var(--surface-2);border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:9px 10px;font-size:12.5px">
+        <span style="color:var(--muted);font-size:12px">ilaa</span>
+        <input type="date" id="jnTo" style="flex:1;background:var(--surface-2);border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:9px 10px;font-size:12.5px">
       </div>
-      <div class="jstat">
-        <div class="jbox" id="jPFbox"><div class="l">Profit factor</div><div class="v" id="jPF">—</div></div>
-        <div class="jbox"><div class="l">Net</div><div class="v" id="jNet">—</div></div>
+      <p id="jnSpan" style="font-size:11.5px;color:var(--muted);margin:0 2px 12px"></p>
+
+      <div class="chips" id="jnSyms"></div>
+
+      <div class="kpis" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+        <div class="card kpi"><div class="lbl">Trade guud</div>
+          <div class="val num" id="jn_total">—</div>
+          <div class="lbl" id="jn_wl" style="margin-top:3px"></div></div>
+        <div class="card kpi"><div class="lbl">Win rate</div>
+          <div class="val num or" id="jn_wr">—</div>
+          <div class="lbl" id="jn_need" style="margin-top:3px"></div></div>
       </div>
-      <div id="jVerdict"></div>
+      <div class="kpis" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-top:10px">
+        <div class="card kpi accent"><div class="lbl">Profit factor</div>
+          <div class="val num" id="jn_pf">—</div></div>
+        <div class="card kpi"><div class="lbl">Net</div>
+          <div class="val num" id="jn_net">—</div></div>
+      </div>
+
+      <div class="banner" id="jn_verdict" style="margin-top:13px">—</div>
     </div>
 
     <div class="card block">
-      <h2 class="sec-h">Lammaane kasta <span class="rt">kan wanaagsan / kan liita</span></h2>
-      <div id="jBySym"><div class="ot-empty">Xog weli ma jirto</div></div>
+      <h2 class="sec-h">Trade-yada</h2>
+      <div id="jnList"><div class="ot-empty">Trade xiran weli lama helin</div></div>
     </div>
 
-    <div class="card block">
-      <h2 class="sec-h">Trade-yada <span class="rt" id="jStored"></span></h2>
-      <div id="jRows"><div class="ot-empty">Xog weli ma jirto</div></div>
-    </div>
-
-    <div class="block" style="display:grid;grid-template-columns:1fr;gap:10px">
-      <button onclick="dlCSV()" style="height:44px">Soo dejiso CSV</button>
+    <div class="block">
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">
+        <button onclick="dlCsv()" style="height:44px">Soo dejiso CSV</button>
+        <button onclick="showTab('overview')" style="height:44px">Ku noqo</button>
+      </div>
     </div>
   </section>
 
@@ -1300,6 +1503,7 @@ function showTab(t){
   document.querySelectorAll('#nav button[data-t]').forEach(b=>b.classList.toggle('active',b.dataset.t===t));
   if(t==='chart')initChart(LAST_SYMBOL);
   if(t==='signals')loadSignals();
+  if(t==='journal')loadJournal();
   if(t==='journal')loadJournal();
   if(t==='journal')loadJournal();
   if(t==='journal')loadJournal();
@@ -1474,95 +1678,105 @@ function renderTrades(trades){
   });
 }
 
-/* ===== JOURNAL v2 ===== */
-let J_SYM='';
-function dlCSV(){window.open('/journal.csv?token='+encodeURIComponent(TOKEN),'_blank');}
 
-function jMoney(v){const n=+v||0;return (n>=0?'+':'-')+money(Math.abs(n));}
 
-function renderJSyms(list){
-  const box=$('jSyms');box.innerHTML='';
+/* ===== JOURNAL ===== */
+let JN_SYM='', JN_DAYS=90, JN_FROM='', JN_TO='';
+
+function jnQuery(){
+  let q='token='+encodeURIComponent(TOKEN);
+  if(JN_SYM) q+='&symbol='+encodeURIComponent(JN_SYM);
+  if(JN_DAYS==='custom'){
+    if(JN_FROM) q+='&from='+JN_FROM;
+    if(JN_TO)   q+='&to='+JN_TO;
+  }else if(JN_DAYS){ q+='&days='+JN_DAYS; }
+  return q;
+}
+function dlCsv(){ window.open('/journal.csv?'+jnQuery(),'_blank'); }
+
+function jnRanges(){
+  const box=$('jnRange');box.innerHTML='';
+  const opts=[['30 maalmood',30],['3 bilood',90],['6 bilood',180],['Sanad',365],
+              ['Dhammaan',0],['Taariikh dooro','custom']];
+  opts.forEach(([label,val])=>{
+    const b=document.createElement('button');
+    b.className='chip2'+(val===JN_DAYS?' on':'');b.textContent=label;
+    b.addEventListener('click',()=>{
+      JN_DAYS=val;
+      $('jnCustom').classList.toggle('hide',val!=='custom');
+      jnRanges();
+      if(val!=='custom'||JN_FROM||JN_TO) loadJournal();
+    });
+    box.appendChild(b);
+  });
+}
+['jnFrom','jnTo'].forEach(id=>{
+  const el=$(id);
+  if(el) el.addEventListener('change',()=>{
+    JN_FROM=$('jnFrom').value; JN_TO=$('jnTo').value; JN_DAYS='custom'; loadJournal();
+  });
+});
+
+function jnSyms(list){
+  const box=$('jnSyms');box.innerHTML='';
   const mk=(label,val)=>{
     const b=document.createElement('button');
-    b.className='chip2'+(val===J_SYM?' on':'');b.textContent=label;
-    b.addEventListener('click',()=>{J_SYM=val;loadJournal();});
+    b.className='chip2'+(val===JN_SYM?' on':'');b.textContent=label;
+    b.addEventListener('click',()=>{JN_SYM=val;loadJournal();});
     box.appendChild(b);
   };
   mk('Dhammaan','');
-  (list||[]).forEach(sy=>mk(sy,sy));
+  (list||[]).forEach(x=>mk(x,x));
 }
 
-function renderJournal2(d){
-  const o=d.overall;
-  $('jTot').textContent=o.trades;
-  $('jWL').textContent=o.wins+' W · '+o.losses+' L';
-  $('jWR').textContent=o.winrate==null?'—':o.winrate+'%';
-  $('jPF').textContent=o.pf;
-  $('jPF').className='v '+(o.pf>=1?'up':'down');
-  $('jPFbox').className='jbox '+(o.pf>=1?'good':'bad');
-  $('jNet').textContent=jMoney(o.net);
-  $('jNet').className='v '+(o.net>=0?'up':'down');
-  $('jStored').textContent=d.stored+' / '+d.capacity;
-
-  // break-even-ka laga soo saaray celceliska guul/khasaare ee DHABTA ah
-  let need=null;
-  if(o.avg_win>0&&o.avg_loss<0){const R=o.avg_win/Math.abs(o.avg_loss);need=(100/(1+R)).toFixed(1);}
-  $('jNeed').textContent=need?('u baahan '+need+'%'):'—';
-
-  const v=$('jVerdict');
-  if(o.trades<30){
-    v.innerHTML='<div class="banner demo">'+o.trades+' trade — sample kuma filna. '+
-      (30-o.trades)+' ayaa haray ka hor inta aan wax lagu xukumin.</div>';
-  }else if(o.pf>=1.3){
-    v.innerHTML='<div class="banner live">PF '+o.pf+' — wax dhab ah ayaa jira. Sii wad ilaa 100 trade.</div>';
-  }else if(o.pf>=0.9){
-    v.innerHTML='<div class="banner demo">PF '+o.pf+' — mugdi. Sample kordhi, wax ha beddelin.</div>';
-  }else{
-    v.innerHTML='<div class="banner demo" style="border-color:var(--border-danger);color:var(--text-danger);background:rgba(224,82,79,.12)">PF '+o.pf+' — ma shaqeynayso. Xeelad kale u gudub.</div>';
-  }
-
-  // ---- lammaane kasta
-  const bs=$('jBySym');
-  if(!d.by_symbol||!d.by_symbol.length){bs.innerHTML='<div class="ot-empty">Xog weli ma jirto</div>';}
-  else{
-    bs.innerHTML='';
-    d.by_symbol.forEach(x=>{
-      const el=document.createElement('div');el.className='symstat';
-      el.innerHTML='<div style="flex:1;min-width:0">'+
-        '<div style="font-size:14.5px;font-weight:700">'+esc(x.symbol)+'</div>'+
-        '<div class="m">'+x.trades+' trade · '+(x.winrate==null?'—':x.winrate+'%')+' · PF '+x.pf+'</div></div>'+
-        '<div style="text-align:right"><div style="font-size:15px;font-weight:700;font-variant-numeric:tabular-nums" class="'+
-        (x.net>=0?'pl-pos':'pl-neg')+'">'+jMoney(x.net)+'</div></div>';
-      bs.appendChild(el);
-    });
-  }
-
-  // ---- safafka
-  const box=$('jRows');
-  if(!d.trades||!d.trades.length){box.innerHTML='<div class="ot-empty">Xog weli ma jirto</div>';return;}
+function jnRows(rows){
+  const box=$('jnList');
+  if(!rows||!rows.length){box.innerHTML='<div class="ot-empty">Trade xiran weli lama helin</div>';return;}
   box.innerHTML='';
-  d.trades.slice(0,60).forEach(t=>{
-    const buy=(t.type||'')==='BUY',p=+t.profit||0;
-    const ct=t.ct?new Date(t.ct*1000):null;
-    const when=ct?(ct.getDate()+' '+['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][ct.getMonth()]+' '+String(ct.getHours()).padStart(2,'0')+':'+String(ct.getMinutes()).padStart(2,'0')):'';
-    const el=document.createElement('div');el.className='trow2';
-    el.innerHTML='<div style="flex:1;min-width:0">'+
-      '<div style="font-size:14px;font-weight:600">'+esc(t.sym)+'<span class="tag '+(buy?'b':'s')+'">'+(buy?'BUY':'SELL')+'</span></div>'+
-      '<div class="m">'+when+' · '+(+t.entry||0)+' → '+(+t.exit||0)+'</div></div>'+
-      '<div class="p"><div class="v '+(p>=0?'up':'down')+'">'+jMoney(p)+'</div>'+
-      '<div class="s">'+esc(t.strat||'')+(t.pips!=null?' · '+t.pips+' pip':'')+'</div></div>';
-    box.appendChild(el);
+  rows.slice(0,60).forEach(r=>{
+    const win=(+r.profit||0)>0;
+    const d=document.createElement('div');
+    d.style.cssText='display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--line)';
+    const ct=r.ct||r.close_t;const t=ct?new Date(ct*1000).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}):'';
+    const op=r.op||r.entry, cp=r.cp||r.exit;const px=(op&&cp)?(' · '+op+' → '+cp):'';
+    const pips=(r.pips!=null)?(' · '+(r.pips>0?'+':'')+r.pips+' pip'):'';
+    d.innerHTML='<div style="flex:1;min-width:0">'+
+      '<div style="font-size:14px;font-weight:600">'+esc(r.sym||r.symbol)+
+        ' <span class="badge '+(r.type==='BUY'?'buy':'sell')+'">'+esc(r.type)+'</span></div>'+
+      '<div style="font-size:11.5px;color:var(--muted);margin-top:3px;font-variant-numeric:tabular-nums">'+esc(t)+esc(px)+'</div></div>'+
+      '<div style="text-align:right;flex-shrink:0">'+
+      '<div style="font-size:15px;font-weight:700;color:var(--'+(win?'text-success':'text-danger')+');font-variant-numeric:tabular-nums">'+
+        (r.profit>=0?'+':'')+money(Math.abs(r.profit))+'</div>'+
+      '<div style="font-size:10.5px;color:var(--muted)">'+esc(r.strat||'')+esc(pips)+'</div></div>';
+    box.appendChild(d);
   });
 }
 
 async function loadJournal(){
   try{
-    const u='/journal?token='+encodeURIComponent(TOKEN)+(CUR_BOT?'&bot='+encodeURIComponent(CUR_BOT):'')
-            +(J_SYM?'&symbol='+encodeURIComponent(J_SYM):'');
-    const r=await fetch(u,{cache:'no-store'});
-    const d=await r.json();
-    renderJSyms(d.symbols);
-    renderJournal2(d);
+    const u='/journal?'+jnQuery();
+    const d=await (await fetch(u,{cache:'no-store'})).json();
+    const s=d.overall||d.stats;
+    jnRanges();
+    jnSyms(d.symbols);
+    $('jn-stored').textContent=d.stored?d.stored+' kaydsan':'';
+    const sp=d.range&&d.range.span;
+    $('jnSpan').textContent = sp
+      ? ('Trade-yada la muujiyay: '+new Date(sp.first*1000).toLocaleDateString('en-GB')
+         +' ilaa '+new Date(sp.last*1000).toLocaleDateString('en-GB'))
+      : 'Muddadan trade lama helin';
+    $('jn_total').textContent=s.trades||'—';
+    $('jn_wl').textContent=s.trades?(s.wins+' W · '+s.losses+' L'):'';
+    $('jn_wr').textContent=(s.winrate!=null)?s.winrate+'%':'—';
+    $('jn_need').textContent=(s.need_winrate!=null)?('u baahan '+s.need_winrate+'%'):'';
+    $('jn_pf').textContent=s.trades?s.pf:'—';
+    $('jn_pf').className='val num '+(s.pf>=1.3?'up':(s.pf>=0.9?'or':'down'));
+    $('jn_net').textContent=s.trades?((s.net>=0?'+':'')+money(Math.abs(s.net))):'—';
+    $('jn_net').className='val num '+(s.net>=0?'up':'down');
+    const v=$('jn_verdict');
+    v.className='banner '+((d.verdict==='good')?'live':'demo');
+    v.textContent=d.message;
+    jnRows(d.trades);
   }catch(e){}
 }
 
