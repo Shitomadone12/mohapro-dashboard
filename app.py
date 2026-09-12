@@ -1,4 +1,4 @@
-"""
+
 MOHA PRO - Cloud Dashboard Backend (v3, multi-bot)
 --------------------------------------------------
 Isbeddelka v3:
