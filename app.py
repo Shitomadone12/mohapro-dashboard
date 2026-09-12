@@ -22,6 +22,9 @@ import calendar
 import json
 import urllib.request
 import urllib.parse
+import sqlite3
+import csv
+import io as _io
 from flask import Flask, request, jsonify, Response
 
 app = Flask(__name__)
@@ -1457,45 +1460,30 @@ button{font-family:inherit;cursor:pointer}
   <!-- ===== JOURNAL ===== -->
   <section class="pane" data-p="journal">
     <div class="block">
-      <h2 class="sec-h">Journal <span class="rt" id="jn-stored"></span></h2>
-
-      <div class="chips" id="jnRange"></div>
-      <div id="jnCustom" class="hide" style="display:flex;gap:8px;align-items:center;margin-bottom:14px">
-        <input type="date" id="jnFrom" style="flex:1;background:var(--surface-2);border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:9px 10px;font-size:12.5px">
-        <span style="color:var(--muted);font-size:12px">ilaa</span>
-        <input type="date" id="jnTo" style="flex:1;background:var(--surface-2);border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:9px 10px;font-size:12.5px">
+      <h2 class="sec-h">Journal <span class="rt" id="jr-count">0 kaydsan</span></h2>
+      <div class="chips" id="jrSyms"></div>
+      <div class="kpis">
+        <div class="card kpi"><div class="lbl">Trade</div><div class="val num" id="jr_n">0</div></div>
+        <div class="card kpi"><div class="lbl">Win rate</div><div class="val num or" id="jr_wr">—</div></div>
+        <div class="card kpi"><div class="lbl">U baahan</div><div class="val num" id="jr_req">—</div></div>
+        <div class="card kpi accent"><div class="lbl">Profit factor</div><div class="val num" id="jr_pf">—</div></div>
+        <div class="card kpi"><div class="lbl">Net</div><div class="val num" id="jr_net">—</div></div>
+        <div class="card kpi"><div class="lbl">Edge</div><div class="val num" id="jr_edge">—</div></div>
       </div>
-      <p id="jnSpan" style="font-size:11.5px;color:var(--muted);margin:0 2px 12px"></p>
-
-      <div class="chips" id="jnSyms"></div>
-
-      <div class="kpis" style="grid-template-columns:repeat(2,minmax(0,1fr))">
-        <div class="card kpi"><div class="lbl">Trade guud</div>
-          <div class="val num" id="jn_total">—</div>
-          <div class="lbl" id="jn_wl" style="margin-top:3px"></div></div>
-        <div class="card kpi"><div class="lbl">Win rate</div>
-          <div class="val num or" id="jn_wr">—</div>
-          <div class="lbl" id="jn_need" style="margin-top:3px"></div></div>
-      </div>
-      <div class="kpis" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-top:10px">
-        <div class="card kpi accent"><div class="lbl">Profit factor</div>
-          <div class="val num" id="jn_pf">—</div></div>
-        <div class="card kpi"><div class="lbl">Net</div>
-          <div class="val num" id="jn_net">—</div></div>
-      </div>
-
-      <div class="banner" id="jn_verdict" style="margin-top:13px">—</div>
+      <div id="jr_verdict"></div>
     </div>
 
     <div class="card block">
-      <h2 class="sec-h">Trade-yada</h2>
-      <div id="jnList"><div class="ot-empty">Trade xiran weli lama helin</div></div>
+      <h2 class="sec-h">Lammaane kasta</h2>
+      <div id="jrPer"><div class="ot-empty">Xog weli ma jirto</div></div>
     </div>
 
-    <div class="block">
-      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">
+    <div class="card block">
+      <h2 class="sec-h">Trade-yada <span class="rt">40 ee u dambeeyay</span></h2>
+      <div id="jrList"><div class="ot-empty">Xog weli ma jirto</div></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding-top:14px">
         <button onclick="dlCsv()" style="height:44px">Soo dejiso CSV</button>
-        <button onclick="showTab('overview')" style="height:44px">Ku noqo</button>
+        <button onclick="loadJournal()" style="height:44px">Cusboonaysii</button>
       </div>
     </div>
   </section>
@@ -1530,6 +1518,7 @@ function showTab(t){
   document.querySelectorAll('#nav button[data-t]').forEach(b=>b.classList.toggle('active',b.dataset.t===t));
   if(t==='chart')initChart(LAST_SYMBOL);
   if(t==='signals')loadSignals();
+  if(t==='journal')loadJournal();
   if(t==='journal')loadJournal();
   if(t==='journal')loadJournal();
   if(t==='journal')loadJournal();
@@ -1804,6 +1793,97 @@ async function loadJournal(){
     v.className='banner '+((d.verdict==='good')?'live':'demo');
     v.textContent=d.message;
     jnRows(d.trades);
+  }catch(e){}
+}
+
+
+/* ===== JOURNAL (kaydsan) ===== */
+let JR_SYM=null;
+const tstr=t=>{if(!t)return'—';const d=new Date(t*1000);
+  return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short'})+' '+
+         d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});};
+
+function dlCsv(){window.open('/journal.csv?token='+encodeURIComponent(TOKEN),'_blank');}
+
+function jrStats(st,need){
+  const set=(id,v,cls)=>{const e=$(id);e.textContent=(v==null?'—':v);if(cls)e.className=cls;};
+  if(!st||!st.trades){['jr_n','jr_wr','jr_req','jr_pf','jr_net','jr_edge'].forEach(i=>set(i,null,'val num'));
+    $('jr_n').textContent='0';return;}
+  set('jr_n',st.trades,'val num');
+  set('jr_wr',(st.winrate!=null?st.winrate+'%':'—'),'val num or');
+  set('jr_req',(need!=null?need+'%':'—'),'val num');
+  set('jr_pf',st.pf,'val num '+(st.pf>=1.3?'up':(st.pf>=0.9?'or':'down')));
+  set('jr_net',(st.net>=0?'+':'')+money(Math.abs(st.net)),'val num '+(st.net>=0?'up':'down'));
+  if(need==null||st.winrate==null) set('jr_edge',null,'val num');
+  else{const e=Math.round((st.winrate-need)*10)/10;
+       set('jr_edge',(e>=0?'+':'')+e+'%','val num '+(e>=0?'up':'down'));}
+}
+
+function jrVerdict(level,msg,need,wr){
+  const box=$('jr_verdict');
+  if(!msg){box.innerHTML='';return;}
+  const cls=(level==='good')?'okbox':'warnbox';
+  const extra=(need!=null&&wr!=null)
+    ? '<br>Nisbaddaadu waxay u baahan tahay '+need+'% — hadda '+wr+'%.' : '';
+  box.innerHTML='<div class="'+cls+'" style="margin-top:14px">'+esc(msg)+extra+'</div>';
+}
+
+function jrPerSymbol(list){
+  const box=$('jrPer');
+  if(!list||!list.length){box.innerHTML='<div class="ot-empty">Xog weli ma jirto</div>';return;}
+  box.innerHTML='';
+  list.forEach(st=>{
+    const aw=st.avg_win, al=Math.abs(st.avg_loss);
+    const need=(aw>0&&al>0)?Math.round(al/(aw+al)*1000)/10:null;
+    const ok=(need!=null&&st.winrate!=null&&st.winrate>=need);
+    const row=document.createElement('div');row.className='symrow';
+    row.innerHTML='<div class="si"><div class="sn">'+esc(st.symbol)+'</div>'+
+      '<div class="sm">'+st.trades+' trade · '+(st.winrate!=null?st.winrate+'%':'—')+
+      (need!=null?' (u baahan '+need+'%)':'')+'</div></div>'+
+      '<div style="text-align:right"><div style="font-size:15px;font-weight:700;color:var(--'+
+      (st.net>=0?'text-success':'text-danger')+')">'+(st.net>=0?'+':'')+money(Math.abs(st.net))+'</div>'+
+      '<div style="font-size:11px;color:var(--'+(ok?'text-success':'text-muted')+')">PF '+st.pf+'</div></div>';
+    box.appendChild(row);
+  });
+}
+
+function jrList(list){
+  const box=$('jrList');
+  if(!list||!list.length){box.innerHTML='<div class="ot-empty">Xog weli ma jirto</div>';return;}
+  box.innerHTML='';
+  list.slice(0,40).forEach(t=>{
+    const p=+t.profit||0, win=p>=0, buy=(t.type||'')==='BUY';
+    const d=document.createElement('div');d.className='symrow';
+    d.innerHTML='<div class="si"><div class="sn" style="font-size:14px">'+esc(t.sym)+
+      ' <span class="badge '+(buy?'buy':'sell')+'">'+esc(t.type)+'</span></div>'+
+      '<div class="sm">'+tstr(t.ct)+' · '+esc(t.strat||'')+'</div></div>'+
+      '<div style="text-align:right"><div style="font-size:15px;font-weight:700;color:var(--'+
+      (win?'text-success':'text-danger')+')">'+(win?'+':'')+money(Math.abs(p))+'</div>'+
+      '<div style="font-size:10.5px;color:var(--text-muted)">'+(t.pips!=null?t.pips+' pip':'')+'</div></div>';
+    box.appendChild(d);
+  });
+}
+
+function jrSymChips(syms){
+  const box=$('jrSyms');box.innerHTML='';
+  const mk=(label,val)=>{const b=document.createElement('button');
+    b.className='chip2'+(val===JR_SYM?' on':'');b.textContent=label;
+    b.addEventListener('click',()=>{JR_SYM=val;loadJournal();});box.appendChild(b);};
+  mk('Dhammaan',null);(syms||[]).forEach(x=>mk(x,x));
+}
+
+async function loadJournal(){
+  try{
+    const u='/journal?token='+encodeURIComponent(TOKEN)+
+            (JR_SYM?'&symbol='+encodeURIComponent(JR_SYM):'');
+    const r=await fetch(u,{cache:'no-store'});const d=await r.json();
+    jrSymChips(d.symbols);
+    $('jr-count').textContent=(d.stored||0)+' kaydsan';
+    const ov=d.overall||{};
+    jrStats(ov, ov.need_winrate);
+    jrVerdict(d.verdict, d.message, ov.need_winrate, ov.winrate);
+    jrPerSymbol(d.by_symbol);
+    jrList(d.trades);
   }catch(e){}
 }
 
