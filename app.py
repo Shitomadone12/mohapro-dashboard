@@ -35,7 +35,7 @@ DASHBOARD_FILE = os.path.join(BASE_DIR, "dashboard.html")
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "MohaPro_Live_2026_MySecret")
 MASTER_TOKEN = AUTH_TOKEN
 
-BUILD = "v4.4-2026-09-12"
+BUILD = "v4.5-2026-09-12"
 DEFAULT_BOT = "default"
 MAX_HISTORY = 120
 STALE_SECONDS = 120
@@ -1808,28 +1808,8 @@ async function loadJournal(){
 }
 
 /* ===== STATE ===== */
-const DEMO={balance:10482.55,equity:10531.20,profit:182.55,winrate:76.2,drawdown:3.10,opentrades:2,symbol:"GBPUSD",
-  trades:[
-    {bot:"MOHA PRO V56",sym:"GBPUSD",type:"BUY",strat:"VSA",profit:64.20,st:"OPEN",entry:1.27140,cur:1.27204,sl:1.26950,tp:1.27520,lot:0.20},
-    {sym:"USDJPY",type:"SELL",strat:"SR",profit:16.93,st:"OPEN",entry:157.320,cur:157.280,sl:157.520,tp:156.920,lot:0.15},
-    {sym:"GBPUSD",type:"BUY",strat:"VSA",profit:88.30,st:"CLOSED",entry:1.26980,cur:1.27290,sl:1.26800,tp:1.27340,lot:0.20},
-    {sym:"AUDUSD",type:"SELL",strat:"VSA",profit:137.09,st:"CLOSED",entry:0.66420,cur:0.66150,sl:0.66600,tp:0.66060,lot:0.30},
-    {sym:"USDCAD",type:"SELL",strat:"SR",profit:-48.34,st:"CLOSED",entry:1.36540,cur:1.36680,sl:1.36700,tp:1.36180,lot:0.15}
-  ],
-  symbols:[
-    {symbol:"GBPUSD",open:1,open_pnl:64.20,strategies:["VSA"],enabled:true},
-    {symbol:"USDJPY",open:1,open_pnl:16.93,strategies:["SR"],enabled:true},
-    {symbol:"AUDUSD",open:0,open_pnl:0,strategies:["VSA"],enabled:true},
-    {symbol:"USDCAD",open:0,open_pnl:0,strategies:["SR"],enabled:false}
-  ],
-  bots:[{bot:"MOHA PRO GOLD",live:true,balance:10482.55,equity:10531.20,profit:81.13,opentrades:2,symbols:[]},
-        {bot:"MOHA PRO V56",live:true,balance:6210.00,equity:6288.40,profit:78.40,opentrades:1,symbols:[]}],
-  journal:{gainPct:18.4,balance:11842.55,equity:11905.20,today:82.55,week:1842.55,month:1842.55,year:1842.55,
-    trades:1078,winRate:76.2,pf:1.62,pips:4820,avgWin:34,avgLoss:-21,best:137,worst:-50,dd:3.1,
-    monthly:[320,540,-180,410,730,-90,560,880,210,-210,640,780]}};
-
 const REASONS={
-  no_data:"Bootku weli xog ma soo dirin. Fur /diag si aad u aragto sababta.",
+  no_data:"Bootku xog ma soo dirin. PC-ga ma damsan yahay? Fur /diag si aad u aragto sababta.",
   stale:"Xogtii ugu dambeysay way duugowday. Bootku ma shaqaynayo ama server-ku wuu hurday.",
   offline:"Server-ka lama gaari karin."
 };
@@ -1851,10 +1831,12 @@ function setStatus(s,reason,age,ageTxt){
     dm.innerHTML='Xogtaada dhabta ah — bootku offline buu yahay.<br>'+
       'Kan waa xaaladdii ugu dambeysay, '+(ageTxt||'')+'.';
   }else{
-    el.innerHTML='<span class="dot"></span>'+(s==='demo'?'DEMO':'OFFLINE');
-    bl.classList.remove('run');bs.textContent='Joogsan';
+    //  XOG MA JIRTO. Lambar la abuuray MARNABA lama muujiyo - dashboard-ku
+    //  lacag dhab ah ayuu maamulaa, oo tiro been ah waa khatar.
+    el.innerHTML='<span class="dot"></span>OFFLINE';
+    bl.classList.remove('run');bs.textContent='Offline';
     dm.className='banner demo';
-    dm.innerHTML='Xog tusaale ah — lacagtaadu maaha.<br>'+(REASONS[reason]||REASONS.no_data)+
+    dm.innerHTML=(REASONS[reason]||REASONS.no_data)+
       ' <a href="/diag" target="_blank">Fur /diag</a>';
   }
 }
@@ -1879,7 +1861,14 @@ function applyState(d,strict){
   if(d.bots)renderBots(d.bots);
 }
 
-function showDemo(reason){applyState(DEMO,false);setStatus('demo',reason||'no_data',null,null);}
+function blankState(reason){
+  ['k_balance','k_equity','k_profit','k_wr','k_dd','k_open'].forEach(id=>{
+    const el=$(id); if(el){ el.textContent='—'; el.className='val num'; }
+  });
+  $('symbol').textContent='—';
+  renderTrades([]); renderSymbols([]);
+  setStatus('off',reason||'no_data',null,null);
+}
 
 async function poll(){
   try{
@@ -1892,10 +1881,10 @@ async function poll(){
       // Bootku offline buu yahay, laakiin xogtu waa DHAB. Demo LOOMA beddelayo.
       applyState(d,true); setStatus('stale',d.reason,d.age,d.age_text);
     }
-    else{ showDemo(d.reason); }
-  }catch(e){showDemo('offline');}
+    else{ blankState(d.reason); }
+  }catch(e){blankState('offline');}
 }
-showDemo();poll();setInterval(poll,POLL_MS);
+blankState();poll();setInterval(poll,POLL_MS);
 </script>
 </body>
 </html>
