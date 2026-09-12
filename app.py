@@ -35,7 +35,7 @@ DASHBOARD_FILE = os.path.join(BASE_DIR, "dashboard.html")
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "MohaPro_Live_2026_MySecret")
 MASTER_TOKEN = AUTH_TOKEN
 
-BUILD = "v4.3-2026-09-12"
+BUILD = "v4.4-2026-09-12"
 DEFAULT_BOT = "default"
 MAX_HISTORY = 120
 STALE_SECONDS = 120
@@ -403,9 +403,13 @@ def _norm_trade(t):
     return out
 
 
+INGEST = {}   # token -> {"closed":n,"stored":n,"no_time":n,"sample":{...}}
+
+
 def merge_journal(tok, bot, trades):
     if not isinstance(trades, list):
         return
+    ing = INGEST.setdefault(tok, {"closed": 0, "stored": 0, "no_time": 0, "sample": None})
     store = JOURNAL.setdefault(tok, {}).setdefault(bot, {})
     for raw in trades:
         if not isinstance(raw, dict):
@@ -413,9 +417,16 @@ def merge_journal(tok, bot, trades):
         # qaabka (b): trade furan iska dhaaf
         if (raw.get("st") or "").upper() == "OPEN":
             continue
+        ing["closed"] += 1
         t = _norm_trade(raw)
         if t.get("ct") is None:
+            #  EA-gu waqtiga xiritaanka ma dirin -> kala saarid ma suurtogal aha.
+            #  Waa astaanta EA nooc hore ah.
+            ing["no_time"] += 1
+            if ing["sample"] is None:
+                ing["sample"] = {k: raw.get(k) for k in list(raw)[:12]}
             continue
+        ing["stored"] += 1
         store[str(t["tk"])] = t
     #  Xusuusta way ku jiraan; database-kuna wuu kaydiyaa si ay u sii jiraan
     #  marka server-ku hurdo ama dib u bilaabmo.
@@ -749,6 +760,21 @@ def forget_bot():
     return jsonify({"ok": True, "removed": removed, "bot": bot})
 
 
+
+def _ingest_report(tok):
+    ing = INGEST.get(tok)
+    if not ing:
+        return {"note": "Bootku trade xiran midna ma soo dirin weli."}
+    out = dict(ing)
+    if ing["no_time"] and not ing["stored"]:
+        out["diagnosis"] = ("EA-gu waqtiga xiritaanka (close_t/ctime) ma dirayo. "
+                            "Waa nooc hore. Ku beddel MOHA_PRO_V57_3_JOURNAL.mq5, "
+                            "compile (F7), chart-ka dib u dhaji.")
+    elif ing["stored"]:
+        out["diagnosis"] = "Waa hagaag — trade-yada waa la kaydinayaa."
+    return out
+
+
 @app.route("/diag", methods=["GET"])
 def diag():
     rows = []
@@ -786,6 +812,7 @@ def diag():
 
     return jsonify({
         "build": BUILD,
+        "journal_ingest": _ingest_report(MASTER_TOKEN),
         "database": ("postgres — xogtu way sii jiraysaa" if DB_OK else
                      ("KHALAD: " + DB_ERR if DB_ERR else
                       "xusuusta kaliya — DATABASE_URL ma jiro, xogtu way baaba'aysaa")),
