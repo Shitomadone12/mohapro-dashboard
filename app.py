@@ -1,4 +1,4 @@
-
+"""
 MOHA PRO - Cloud Dashboard Backend (v3, multi-bot)
 --------------------------------------------------
 Isbeddelka v3:
@@ -38,7 +38,7 @@ DASHBOARD_FILE = os.path.join(BASE_DIR, "dashboard.html")
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "MohaPro_Live_2026_MySecret")
 MASTER_TOKEN = AUTH_TOKEN
 
-BUILD = "v4.5-2026-09-12"
+BUILD = "v4.6-2026-09-12"
 DEFAULT_BOT = "default"
 MAX_HISTORY = 120
 STALE_SECONDS = 120
@@ -1301,6 +1301,18 @@ button{font-family:inherit;cursor:pointer}
 .symstat{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--line)}
 .symstat:last-child{border-bottom:none}
 
+/* ===== DATE RANGE ===== */
+.dr{display:flex;gap:7px;overflow-x:auto;padding-bottom:4px;margin-bottom:11px;-webkit-overflow-scrolling:touch}
+.dr button{flex:0 0 auto;padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink-2);font-size:12.5px;font-weight:600;white-space:nowrap}
+.dr button.on{background:linear-gradient(135deg,var(--orange-2),var(--orange-d));border-color:var(--orange);color:#1a0e00;font-weight:700}
+.drx{display:flex;gap:8px;align-items:center;margin-bottom:13px}
+.drx input{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:9px 10px;font-size:12.5px;font-family:var(--mono)}
+.drx span{font-size:12px;color:var(--muted)}
+.wl{font-size:10.5px;font-weight:800;padding:3px 8px;border-radius:5px;letter-spacing:.3px}
+.wl.w{color:var(--text-success);background:rgba(34,180,85,.16)}
+.wl.l{color:var(--text-danger);background:rgba(224,82,79,.16)}
+.wl.f{color:var(--text-muted);background:rgba(119,119,140,.16)}
+
 /* ===== NAV ===== */
 .navbar{position:fixed;left:0;right:0;bottom:0;z-index:50;display:flex;justify-content:space-around;background:rgba(14,14,22,.96);border-top:1px solid var(--line);padding:7px 4px calc(7px + env(safe-area-inset-bottom));backdrop-filter:blur(10px)}
 .navbar button{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:5px 2px;background:none;border:none;color:var(--muted);font-size:10.5px;font-weight:600}
@@ -1461,6 +1473,18 @@ button{font-family:inherit;cursor:pointer}
   <section class="pane" data-p="journal">
     <div class="block">
       <h2 class="sec-h">Journal <span class="rt" id="j-cap"></span></h2>
+      <div class="dr" id="jRange">
+        <button data-d="1">Maanta</button>
+        <button data-d="7">7 maalmood</button>
+        <button data-d="30" class="on">30 maalmood</button>
+        <button data-d="90">3 bilood</button>
+        <button data-d="0">Dhammaan</button>
+      </div>
+      <div class="drx">
+        <input id="jFrom" type="date" aria-label="Laga bilaabo">
+        <span>→</span>
+        <input id="jTo" type="date" aria-label="Ilaa">
+      </div>
       <div class="chips" id="jSyms"></div>
       <div class="kpis" style="grid-template-columns:repeat(2,minmax(0,1fr))">
         <div class="card kpi"><div class="lbl">Trade guud</div><div class="val num" id="j_total">—</div><div id="j_wl" style="font-size:11px;color:var(--muted);margin-top:2px"></div></div>
@@ -1889,7 +1913,7 @@ async function loadJournal(){
 
 
 /* ===== JOURNAL ===== */
-let J_SYM='';
+let J_SYM='', J_DAYS=30, J_FROM='', J_TO='';
 function jMoney(v){const n=+v||0;return (n<0?'-$':'+$')+Math.abs(n).toFixed(2);}
 
 function renderPerSym(list){
@@ -1920,9 +1944,7 @@ function renderJList(rows){
     d.innerHTML='<div class="si"><div class="sn" style="font-size:14px">'+esc(r.sym)+
       ' <span class="badge '+(buy?'buy':'sell')+'" style="margin-left:4px">'+esc(r.type)+'</span></div>'+
       '<div class="sm">'+t(r.ot)+' → '+t(r.ct)+' · '+r.entry+' → '+r.exitp+'</div></div>'+
-      '<div style="text-align:right;flex-shrink:0"><div style="font-size:15px;font-weight:700;color:var('+
-      (p>=0?'--text-success':'--text-danger')+');font-variant-numeric:tabular-nums">'+jMoney(p)+'</div>'+
-      '<div style="font-size:10px;color:var(--muted)">'+esc(r.strat||'')+' · '+(+r.points||0).toFixed(0)+' pt</div></div>';
+      '<div style="text-align:right;flex-shrink:0">'+'<div style="display:flex;align-items:center;gap:7px;justify-content:flex-end">'+'<span class="wl '+(p>0?'w':(p<0?'l':'f'))+'">'+(p>0?'WIN':(p<0?'LOSS':'FLAT'))+'</span>'+'<span style="font-size:15px;font-weight:700;color:var('+(p>=0?'--text-success':'--text-danger')+');font-variant-numeric:tabular-nums">'+jMoney(p)+'</span></div>'+'<div style="font-size:10px;color:var(--muted);margin-top:3px">'+esc(r.strat||'')+' · '+(+r.pips||+r.points||0).toFixed(1)+' pip</div></div>';
     box.appendChild(d);
   });
 }
@@ -1944,6 +1966,10 @@ async function loadJournal(){
     let url='/journal?token='+encodeURIComponent(TOKEN);
     if(CUR_BOT)url+='&bot='+encodeURIComponent(CUR_BOT);
     if(J_SYM)url+='&symbol='+encodeURIComponent(J_SYM);
+    if(J_FROM||J_TO){
+      if(J_FROM)url+='&from='+J_FROM;
+      if(J_TO)url+='&to='+J_TO;
+    }else if(J_DAYS>0)url+='&days='+J_DAYS;
     const d=await (await fetch(url,{cache:'no-store'})).json();
     const st=d.stats;
     renderJSyms(d.symbols);
@@ -1951,6 +1977,11 @@ async function loadJournal(){
     renderJList(d.trades);
     $('j-cap').textContent=(d.stored||0)+' / '+d.capacity+' kaydsan';
     $('j-count').textContent=(d.trades||[]).length;
+    if(d.range&&d.range.span){
+      const f=new Date(d.range.span.first*1000), l=new Date(d.range.span.last*1000);
+      const fmt=x=>x.toLocaleDateString('en-GB',{day:'2-digit',month:'short'});
+      $('j-cap').textContent=fmt(f)+' → '+fmt(l)+' · '+(d.stored||0)+'/'+d.capacity;
+    }else $('j-cap').textContent=(d.stored||0)+' / '+d.capacity+' kaydsan';
     $('j_total').textContent=st.trades||0;
     $('j_wl').textContent=st.wins+' W · '+st.losses+' L';
     $('j_wr').textContent=st.winrate==null?'—':st.winrate+'%';
@@ -1965,10 +1996,25 @@ async function loadJournal(){
     $('j_verdict').innerHTML='<div class="'+cls+'" style="margin-top:13px">'+esc(d.message)+'</div>';
   }catch(e){}
 }
+document.querySelectorAll('#jRange button').forEach(b=>b.addEventListener('click',()=>{
+  J_DAYS=+b.dataset.d; J_FROM=''; J_TO='';
+  $('jFrom').value=''; $('jTo').value='';
+  document.querySelectorAll('#jRange button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');
+  loadJournal();
+}));
+['jFrom','jTo'].forEach(id=>$(id).addEventListener('change',()=>{
+  J_FROM=$('jFrom').value; J_TO=$('jTo').value;
+  if(J_FROM||J_TO)document.querySelectorAll('#jRange button').forEach(x=>x.classList.remove('on'));
+  loadJournal();
+}));
 $('jRefresh').addEventListener('click',loadJournal);
 $('jCsv').addEventListener('click',()=>{
   let u='/journal.csv?token='+encodeURIComponent(TOKEN);
   if(CUR_BOT)u+='&bot='+encodeURIComponent(CUR_BOT);
+  if(J_FROM)u+='&from='+J_FROM;
+  if(J_TO)u+='&to='+J_TO;
+  if(!J_FROM&&!J_TO&&J_DAYS>0)u+='&days='+J_DAYS;
   window.open(u,'_blank');
 });
 
