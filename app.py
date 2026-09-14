@@ -38,7 +38,7 @@ DASHBOARD_FILE = os.path.join(BASE_DIR, "dashboard.html")
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "MohaPro_Live_2026_MySecret")
 MASTER_TOKEN = AUTH_TOKEN
 
-BUILD = "v4.6-2026-09-12"
+BUILD = "v4.7-2026-09-14"
 DEFAULT_BOT = "default"
 MAX_HISTORY = 120
 STALE_SECONDS = 120
@@ -1066,6 +1066,38 @@ def signal_history():
 
 
 
+
+
+@app.route("/trades", methods=["POST", "OPTIONS"])
+def post_trades():
+    """
+    EA-ga journal poster-kiisu halkan ayuu wax u diraa:
+        POST /trades   {"token":..., "bot":..., "trades":[...]}
+
+    /update ayaa xogta nool qaata; kani wuxuu qaataa trade-yada XIRAN
+    ee journal-ka. Hore ma jirin -> EA-gu 404 ayuu helayay.
+    """
+    if request.method == "OPTIONS":
+        return ("", 204)
+
+    tok = get_token(request)
+    if not tok:
+        return jsonify({"error": "no token"}), 401
+
+    bot = get_bot(request)
+    data = request.get_json(silent=True) or {}
+    rows = data.get("trades")
+    if not isinstance(rows, list):
+        return jsonify({"error": "trades array lama helin"}), 400
+
+    before = len(JOURNAL.get(tok, {}).get(bot, {}))
+    merge_journal(tok, bot, rows)
+    after = len(JOURNAL.get(tok, {}).get(bot, {}))
+
+    return jsonify({"ok": True, "bot": bot,
+                    "received": len(rows),
+                    "stored": after,
+                    "added": after - before})
 
 # ============ 8) Pages ============
 EMBEDDED_HTML = """<!DOCTYPE html>
