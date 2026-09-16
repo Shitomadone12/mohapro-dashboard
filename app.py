@@ -48,6 +48,7 @@ DB_PATH        = _db_path()
 CLOUD_TOKEN    = os.environ.get("CLOUD_TOKEN", "").strip()
 ADMIN_ACCOUNT  = re.sub(r"\D", "", os.environ.get("ADMIN_ACCOUNT", "").strip())
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+EXTRA_USERS    = os.environ.get("EXTRA_USERS", "")   # "acc:magac:pw, acc:magac:pw"
 SECRET_KEY     = os.environ.get("SECRET_KEY", "")
 
 STALE_SECONDS  = 90        # in ka badan = OFFLINE
@@ -151,6 +152,32 @@ def init_db():
                 log.info("Admin la cusboonaysiiyay: %s", ADMIN_ACCOUNT)
         else:
             log.warning("ADMIN_ACCOUNT / ADMIN_PASSWORD lama dejin -> admin lama abuurin.")
+
+        # EXTRA_USERS -> boot kasta dib loo dhisayo. Disk la'aan ayay u shaqeysaa.
+        for chunk in EXTRA_USERS.split(","):
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            parts = [x.strip() for x in chunk.split(":")]
+            if len(parts) < 3:
+                log.warning("EXTRA_USERS qayb khaldan (u baahan acc:magac:pw): %r", chunk[:20])
+                continue
+            uacc = re.sub(r"\D", "", parts[0])
+            uname, upw = parts[1], ":".join(parts[2:])
+            if len(uacc) < 4 or len(upw) < 8:
+                log.warning("EXTRA_USERS la iska dhaafay (acc ama pw gaaban): %s", uacc or "?")
+                continue
+            if uacc == ADMIN_ACCOUNT:
+                continue
+            uh = generate_password_hash(upw)
+            if con.execute("SELECT 1 FROM users WHERE account=?", (uacc,)).fetchone():
+                con.execute("UPDATE users SET pw=?, name=?, approved=1 WHERE account=?",
+                            (uh, uname, uacc))
+            else:
+                con.execute(
+                    "INSERT INTO users(account,name,pw,role,approved,can_control,created_at)"
+                    " VALUES(?,?,?,'user',1,1,?)", (uacc, uname, uh, _now_iso()))
+            log.info("EXTRA_USERS: %s diyaar", uacc)
 
 def _now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -344,7 +371,7 @@ def healthz():
     except Exception as e:                                   # noqa: BLE001
         nusers, admins, nsnap, db_ok, db_err = 0, [], 0, False, str(e)[:120]
 
-    problems = []
+    problems, warnings = [], []
     if not ADMIN_ACCOUNT:
         problems.append("ADMIN_ACCOUNT lama dejin (ama xaraf ma aha lambar).")
     if not ADMIN_PASSWORD:
@@ -359,6 +386,9 @@ def healthz():
         problems.append("Database qalad: " + str(db_err))
     if ADMIN_ACCOUNT and nusers == 0:
         problems.append("Isticmaale lama abuurin. Dib u deploy gareey.")
+    if not DB_PATH.startswith("/var/data"):
+        warnings.append("Disk joogto ah ma jiro -> isticmaalayaasha /register way tirtirmayaan "
+                        "restart kasta. Isticmaal EXTRA_USERS, ama ku dar Disk /var/data.")
 
     return jsonify(
         ok=(not problems),
@@ -372,7 +402,8 @@ def healthz():
         cloud_token_set=bool(CLOUD_TOKEN),
         cloud_token_len=len(CLOUD_TOKEN),
         users=nusers, admins=admins, accounts_with_data=nsnap,
-        problems=problems, ts=int(time.time()))
+        extra_users_set=bool(EXTRA_USERS),
+        problems=problems, warnings=warnings, ts=int(time.time()))
 
 # --------------------------------------------------------------------------
 # Web auth
