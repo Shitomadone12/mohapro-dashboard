@@ -721,13 +721,20 @@ button:hover,.btn:hover{background:#2e2e2c}
 .msg.err{background:rgba(208,59,59,.15);border:1px solid var(--crit);color:#ffb3b3}
 .msg.ok{background:rgba(12,163,12,.15);border:1px solid var(--good);color:#a9e8a9}
 .foot{margin-top:18px;text-align:center;font-size:13px;color:var(--ink3)}
-.hero{position:relative;min-height:190px;display:flex;flex-direction:column;justify-content:flex-end;
-  padding:18px 20px;background:#151514;overflow:hidden;border-bottom:1px solid var(--line)}
-.hero-img{position:absolute;inset:0;background-size:cover;background-position:center;
+.hero{position:relative;min-height:300px;display:flex;flex-direction:column;justify-content:flex-end;
+  padding:18px 20px;background:#0f0f0e;overflow:hidden;border-bottom:1px solid var(--line)}
+/* gadaasha: nuqul indho-beel ah oo daboolaya banaanka */
+.hero-bg{position:absolute;inset:-32px;background-size:cover;background-position:center;
+  background-repeat:no-repeat;filter:blur(26px) saturate(1.15) brightness(.55);
+  transform:scale(1.12);transition:opacity .25s;opacity:0}
+/* hore: sawirka OO DHAN - waxba lagama jarayo */
+.hero-img{position:absolute;top:8px;left:0;right:0;bottom:74px;
+  background-size:contain;background-position:center;
   background-repeat:no-repeat;transition:opacity .25s;opacity:0}
-.hero-img.on{opacity:1}
-.hero-fade{position:absolute;inset:0;background:
-  linear-gradient(180deg,rgba(13,13,13,.55) 0%,rgba(13,13,13,.15) 38%,rgba(13,13,13,.92) 100%)}
+.hero-bg.on,.hero-img.on{opacity:1}
+.hero-fade{position:absolute;inset:0;pointer-events:none;background:
+  linear-gradient(180deg,rgba(13,13,13,.62) 0%,rgba(13,13,13,0) 26%,
+                  rgba(13,13,13,0) 52%,rgba(13,13,13,.90) 86%,rgba(13,13,13,.97) 100%)}
 .hero-ph{position:absolute;inset:0;background:
   radial-gradient(1100px 380px at 18% -12%,rgba(57,135,229,.30),transparent 62%),
   linear-gradient(135deg,#1b2432 0%,#141413 68%)}
@@ -743,7 +750,8 @@ button:hover,.btn:hover{background:#2e2e2c}
   border:1px solid rgba(255,255,255,.14);color:#fff}
 .hero-top .btn{font-size:13px;padding:8px 12px;white-space:nowrap}
 .hero-btns{display:flex;gap:8px;margin-left:auto;flex:0 0 auto}
-@media(max-width:560px){ .hero{min-height:210px;padding:16px}
+@media(max-width:560px){ .hero{min-height:330px;padding:16px}
+  .hero-img{bottom:78px}
   .hero-top{left:16px;right:16px}
   .hero-top .pill{font-size:12px;padding:5px 9px}
   .hero-top .btn{font-size:12px;padding:7px 10px}
@@ -842,25 +850,108 @@ T_REGISTER = """<!doctype html><html lang="so"><head><meta charset="utf-8">
 </div></div></body></html>"""
 
 T_DASH = """<!doctype html><html lang="so"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MOHA PRO — Dashboard</title><style>""" + CSS + """</style></head><body>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>MOHA PRO</title><style>""" + CSS + """
+body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
+
+/* ---------- HERO ---------- */
+.hero{position:relative;min-height:300px;display:flex;flex-direction:column;
+  align-items:center;justify-content:flex-end;text-align:center;
+  padding:60px 20px 22px;background:#0f0f0e;overflow:hidden;
+  border-bottom:1px solid var(--line)}
+.hero-ph{position:absolute;inset:0;background:
+  radial-gradient(900px 340px at 50% -8%,rgba(57,135,229,.34),transparent 64%),
+  linear-gradient(160deg,#1a2331 0%,#131312 70%)}
+.hero-bg{position:absolute;inset:-34px;background-size:cover;background-position:center;
+  filter:blur(30px) saturate(1.2) brightness(.42);transform:scale(1.14);
+  transition:opacity .3s;opacity:0}
+.hero-bg.on{opacity:1}
+.hero-fade{position:absolute;inset:0;pointer-events:none;background:
+  linear-gradient(180deg,rgba(13,13,13,.5) 0%,rgba(13,13,13,0) 34%,rgba(13,13,13,.9) 100%)}
+.hero-in{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center}
+
+.logo-wrap{position:relative;margin-bottom:14px}
+.logo{width:134px;height:134px;border-radius:30px;
+  background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.16);
+  background-size:contain;background-position:center;background-repeat:no-repeat;
+  box-shadow:0 10px 34px rgba(0,0,0,.5)}
+.logo.empty{display:grid;place-items:center}
+.logo.empty::after{content:"MP";font-size:38px;font-weight:800;color:rgba(255,255,255,.34);
+  letter-spacing:.04em}
+.edit{position:absolute;right:-6px;bottom:-6px;width:38px;height:38px;border-radius:50%;
+  display:grid;place-items:center;padding:0;background:var(--s1);border:2px solid #0f0f0e;
+  color:#fff;box-shadow:0 4px 14px rgba(0,0,0,.5)}
+.edit:hover{background:var(--s1);filter:brightness(1.12)}
+.edit svg{width:17px;height:17px}
+.rm{position:absolute;left:-6px;bottom:-6px;width:38px;height:38px;border-radius:50%;
+  display:none;place-items:center;padding:0;background:#2b2b29;
+  border:2px solid #0f0f0e;color:#f0a0a0;box-shadow:0 4px 14px rgba(0,0,0,.5)}
+.rm:hover{background:#3a2626}
+.rm.on{display:grid}
+.rm svg{width:16px;height:16px}
+
+.hero h1{font-size:30px;margin:0;letter-spacing:-.01em;text-shadow:0 2px 16px rgba(0,0,0,.7)}
+.hero h1 b{color:var(--s1);font-weight:800}
+.chips{display:flex;gap:7px;flex-wrap:wrap;justify-content:center;margin-top:11px}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:6px 11px;
+  border-radius:999px;background:rgba(18,18,17,.74);border:1px solid rgba(255,255,255,.14);
+  color:#d8d7cf;backdrop-filter:blur(8px)}
+#pick{display:none}
+
+/* ---------- ACTIONS ---------- */
+.sec-t{font-size:13px;color:var(--ink2);font-weight:600;text-transform:uppercase;
+  letter-spacing:.07em;margin:0 0 11px}
+.acts{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.act{border-radius:16px;padding:15px 6px 13px;border:1px solid;cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;gap:8px;
+  font-size:11.5px;font-weight:700;letter-spacing:.05em;font-family:inherit;
+  transition:transform .08s,filter .15s}
+.act:active{transform:scale(.97)}
+.act:disabled{opacity:.5}
+.act svg{width:25px;height:25px;stroke:currentColor;fill:none;stroke-width:1.9;
+  stroke-linecap:round;stroke-linejoin:round}
+.act.go{background:rgba(12,163,12,.17);border-color:rgba(12,163,12,.6);color:#7fd67f}
+.act.stop{background:rgba(208,59,59,.17);border-color:rgba(208,59,59,.6);color:#f0a0a0}
+.act.warn{background:rgba(236,131,90,.16);border-color:rgba(236,131,90,.55);color:#f2ad8c}
+.act.calm{background:rgba(57,135,229,.15);border-color:rgba(57,135,229,.55);color:#8fc0f5}
+
+/* ---------- TAB BAR ---------- */
+.appbar{position:fixed;left:0;right:0;bottom:0;z-index:40;display:flex;
+  background:rgba(16,16,15,.97);backdrop-filter:blur(12px);
+  border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
+.appbar button{flex:1;background:none;border:none;border-radius:0;cursor:pointer;
+  padding:9px 2px 9px;color:var(--ink3);font-size:10.5px;font-family:inherit;font-weight:600;
+  display:flex;flex-direction:column;align-items:center;gap:4px;letter-spacing:.02em}
+.appbar button.on{color:var(--s1)}
+.appbar button:hover{background:none;color:var(--ink2)}
+.appbar button.on:hover{color:var(--s1)}
+.appbar svg{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:1.8;
+  stroke-linecap:round;stroke-linejoin:round}
+.pane{display:none}
+.pane.on{display:block}
+@media(min-width:900px){.cols.two{grid-template-columns:1fr}}
+</style></head><body>
+
 <div class="hero">
   <div class="hero-ph"></div>
-  <div class="hero-img" id="heroImg"></div>
+  <div class="hero-bg" id="heroBg"></div>
   <div class="hero-fade"></div>
-
-  <div class="hero-top">
-    <span class="pill glass"><span class="dot" id="dot"></span><span id="st">Xiriirinaya…</span></span>
-    <span class="spacer"></span>
-    <span class="hero-btns">
-      <button class="btn glass" id="btnPic">Beddel sawirka</button>
-      <button class="btn glass" id="btnPicDel" style="display:none">Ka saar</button>
-    </span>
-  </div>
-
   <div class="hero-in">
+    <div class="logo-wrap">
+      <div class="logo empty" id="logo"></div>
+      <button class="edit" id="btnPic" title="Beddel sawirka" aria-label="Beddel sawirka">
+        <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+      </button>
+      <button class="rm" id="btnPicDel" title="Ka saar" aria-label="Ka saar">
+        <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
     <h1>MOHA PRO <b>v59</b></h1>
-    <div class="tag-line">MT5 · Bot control · <span id="heroAcc">—</span></div>
+    <div class="chips">
+      <span class="chip"><span class="dot" id="dot"></span><span id="st">Xiriirinaya…</span></span>
+      <span class="chip">MT5</span>
+      <span class="chip" id="heroAcc">—</span>
+    </div>
   </div>
 </div>
 <input type="file" id="pick" accept="image/png,image/jpeg,image/webp">
@@ -873,39 +964,31 @@ T_DASH = """<!doctype html><html lang="so"><head><meta charset="utf-8">
   </select>
   {% else %}<span class="pill">Account: {{ me }}</span>{% endif %}
   <span class="spacer"></span>
-  <span class="pill" id="who" title="Isticmaalaha">{{ name }}</span>
+  <span class="pill">{{ name }}</span>
   {% if is_admin %}<a class="btn" href="/admin">Maamul</a>{% endif %}
   <a class="btn" href="/logout">Bax</a>
 </div>
 
 <div class="wrap">
-  <div class="grid">
-    <div class="tile"><div class="k">Balance</div><div class="v neu" id="bal">—</div></div>
-    <div class="tile"><div class="k">Equity</div><div class="v neu" id="eq">—</div></div>
-    <div class="tile"><div class="k">Faa'iidada maanta</div><div class="v" id="pf">—</div></div>
-    <div class="tile"><div class="k">Win rate</div><div class="v neu" id="wr">—</div></div>
-    <div class="tile"><div class="k">Drawdown</div><div class="v" id="dd">—</div></div>
-    <div class="tile"><div class="k">Trade furan</div><div class="v neu" id="ot">—</div></div>
-  </div>
 
-  <div class="cols two">
-    <div class="card">
-      <h2>Equity — 12 saac ee ugu dambeeyay</h2>
-      <svg class="chart" id="chart" role="img" aria-label="Equity-ga waqti ahaan"></svg>
-      <div class="note" id="chartNote"></div>
-    </div>
-    <div class="card">
-      <h2>Kontarool</h2>
-      {% if can_control %}
-      <div class="ctl">
-        <button class="b-go"   data-cmd="START">SHID</button>
-        <button class="b-stop" data-cmd="STOP">DAMI</button>
+  <!-- ============ GUUD ============ -->
+  <section class="pane on" id="pGuud">
+    {% if can_control %}
+    <div class="card" style="margin-bottom:16px">
+      <p class="sec-t">Amarrada</p>
+      <div class="acts">
+        <button class="act go" data-cmd="START">
+          <svg viewBox="0 0 24 24"><path d="m6 4 14 8-14 8Z"/></svg>SHID</button>
+        <button class="act stop" data-cmd="STOP">
+          <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>DAMI</button>
+        <button class="act warn" data-cmd="CLOSE_ALL">
+          <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>XIDH</button>
       </div>
-      <div class="ctl">
-        <button class="b-stop" data-cmd="CLOSE_ALL">XIDH DHAMMAAN</button>
-        <button data-cmd="CLOSE_PROFIT">XIDH FAA'IIDO</button>
+      <div class="acts" style="margin-top:10px">
+        <button class="act calm" data-cmd="CLOSE_PROFIT" style="grid-column:span 3;flex-direction:row;gap:9px;padding:13px">
+          <svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 7-7"/><path d="M14 8h6v6"/></svg>XIDH FAA'IIDO</button>
       </div>
-      <label for="stratSel">Beddel xeeladda</label>
+      <label for="stratSel" style="margin-top:16px">Beddel xeeladda</label>
       <select id="stratSel">
         <option value="">— dooro —</option>
         <option value="STRATEGY:SR">SR</option>
@@ -916,40 +999,71 @@ T_DASH = """<!doctype html><html lang="so"><head><meta charset="utf-8">
         <option value="STRATEGY:POC">POC</option>
       </select>
       <div class="note" id="cmdNote">Amarku wuxuu gaadhayaa EA-da 3–5 ilbiriqsi gudahood.</div>
-      {% else %}
-      <p class="empty">Akhris kaliya. Amar diritaanka lagaama ogola.</p>
-      {% endif %}
-      <div class="note" id="meta"></div>
     </div>
-  </div>
+    {% endif %}
 
-  <div class="card" style="margin-bottom:16px">
-    <h2>Trade-yada furan <span class="cnt" id="cOpen"></span></h2>
-    <div class="scroll xscroll"><table id="tt">
-      <thead><tr><th>Symbol</th><th>Nooc</th><th>Xeelad</th><th>Lots</th>
-        <th style="text-align:right">P/L</th></tr></thead>
-      <tbody><tr><td colspan="5" class="empty">Wax lama helin.</td></tr></tbody>
-    </table></div>
-  </div>
+    <div class="grid">
+      <div class="tile"><div class="k">Balance</div><div class="v neu" id="bal">—</div></div>
+      <div class="tile"><div class="k">Equity</div><div class="v neu" id="eq">—</div></div>
+      <div class="tile"><div class="k">Faa'iidada maanta</div><div class="v" id="pf">—</div></div>
+      <div class="tile"><div class="k">Win rate</div><div class="v neu" id="wr">—</div></div>
+      <div class="tile"><div class="k">Drawdown</div><div class="v" id="dd">—</div></div>
+      <div class="tile"><div class="k">Trade furan</div><div class="v neu" id="ot">—</div></div>
+    </div>
 
-  <div class="card" style="margin-bottom:16px">
-    <h2>Trade-yada la xidhay <span class="cnt" id="cCls"></span></h2>
-    <div class="scroll xscroll"><table id="tc">
-      <thead><tr><th>Xidhmay</th><th>Symbol</th><th>Nooc</th><th>Xeelad</th>
-        <th>Lots</th><th style="text-align:right">Points</th>
-        <th style="text-align:right">P/L</th></tr></thead>
-      <tbody><tr><td colspan="7" class="empty">Wax lama helin.</td></tr></tbody>
-    </table></div>
-    <div class="note" id="clsSum"></div>
-  </div>
+    <div class="card"><p class="sec-t">Xogta account-ka</p>
+      <div class="note" id="meta" style="margin:0">—</div></div>
+  </section>
 
-  <div class="card">
-    <h2>Journal</h2>
-    <div class="scroll" id="jr"><p class="empty">Wax lama helin.</p></div>
-  </div>
+  <!-- ============ TRADE ============ -->
+  <section class="pane" id="pTrade">
+    <div class="card" style="margin-bottom:16px">
+      <h2>Trade-yada furan <span class="cnt" id="cOpen"></span></h2>
+      <div class="scroll xscroll"><table id="tt">
+        <thead><tr><th>Symbol</th><th>Nooc</th><th>Xeelad</th><th>Lots</th>
+          <th style="text-align:right">P/L</th></tr></thead>
+        <tbody><tr><td colspan="5" class="empty">Wax lama helin.</td></tr></tbody>
+      </table></div>
+    </div>
+    <div class="card">
+      <h2>Trade-yada la xidhay <span class="cnt" id="cCls"></span></h2>
+      <div class="scroll xscroll"><table id="tc">
+        <thead><tr><th>Xidhmay</th><th>Symbol</th><th>Nooc</th><th>Xeelad</th>
+          <th>Lots</th><th style="text-align:right">Points</th>
+          <th style="text-align:right">P/L</th></tr></thead>
+        <tbody><tr><td colspan="7" class="empty">Wax lama helin.</td></tr></tbody>
+      </table></div>
+      <div class="note" id="clsSum"></div>
+    </div>
+  </section>
+
+  <!-- ============ CHART ============ -->
+  <section class="pane" id="pChart">
+    <div class="card">
+      <h2>Equity — 12 saac ee ugu dambeeyay</h2>
+      <svg class="chart" id="chart" role="img" aria-label="Equity-ga waqti ahaan"></svg>
+      <div class="note" id="chartNote"></div>
+    </div>
+  </section>
+
+  <!-- ============ JOURNAL ============ -->
+  <section class="pane" id="pJournal">
+    <div class="card"><h2>Journal</h2>
+      <div class="scroll" id="jr"><p class="empty">Wax lama helin.</p></div></div>
+  </section>
 </div>
-<div class="tip" id="tip"></div>
 
+<nav class="appbar">
+  <button class="on" data-tab="Guud">
+    <svg viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1Z"/></svg>Guud</button>
+  <button data-tab="Trade">
+    <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg>Trade</button>
+  <button data-tab="Chart">
+    <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-6"/></svg>Chart</button>
+  <button data-tab="Journal">
+    <svg viewBox="0 0 24 24"><path d="M5 3h11l4 4v14H5Z"/><path d="M9 9h7M9 13h7M9 17h4"/></svg>Journal</button>
+</nav>
+<div class="tip" id="tip"></div>
 <script>
 const $=s=>document.querySelector(s);
 const accSel=$("#accSel");
@@ -962,7 +1076,7 @@ const cls=v=>v>0?"pos":(v<0?"neg":"neu");
 function paint(d){
   const x=d.data||{};
   $("#dot").className="dot "+(d.online?"on":"off");
-  $("#heroAcc").textContent="Account "+d.account;
+  $("#heroAcc").textContent="#"+d.account;
   setBrand(d.brand||"");
   $("#st").textContent=d.online?("ONLINE · "+(d.age||0)+"s ka hor")
     :(d.age==null?"Xog lama helin":"OFFLINE · "+d.age+"s ka hor");
@@ -1128,10 +1242,17 @@ let BRAND="";
 function setBrand(src){
   if(src===BRAND) return;
   BRAND=src;
-  const el=$("#heroImg");
-  if(src){ el.style.backgroundImage="url('"+src.replace(/'/g,"%27")+"')"; el.classList.add("on"); }
-  else   { el.style.backgroundImage=""; el.classList.remove("on"); }
-  $("#btnPicDel").style.display = src ? "" : "none";
+  const el=$("#logo"), bg=$("#heroBg");
+  if(src){
+    const u="url('"+src.replace(/'/g,"%27")+"')";
+    el.style.backgroundImage=u; bg.style.backgroundImage=u;
+    el.classList.remove("empty"); bg.classList.add("on");
+    $("#btnPicDel").classList.add("on");
+  }else{
+    el.style.backgroundImage=""; bg.style.backgroundImage="";
+    el.classList.add("empty"); bg.classList.remove("on");
+    $("#btnPicDel").classList.remove("on");
+  }
 }
 
 $("#btnPic").addEventListener("click",()=>$("#pick").click());
@@ -1143,7 +1264,7 @@ $("#pick").addEventListener("change",async ev=>{
   const btn=$("#btnPic"); const old=btn.textContent;
   btn.disabled=true; btn.textContent="Cusboonaysiinaya…";
   try{
-    const data=await shrink(f,1400,0.82);
+    const data=await shrink(f,1600,0.86);
     const body={img:data};
     if(accSel)body.account=accSel.value;
     const r=await fetch("/api/branding",{method:"POST",
@@ -1219,6 +1340,19 @@ async function send(cmd,btn){
   if(btn)setTimeout(()=>{btn.disabled=false;},1200);
   tick();
 }
+/* ---- Tabs ---- */
+function tab(n){
+  document.querySelectorAll(".pane").forEach(p=>p.classList.toggle("on",p.id==="p"+n));
+  document.querySelectorAll(".appbar button").forEach(b=>b.classList.toggle("on",b.dataset.tab===n));
+  if(n==="Chart") drawChart();
+  try{ localStorage.setItem("mp_tab",n); }catch(e){}
+  scrollTo({top:0,behavior:"instant"});
+}
+document.querySelectorAll(".appbar button").forEach(b=>{
+  b.addEventListener("click",()=>tab(b.dataset.tab));
+});
+try{ const t=localStorage.getItem("mp_tab"); if(t && $("#p"+t)) tab(t); }catch(e){}
+
 if(accSel)accSel.addEventListener("change",tick);
 tick(); setInterval(tick,5000);
 </script></body></html>"""
