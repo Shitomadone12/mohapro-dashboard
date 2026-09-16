@@ -364,12 +364,12 @@ def healthz():
     try:
         with db() as con:
             nusers = con.execute("SELECT COUNT(*) c FROM users").fetchone()["c"]
-            admins = [r["account"] for r in
-                      con.execute("SELECT account FROM users WHERE role='admin'").fetchall()]
+            admins = con.execute(
+                "SELECT COUNT(*) c FROM users WHERE role='admin'").fetchone()["c"]
             nsnap  = con.execute("SELECT COUNT(*) c FROM snapshots").fetchone()["c"]
         db_ok, db_err = True, None
     except Exception as e:                                   # noqa: BLE001
-        nusers, admins, nsnap, db_ok, db_err = 0, [], 0, False, str(e)[:120]
+        nusers, admins, nsnap, db_ok, db_err = 0, 0, 0, False, str(e)[:120]
 
     problems, warnings = [], []
     if not ADMIN_ACCOUNT:
@@ -401,7 +401,7 @@ def healthz():
         secret_key_set=bool(os.environ.get("SECRET_KEY")),
         cloud_token_set=bool(CLOUD_TOKEN),
         cloud_token_len=len(CLOUD_TOKEN),
-        users=nusers, admins=admins, accounts_with_data=nsnap,
+        users=nusers, admin_count=admins, accounts_with_data=nsnap,
         extra_users_set=bool(EXTRA_USERS),
         problems=problems, warnings=warnings, ts=int(time.time()))
 
@@ -708,6 +708,9 @@ tr:last-child td{border-bottom:none}
 .tag{font-size:11px;padding:2px 7px;border-radius:5px;background:#232322;color:var(--ink2)}
 .tag.buy{background:rgba(12,163,12,.18);color:#7fd67f}
 .tag.sell{background:rgba(208,59,59,.18);color:#f0a0a0}
+.cnt{color:var(--ink3);font-weight:500;letter-spacing:0}
+@media(max-width:560px){ #tc th:nth-child(4), #tc td:nth-child(4),
+  #tc th:nth-child(6), #tc td:nth-child(6){display:none} }
 .empty{color:var(--ink3);font-size:13.5px;padding:18px 0;text-align:center}
 .ctl{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
 .ctl button{flex:1;min-width:104px}
@@ -838,12 +841,23 @@ T_DASH = """<!doctype html><html lang="so"><head><meta charset="utf-8">
   </div>
 
   <div class="card" style="margin-bottom:16px">
-    <h2>Trade-yada furan</h2>
+    <h2>Trade-yada furan <span class="cnt" id="cOpen"></span></h2>
     <div class="scroll xscroll"><table id="tt">
       <thead><tr><th>Symbol</th><th>Nooc</th><th>Xeelad</th><th>Lots</th>
         <th style="text-align:right">P/L</th></tr></thead>
       <tbody><tr><td colspan="5" class="empty">Wax lama helin.</td></tr></tbody>
     </table></div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px">
+    <h2>Trade-yada la xidhay <span class="cnt" id="cCls"></span></h2>
+    <div class="scroll xscroll"><table id="tc">
+      <thead><tr><th>Xidhmay</th><th>Symbol</th><th>Nooc</th><th>Xeelad</th>
+        <th>Lots</th><th style="text-align:right">Points</th>
+        <th style="text-align:right">P/L</th></tr></thead>
+      <tbody><tr><td colspan="7" class="empty">Wax lama helin.</td></tr></tbody>
+    </table></div>
+    <div class="note" id="clsSum"></div>
   </div>
 
   <div class="card">
@@ -884,22 +898,57 @@ function paint(d){
   if(d.pending&&d.pending.length)bits.push("Amar sugaya: "+d.pending.join(", "));
   $("#meta").textContent=bits.join(" · ");
 
-  const tb=$("#tt tbody"); tb.innerHTML="";
   const rows=Array.isArray(x.trades)?x.trades:[];
-  if(!rows.length){
+  const isOpen=t=>String(t.st||"OPEN").toUpperCase()==="OPEN";
+  const open=rows.filter(isOpen);
+  const clsd=rows.filter(t=>!isOpen(t))
+                 .sort((a,b)=>(Number(b.ct||b.ot||0))-(Number(a.ct||a.ot||0)));
+
+  $("#cOpen").textContent=open.length?("· "+open.length):"";
+  $("#cCls").textContent =clsd.length?("· "+clsd.length):"";
+
+  const tb=$("#tt tbody"); tb.innerHTML="";
+  if(!open.length){
     tb.innerHTML='<tr><td colspan="5" class="empty">Trade furan ma jiro.</td></tr>';
   }else{
-    for(const t of rows){
+    for(const t of open){
       const pl=Number(t.profit||0);
-      const ty=String(t.type||t.dir||"").toUpperCase();
       const tr=document.createElement("tr");
-      tr.innerHTML='<td>'+esc(t.symbol||t.sym||"")+'</td>'+
-        '<td><span class="tag '+(ty.indexOf("BUY")>=0?"buy":(ty.indexOf("SELL")>=0?"sell":""))+'">'+esc(ty||"—")+'</span></td>'+
-        '<td>'+esc(t.strategy||t.strat||"")+'</td>'+
-        '<td>'+esc(t.lots==null?"":t.lots)+'</td>'+
-        '<td style="text-align:right" class="'+cls(pl)+'">'+(pl>0?"+":"")+money(pl)+'</td>';
+      tr.innerHTML='<td>'+esc(t.sym||t.symbol||"")+'</td>'+tag(t)+
+        '<td>'+esc(t.strat||t.strategy||"")+'</td>'+
+        '<td>'+esc(lots(t))+'</td>'+
+        '<td style="text-align:right" class="'+cls(pl)+'">'+sign(pl)+'</td>';
       tb.appendChild(tr);
     }
+  }
+
+  const tc=$("#tc tbody"); tc.innerHTML="";
+  if(!clsd.length){
+    tc.innerHTML='<tr><td colspan="7" class="empty">Weli midna lama xidhin.</td></tr>';
+    $("#clsSum").textContent="";
+  }else{
+    let win=0,tot=0,gp=0,gl=0;
+    for(const t of clsd.slice(0,50)){
+      const pl=Number(t.profit||0);
+      const tr=document.createElement("tr");
+      tr.innerHTML='<td>'+esc(when(t.ct))+'</td>'+
+        '<td>'+esc(t.sym||t.symbol||"")+'</td>'+tag(t)+
+        '<td>'+esc(t.strat||t.strategy||"")+'</td>'+
+        '<td>'+esc(lots(t))+'</td>'+
+        '<td style="text-align:right" class="'+cls(Number(t.points||0))+'">'+
+          (t.points==null?"—":(Number(t.points)>0?"+":"")+Number(t.points).toFixed(0))+'</td>'+
+        '<td style="text-align:right" class="'+cls(pl)+'">'+sign(pl)+'</td>';
+      tc.appendChild(tr);
+    }
+    for(const t of clsd){
+      const pl=Number(t.profit||0); tot++;
+      if(pl>0){win++; gp+=pl;} else gl+=Math.abs(pl);
+    }
+    const wr=tot?(win/tot*100):0;
+    const pf=gl>0?(gp/gl):(gp>0?99:0);
+    $("#clsSum").textContent=tot+" trade · guul "+win+" ("+wr.toFixed(0)+"%) · "+
+      "Profit Factor "+(gl>0?pf.toFixed(2):"—")+" · wadarta "+
+      ((gp-gl)>0?"+":"")+money(gp-gl);
   }
 
   const jw=$("#jr");
@@ -917,6 +966,19 @@ function paint(d){
   drawChart();
 }
 
+function lots(t){ return (t.lot!=null)?t.lot:((t.lots!=null)?t.lots:""); }
+function sign(v){ return (v>0?"+":"")+money(v); }
+function tag(t){
+  const ty=String(t.type||t.dir||"").toUpperCase();
+  const k=ty.indexOf("BUY")>=0?"buy":(ty.indexOf("SELL")>=0?"sell":"");
+  return '<td><span class="tag '+k+'">'+esc(ty||"—")+'</span></td>';
+}
+function when(ts){
+  const n=Number(ts||0); if(!n) return "—";
+  const d=new Date(n*1000);
+  return String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0")+
+         " "+String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");
+}
 function esc(s){const n=document.createElement("span");n.textContent=s==null?"":s;return n.innerHTML;}
 
 /* ---- Equity line chart: hal series, crosshair + tooltip ---- */
