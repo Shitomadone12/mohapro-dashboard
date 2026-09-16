@@ -136,15 +136,19 @@ def init_db():
         con.executescript(_SCHEMA)
         if ADMIN_ACCOUNT and ADMIN_PASSWORD:
             row = con.execute("SELECT id FROM users WHERE account=?", (ADMIN_ACCOUNT,)).fetchone()
+            pwh = generate_password_hash(ADMIN_PASSWORD)
             if row is None:
                 con.execute(
                     "INSERT INTO users(account,name,pw,role,approved,can_control,created_at)"
                     " VALUES(?,?,?,'admin',1,1,?)",
-                    (ADMIN_ACCOUNT, "Admin", generate_password_hash(ADMIN_PASSWORD), _now_iso()))
+                    (ADMIN_ACCOUNT, "Admin", pwh, _now_iso()))
                 log.info("Admin la abuuray: %s", ADMIN_ACCOUNT)
             else:
-                con.execute("UPDATE users SET role='admin', approved=1, can_control=1 WHERE account=?",
-                            (ADMIN_ACCOUNT,))
+                # Password-ka had iyo jeer waa laga soo celiyaa ADMIN_PASSWORD.
+                # Sidaas darteed beddelka env-ka + redeploy = xal joogto ah.
+                con.execute("UPDATE users SET pw=?, role='admin', approved=1, can_control=1"
+                            " WHERE account=?", (pwh, ADMIN_ACCOUNT))
+                log.info("Admin la cusboonaysiiyay: %s", ADMIN_ACCOUNT)
         else:
             log.warning("ADMIN_ACCOUNT / ADMIN_PASSWORD lama dejin -> admin lama abuurin.")
 
@@ -329,7 +333,46 @@ def ea_commands():
 
 @app.get("/healthz")
 def healthz():
-    return jsonify(ok=True, ts=int(time.time()))
+    """Cilad-raadin. Furayaal ma soo bandhigayo - kaliya HAA/MAYA iyo tirooyin."""
+    try:
+        with db() as con:
+            nusers = con.execute("SELECT COUNT(*) c FROM users").fetchone()["c"]
+            admins = [r["account"] for r in
+                      con.execute("SELECT account FROM users WHERE role='admin'").fetchall()]
+            nsnap  = con.execute("SELECT COUNT(*) c FROM snapshots").fetchone()["c"]
+        db_ok, db_err = True, None
+    except Exception as e:                                   # noqa: BLE001
+        nusers, admins, nsnap, db_ok, db_err = 0, [], 0, False, str(e)[:120]
+
+    problems = []
+    if not ADMIN_ACCOUNT:
+        problems.append("ADMIN_ACCOUNT lama dejin (ama xaraf ma aha lambar).")
+    if not ADMIN_PASSWORD:
+        problems.append("ADMIN_PASSWORD lama dejin.")
+    elif len(ADMIN_PASSWORD) < 8:
+        problems.append("ADMIN_PASSWORD wuu ka gaaban yahay 8 xaraf.")
+    if not CLOUD_TOKEN or len(CLOUD_TOKEN) < 8:
+        problems.append("CLOUD_TOKEN lama dejin ama wuu gaaban yahay -> EA xog dirayo ma jiro.")
+    if not os.environ.get("SECRET_KEY"):
+        problems.append("SECRET_KEY lama dejin -> galitaanku wuu ba'ayaa restart kasta.")
+    if not db_ok:
+        problems.append("Database qalad: " + str(db_err))
+    if ADMIN_ACCOUNT and nusers == 0:
+        problems.append("Isticmaale lama abuurin. Dib u deploy gareey.")
+
+    return jsonify(
+        ok=(not problems),
+        db_path=DB_PATH,
+        db_persistent=DB_PATH.startswith("/var/data"),
+        admin_account_set=bool(ADMIN_ACCOUNT),
+        admin_account=(ADMIN_ACCOUNT[:3] + "***" + ADMIN_ACCOUNT[-2:]) if len(ADMIN_ACCOUNT) > 5 else ("set" if ADMIN_ACCOUNT else ""),
+        admin_password_set=bool(ADMIN_PASSWORD),
+        admin_password_len=len(ADMIN_PASSWORD),
+        secret_key_set=bool(os.environ.get("SECRET_KEY")),
+        cloud_token_set=bool(CLOUD_TOKEN),
+        cloud_token_len=len(CLOUD_TOKEN),
+        users=nusers, admins=admins, accounts_with_data=nsnap,
+        problems=problems, ts=int(time.time()))
 
 # --------------------------------------------------------------------------
 # Web auth
@@ -353,9 +396,13 @@ def login():
         else:
             with db() as con:
                 u = con.execute("SELECT * FROM users WHERE account=?", (acc,)).fetchone()
-            if u is None or not check_password_hash(u["pw"], pw):
+            if u is None:
                 _fail(key)
-                err = "Account ama password khaldan."
+                err = ("Account-kan lama diiwaangelin. Hubi lambarka, "
+                       "ama fur /healthz si aad u hubiso habaynta server-ka.")
+            elif not check_password_hash(u["pw"], pw):
+                _fail(key)
+                err = "Password khaldan."
             elif not u["approved"]:
                 err = "Account-kaaga weli lama ansixin. Sug ogolaanshaha admin-ka."
             else:
