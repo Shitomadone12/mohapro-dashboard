@@ -1,2178 +1,1007 @@
+# -*- coding: utf-8 -*-
 """
-MOHA PRO - Cloud Dashboard Backend (v3, multi-bot)
---------------------------------------------------
-Isbeddelka v3:
-  - LABA BOT AMA KA BADAN: bot kastaa wuxuu diraa `"bot":"<magac>"`. Xogtoodu
-    gebi ahaanba way kala go'an tahay - state, amarro, symbols.
-  - Dashboard-ku wuxuu leeyahay bot switcher: "Dhammaan" ama mid gaar ah.
-  - Amarku wuxuu u socdaa BOOTKA la doortay oo keliya.
+MOHA PRO — Cloud Dashboard v2 (multi-user, MT5 account login)
+=============================================================
+Hal fayl. Flask + SQLite. Render.com diyaar.
 
-Endpoints:
-  POST /update                        - bootka -> xogta   (body: token, bot, ...)
-  GET  /state?token=&bot=             - dashboard <- xogta bot gaar ah
-  GET  /state?token=                  - dashboard <- liiska botyada oo dhan
-  GET  /api/commands?token=&bot=      - bootka <- amarka soo socda
-  POST /admin/command                 - dashboard -> dir amar (token, bot, command)
-  GET  /diag                          - sababta DEMO
-  GET  /signals, /health
+ENV:
+  SECRET_KEY      - random long string (session cookie signing). WAAJIB.
+  CLOUD_TOKEN     - waa inuu la mid noqdo Cloud_Auth_Token ee EA-da. WAAJIB.
+  ADMIN_ACCOUNT   - lambarka MT5 ee milkiilaha (Moha). WAAJIB.
+  ADMIN_PASSWORD  - password-ka admin-ka marka ugu horreysa. WAAJIB.
+  DB_PATH         - default /var/data/mohapro.db (haddii /var/data jiro) ama ./mohapro.db
+
+EA endpoints (token auth):
+  POST /update            <- SendToCloud()
+  POST /trades            <- closed-trade push
+  GET  /api/commands      <- CheckCloudCommands()
+
+Web (session auth):
+  /login /register /logout /dashboard /admin
+  GET  /api/state         -> xogta account-ka user-ka
+  POST /api/command       -> amar loo diro EA-da
 """
-import os
-import time
-import calendar
-import json
-import urllib.request
-import urllib.parse
-import sqlite3
-import csv
-import io as _io
-from flask import Flask, request, jsonify, Response
+
+import os, re, json, time, sqlite3, hmac, secrets, logging
+from datetime import datetime, timezone
+from functools import wraps
+
+from flask import (Flask, request, session, redirect, url_for, jsonify,
+                   render_template_string, make_response)
+from werkzeug.security import generate_password_hash, check_password_hash
+
+# --------------------------------------------------------------------------
+# Config
+# --------------------------------------------------------------------------
+log = logging.getLogger("mohapro")
+logging.basicConfig(level=logging.INFO)
+
+def _db_path():
+    p = os.environ.get("DB_PATH")
+    if p:
+        return p
+    if os.path.isdir("/var/data") and os.access("/var/data", os.W_OK):
+        return "/var/data/mohapro.db"
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "mohapro.db")
+
+DB_PATH        = _db_path()
+CLOUD_TOKEN    = os.environ.get("CLOUD_TOKEN", "").strip()
+ADMIN_ACCOUNT  = re.sub(r"\D", "", os.environ.get("ADMIN_ACCOUNT", "").strip())
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+SECRET_KEY     = os.environ.get("SECRET_KEY", "")
+
+STALE_SECONDS  = 90        # in ka badan = OFFLINE
+HISTORY_CAP    = 720       # dhibco taariikheed account kasta
+HISTORY_EVERY  = 60        # ugu dhaqsaha badnaan hal dhibic daqiiqaddii
+
+if not SECRET_KEY:
+    SECRET_KEY = secrets.token_hex(32)
+    log.warning("SECRET_KEY lama dejin -> mid ku-meel-gaadh ah. Session-nadu way ba'ayaan restart kasta.")
 
 app = Flask(__name__)
+app.secret_key = SECRET_KEY
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.environ.get("RENDER", "") != "" or os.environ.get("FORCE_HTTPS", "") == "1",
+    PERMANENT_SESSION_LIFETIME=60 * 60 * 12,
+    JSON_SORT_KEYS=False,
+    MAX_CONTENT_LENGTH=2 * 1024 * 1024,
+)
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DASHBOARD_FILE = os.path.join(BASE_DIR, "dashboard.html")
+VALID_COMMANDS = [
+    "START", "STOP", "CLOSE_ALL", "CLOSE_PROFIT",
+    "STRATEGY:SR", "STRATEGY:BB", "STRATEGY:EMA",
+    "STRATEGY:SMC", "STRATEGY:VSA", "STRATEGY:POC",
+]
 
-# ---------------- CONFIG ----------------
-# MUHIIM: AUTH_TOKEN waa in uu SAX AHAAN la mid yahay InpCloudToken ee EA-yada.
-# LABADA BOT waxay isticmaalaan ISKU TOKEN - waxa kala saara `bot` magaca.
-AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "MohaPro_Live_2026_MySecret")
-MASTER_TOKEN = AUTH_TOKEN
+# --------------------------------------------------------------------------
+# DB
+# --------------------------------------------------------------------------
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS users(
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  account     TEXT    NOT NULL UNIQUE,
+  name        TEXT    NOT NULL DEFAULT '',
+  pw          TEXT    NOT NULL,
+  role        TEXT    NOT NULL DEFAULT 'user',
+  approved    INTEGER NOT NULL DEFAULT 0,
+  can_control INTEGER NOT NULL DEFAULT 1,
+  created_at  TEXT    NOT NULL,
+  last_login  TEXT
+);
+CREATE TABLE IF NOT EXISTS snapshots(
+  account     TEXT PRIMARY KEY,
+  bot         TEXT NOT NULL DEFAULT '',
+  data        TEXT NOT NULL,
+  updated_at  REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS history(
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  account  TEXT NOT NULL,
+  ts       REAL NOT NULL,
+  balance  REAL NOT NULL,
+  equity   REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_hist ON history(account, ts);
+CREATE TABLE IF NOT EXISTS commands(
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  account    TEXT NOT NULL,
+  cmd        TEXT NOT NULL,
+  by_account TEXT NOT NULL DEFAULT '',
+  created_at REAL NOT NULL,
+  taken_at   REAL
+);
+CREATE INDEX IF NOT EXISTS ix_cmd ON commands(account, taken_at);
+CREATE TABLE IF NOT EXISTS closed_trades(
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  account  TEXT NOT NULL,
+  ticket   TEXT NOT NULL,
+  data     TEXT NOT NULL,
+  ts       REAL NOT NULL,
+  UNIQUE(account, ticket)
+);
+CREATE INDEX IF NOT EXISTS ix_ct ON closed_trades(account, ts);
+"""
 
-BUILD = "v4.7-2026-09-14"
-DEFAULT_BOT = "default"
-MAX_HISTORY = 120
-STALE_SECONDS = 120
-FORGET_SECONDS = 7*24*3600   # 7 maalmood. Xogtu way sii jirtaa marka PC-gu damsan yahay.
-                             # Bot duug ah gacanta ayaa looga saarayaa (long-press).
-MAX_QUEUE = 20
-MAX_JOURNAL = 100        # immisa trade oo xiran oo la hayo bot kasta
+def db():
+    con = sqlite3.connect(DB_PATH, timeout=15)
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("PRAGMA busy_timeout=8000")
+    return con
 
-# ---------------- SIGNALS (ikhtiyaari) ----------------
-TWELVEDATA_KEY = os.environ.get("TWELVEDATA_KEY", "")
-SIGNAL_PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", "EUR/JPY"]
-SIGNAL_INTERVAL = os.environ.get("SIGNAL_INTERVAL", "5min")
-SIGNAL_CACHE_SEC = 60
-_signal_cache = {}
+def init_db():
+    with db() as con:
+        con.executescript(_SCHEMA)
+        if ADMIN_ACCOUNT and ADMIN_PASSWORD:
+            row = con.execute("SELECT id FROM users WHERE account=?", (ADMIN_ACCOUNT,)).fetchone()
+            if row is None:
+                con.execute(
+                    "INSERT INTO users(account,name,pw,role,approved,can_control,created_at)"
+                    " VALUES(?,?,?,'admin',1,1,?)",
+                    (ADMIN_ACCOUNT, "Admin", generate_password_hash(ADMIN_PASSWORD), _now_iso()))
+                log.info("Admin la abuuray: %s", ADMIN_ACCOUNT)
+            else:
+                con.execute("UPDATE users SET role='admin', approved=1, can_control=1 WHERE account=?",
+                            (ADMIN_ACCOUNT,))
+        else:
+            log.warning("ADMIN_ACCOUNT / ADMIN_PASSWORD lama dejin -> admin lama abuurin.")
 
+def _now_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
-# ---------------- STATE ----------------
-def blank_state():
-    return {
-        "balance": None, "equity": None, "profit": None,
-        "winrate": None, "drawdown": None, "opentrades": None,
-        "symbol": None, "trades": None, "journal": None, "history": None,
-        "account": None, "broker": None, "trading": None,
-        "updated": None, "equity_history": [],
-    }
+init_db()
 
+# --------------------------------------------------------------------------
+# Auth helpers
+# --------------------------------------------------------------------------
+_fails = {}   # (account, ip) -> [count, first_ts]
 
-# token -> bot -> state
-STATES = {}
-# token -> bot -> [amarro]
-COMMANDS = {}
-# token -> bot -> {"XAUUSD": True}
-SYMBOL_FLAGS = {}
-# token -> bot -> {"count": n, "ip": str}
-SEEN = {}
+def _throttled(key):
+    rec = _fails.get(key)
+    if not rec:
+        return False
+    cnt, first = rec
+    if time.time() - first > 600:
+        _fails.pop(key, None)
+        return False
+    return cnt >= 8
 
+def _fail(key):
+    cnt, first = _fails.get(key, (0, time.time()))
+    if time.time() - first > 600:
+        cnt, first = 0, time.time()
+    _fails[key] = (cnt + 1, first)
 
-def clean_bot(name):
-    n = (name or "").strip()
-    if not n:
-        return DEFAULT_BOT
-    return n[:40]
+def current_user():
+    acc = session.get("acc")
+    if not acc:
+        return None
+    with db() as con:
+        r = con.execute("SELECT * FROM users WHERE account=?", (acc,)).fetchone()
+    if r is None or not r["approved"]:
+        session.clear()
+        return None
+    return r
 
+def login_required(fn):
+    @wraps(fn)
+    def w(*a, **k):
+        u = current_user()
+        if u is None:
+            if request.path.startswith("/api/"):
+                return jsonify(ok=False, error="unauthorized"), 401
+            return redirect(url_for("login", next=request.path))
+        request.user = u
+        return fn(*a, **k)
+    return w
 
-def get_token(req):
-    auth = req.headers.get("Authorization", "")
+def admin_required(fn):
+    @wraps(fn)
+    @login_required
+    def w(*a, **k):
+        if request.user["role"] != "admin":
+            return jsonify(ok=False, error="forbidden"), 403
+        return fn(*a, **k)
+    return w
+
+def token_ok():
+    """EA auth: Bearer header ama token-ka jidhka JSON-ka."""
+    if not CLOUD_TOKEN or len(CLOUD_TOKEN) < 8:
+        return False
+    auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
-        t = auth[7:].strip()
-        if t:
-            return t
-    data = req.get_json(silent=True) or {}
-    if data.get("token"):
-        return str(data.get("token"))
-    if req.args.get("token"):
-        return req.args.get("token")
-    return None
+        if hmac.compare_digest(auth[7:].strip(), CLOUD_TOKEN):
+            return True
+    body = request.get_json(silent=True) or {}
+    t = str(body.get("token", ""))
+    if t and hmac.compare_digest(t, CLOUD_TOKEN):
+        return True
+    q = request.args.get("token", "")
+    if q and hmac.compare_digest(q, CLOUD_TOKEN):
+        return True
+    return False
+
+def clean_account(v):
+    return re.sub(r"\D", "", str(v or ""))[:20]
+
+# --------------------------------------------------------------------------
+# EA endpoints
+# --------------------------------------------------------------------------
+@app.post("/update")
+def ea_update():
+    if not token_ok():
+        return jsonify(ok=False, error="bad token"), 401
+    d = request.get_json(silent=True, force=True) or {}
+    d.pop("token", None)
+
+    acc = clean_account(d.get("account"))
+    bot = str(d.get("bot", ""))[:64]
+    if not acc:
+        # EA hore (V58.x) oo aan account dirin -> magaca bot-ka ayaa fure
+        acc = "bot-" + re.sub(r"[^A-Za-z0-9]", "", bot)[:16] or "bot-unknown"
+
+    now = time.time()
+    d["_server_ts"] = now
+    with db() as con:
+        con.execute(
+            "INSERT INTO snapshots(account,bot,data,updated_at) VALUES(?,?,?,?)"
+            " ON CONFLICT(account) DO UPDATE SET bot=excluded.bot,"
+            " data=excluded.data, updated_at=excluded.updated_at",
+            (acc, bot, json.dumps(d, ensure_ascii=False), now))
+
+        last = con.execute("SELECT ts FROM history WHERE account=? ORDER BY ts DESC LIMIT 1",
+                           (acc,)).fetchone()
+        if last is None or now - last["ts"] >= HISTORY_EVERY:
+            try:
+                bal = float(d.get("balance") or 0)
+                eq  = float(d.get("equity") or 0)
+            except (TypeError, ValueError):
+                bal = eq = 0.0
+            if bal or eq:
+                con.execute("INSERT INTO history(account,ts,balance,equity) VALUES(?,?,?,?)",
+                            (acc, now, bal, eq))
+                con.execute(
+                    "DELETE FROM history WHERE account=? AND id NOT IN"
+                    " (SELECT id FROM history WHERE account=? ORDER BY ts DESC LIMIT ?)",
+                    (acc, acc, HISTORY_CAP))
+    return jsonify(ok=True, account=acc)
 
 
-def get_bot(req):
-    data = req.get_json(silent=True) or {}
-    return clean_bot(data.get("bot") or req.args.get("bot"))
+@app.post("/trades")
+def ea_trades():
+    if not token_ok():
+        return jsonify(ok=False, error="bad token"), 401
+    d = request.get_json(silent=True, force=True) or {}
+    acc = clean_account(d.get("account"))
+    if not acc:
+        acc = "bot-" + re.sub(r"[^A-Za-z0-9]", "", str(d.get("bot", "")))[:16] or "bot-unknown"
+    rows = d.get("trades") or []
+    n = 0
+    now = time.time()
+    with db() as con:
+        for t in rows[:200]:
+            if not isinstance(t, dict):
+                continue
+            tk = str(t.get("ticket") or t.get("id") or "")
+            if not tk:
+                continue
+            try:
+                con.execute("INSERT OR IGNORE INTO closed_trades(account,ticket,data,ts)"
+                            " VALUES(?,?,?,?)",
+                            (acc, tk, json.dumps(t, ensure_ascii=False), now))
+                n += 1
+            except sqlite3.Error:
+                pass
+        con.execute(
+            "DELETE FROM closed_trades WHERE account=? AND id NOT IN"
+            " (SELECT id FROM closed_trades WHERE account=? ORDER BY ts DESC LIMIT 500)",
+            (acc, acc))
+    return jsonify(ok=True, saved=n)
 
 
-@app.after_request
-def add_cors(resp):
-    resp.headers["Access-Control-Allow-Origin"] = "*"
-    resp.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
-    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+@app.get("/api/commands")
+def ea_commands():
+    """EA-du waxay soo qaadataa amarrada sugaya. Mid kasta hal mar oo keliya."""
+    if not token_ok():
+        return jsonify(ok=False, error="bad token"), 401
+    acc = clean_account(request.args.get("account"))
+    bot = request.args.get("bot", "")
+    if not acc:
+        acc = "bot-" + re.sub(r"[^A-Za-z0-9]", "", bot)[:16] or "bot-unknown"
+    now = time.time()
+    with db() as con:
+        rows = con.execute(
+            "SELECT id,cmd FROM commands WHERE account=? AND taken_at IS NULL"
+            " ORDER BY id ASC LIMIT 10", (acc,)).fetchall()
+        if rows:
+            con.execute("UPDATE commands SET taken_at=? WHERE id IN (%s)"
+                        % ",".join("?" * len(rows)),
+                        [now] + [r["id"] for r in rows])
+    payload = {"token": CLOUD_TOKEN, "account": acc,
+               "commands": [r["cmd"] for r in rows], "ts": int(now)}
+    resp = make_response(json.dumps(payload, separators=(",", ":"), ensure_ascii=False))
+    resp.headers["Content-Type"] = "application/json"
+    resp.headers["Cache-Control"] = "no-store"
     return resp
 
 
-# ============ 1) Bootka -> Server ============
-@app.route("/update", methods=["POST", "OPTIONS"])
-def update():
-    if request.method == "OPTIONS":
-        return ("", 204)
-    tok = get_token(request)
-    if not tok:
-        return jsonify({"error": "no token"}), 401
+@app.get("/healthz")
+def healthz():
+    return jsonify(ok=True, ts=int(time.time()))
 
-    bot = get_bot(request)
-    data = request.get_json(silent=True) or {}
-    st = STATES.setdefault(tok, {}).setdefault(bot, blank_state())
+# --------------------------------------------------------------------------
+# Web auth
+# --------------------------------------------------------------------------
+@app.get("/")
+def home():
+    return redirect(url_for("dashboard") if session.get("acc") else url_for("login"))
 
-    for k in ["balance", "equity", "profit", "winrate", "drawdown", "opentrades",
-              "symbol", "trades", "journal", "account", "broker", "trading",
-              "history"]:
-        if k in data:
-            st[k] = data[k]
 
-    st["updated"] = int(time.time())
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    err = None
+    if request.method == "POST":
+        acc = clean_account(request.form.get("account"))
+        pw  = request.form.get("password", "")
+        key = (acc, request.remote_addr or "?")
+        if _throttled(key):
+            err = "Isku dayo badan. Sug 10 daqiiqo."
+        elif not acc or not pw:
+            err = "Geli lambarka account-ka iyo password-ka."
+        else:
+            with db() as con:
+                u = con.execute("SELECT * FROM users WHERE account=?", (acc,)).fetchone()
+            if u is None or not check_password_hash(u["pw"], pw):
+                _fail(key)
+                err = "Account ama password khaldan."
+            elif not u["approved"]:
+                err = "Account-kaaga weli lama ansixin. Sug ogolaanshaha admin-ka."
+            else:
+                _fails.pop(key, None)
+                session.clear()
+                session.permanent = True
+                session["acc"] = u["account"]
+                with db() as con:
+                    con.execute("UPDATE users SET last_login=? WHERE account=?",
+                                (_now_iso(), u["account"]))
+                nxt = request.args.get("next", "")
+                return redirect(nxt if nxt.startswith("/") else url_for("dashboard"))
+    return render_template_string(T_LOGIN, err=err)
 
-    if st.get("equity") is not None:
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    err = ok = None
+    if request.method == "POST":
+        acc  = clean_account(request.form.get("account"))
+        name = (request.form.get("name") or "").strip()[:60]
+        pw   = request.form.get("password", "")
+        pw2  = request.form.get("password2", "")
+        if len(acc) < 4:
+            err = "Lambarka account-ka MT5 waa khaldan yahay."
+        elif len(pw) < 8:
+            err = "Password-ku waa inuu ugu yaraan 8 xaraf noqdaa."
+        elif pw != pw2:
+            err = "Labada password isku mid ma aha."
+        else:
+            with db() as con:
+                if con.execute("SELECT 1 FROM users WHERE account=?", (acc,)).fetchone():
+                    err = "Account-kan hore ayaa loo diiwaangeliyay."
+                else:
+                    con.execute(
+                        "INSERT INTO users(account,name,pw,role,approved,can_control,created_at)"
+                        " VALUES(?,?,?,'user',0,1,?)",
+                        (acc, name, generate_password_hash(pw), _now_iso()))
+                    ok = ("Diiwaangelintu way guulaysatay. Admin-ku waa inuu ku ansixiyaa "
+                          "ka hor inta aadan gali karin.")
+    return render_template_string(T_REGISTER, err=err, ok=ok)
+
+
+@app.get("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+# --------------------------------------------------------------------------
+# Dashboard
+# --------------------------------------------------------------------------
+@app.get("/dashboard")
+@login_required
+def dashboard():
+    u = request.user
+    accounts = []
+    if u["role"] == "admin":
+        with db() as con:
+            accounts = [r["account"] for r in con.execute(
+                "SELECT account FROM snapshots ORDER BY updated_at DESC").fetchall()]
+    return render_template_string(
+        T_DASH, me=u["account"], name=u["name"] or u["account"],
+        is_admin=(u["role"] == "admin"),
+        can_control=bool(u["can_control"]), accounts=accounts)
+
+
+def _visible_account(u):
+    """Admin: waxa uu dooran karo. User: kaliya account-kiisa."""
+    if u["role"] == "admin":
+        a = clean_account(request.args.get("account") or request.form.get("account"))
+        return a or u["account"]
+    return u["account"]
+
+
+@app.get("/api/state")
+@login_required
+def api_state():
+    u = request.user
+    acc = _visible_account(u)
+    now = time.time()
+    with db() as con:
+        snap = con.execute("SELECT * FROM snapshots WHERE account=?", (acc,)).fetchone()
+        hist = con.execute(
+            "SELECT ts,balance,equity FROM history WHERE account=? ORDER BY ts ASC",
+            (acc,)).fetchall()
+        closed = con.execute(
+            "SELECT data FROM closed_trades WHERE account=? ORDER BY ts DESC LIMIT 30",
+            (acc,)).fetchall()
+        pend = con.execute(
+            "SELECT cmd FROM commands WHERE account=? AND taken_at IS NULL ORDER BY id",
+            (acc,)).fetchall()
+
+    data = json.loads(snap["data"]) if snap else {}
+    age = (now - snap["updated_at"]) if snap else None
+    online = (age is not None and age < STALE_SECONDS)
+
+    ct = []
+    for r in closed:
         try:
-            st["equity_history"].append(float(st["equity"]))
-            if len(st["equity_history"]) > MAX_HISTORY:
-                del st["equity_history"][0:len(st["equity_history"]) - MAX_HISTORY]
-        except (TypeError, ValueError):
+            ct.append(json.loads(r["data"]))
+        except ValueError:
             pass
 
-    #--- trade-yada la xiray journal-ka ku dar (ticket = kuwa cusub oo keliya)
-    merge_journal(tok, bot, data.get("trades"))
-    merge_journal(tok, bot, data.get("history"))   # BuildHistoryJSON ee EA-ga
-
-    seen = SEEN.setdefault(tok, {}).setdefault(bot, {"count": 0, "ip": ""})
-    seen["count"] += 1
-    seen["ip"] = request.headers.get("X-Forwarded-For", request.remote_addr or "")
-
-    return jsonify({"ok": True, "bot": bot,
-                    "queued_commands": len(COMMANDS.get(tok, {}).get(bot, []))})
-
-
-# ============ 2) Dashboard <- Server ============
-def live_info(st):
-    """(live, reason, age). reason='stale' macnaheedu waa xog DHAB AH oo duugoobay -
-    ma aha xog la'aan. Dashboard-ku waa inuu wali tusaa, ma aha inuu demo ku beddelo."""
-    if not st:
-        return False, "no_data", None
-    updated = st.get("updated") or 0
-    if not updated:
-        return False, "no_data", None
-    age = int(time.time() - updated)
-    if age >= STALE_SECONDS:
-        return False, "stale", age
-    return True, "live", age
+    return jsonify(
+        ok=True, account=acc, online=online,
+        age=None if age is None else int(age),
+        data=data,
+        history=[{"t": int(h["ts"]), "b": h["balance"], "e": h["equity"]} for h in hist],
+        closed=ct,
+        pending=[p["cmd"] for p in pend],
+        can_control=bool(u["can_control"]),
+        is_admin=(u["role"] == "admin"),
+    )
 
 
-def age_text(age):
-    if age is None:
-        return ""
-    if age < 90:
-        return "%ds ka hor" % age
-    if age < 5400:
-        return "%d daqiiqo ka hor" % (age // 60)
-    if age < 172800:
-        return "%d saac ka hor" % (age // 3600)
-    return "%d maalmood ka hor" % (age // 86400)
+@app.post("/api/command")
+@login_required
+def api_command():
+    u = request.user
+    if not u["can_control"] and u["role"] != "admin":
+        return jsonify(ok=False, error="Amar diritaanka lagaama ogola."), 403
+    body = request.get_json(silent=True) or {}
+    cmd = str(body.get("cmd", "")).strip().upper()
+    if cmd not in VALID_COMMANDS:
+        return jsonify(ok=False, error="Amar aan la aqoon."), 400
+    acc = clean_account(body.get("account")) if u["role"] == "admin" else u["account"]
+    acc = acc or u["account"]
+    with db() as con:
+        n = con.execute("SELECT COUNT(*) c FROM commands WHERE account=? AND taken_at IS NULL",
+                        (acc,)).fetchone()["c"]
+        if n >= 10:
+            return jsonify(ok=False, error="Amaro badan ayaa safka ku jira."), 429
+        con.execute("INSERT INTO commands(account,cmd,by_account,created_at) VALUES(?,?,?,?)",
+                    (acc, cmd, u["account"], time.time()))
+    return jsonify(ok=True, cmd=cmd, account=acc)
 
-
-def bot_summary(tok, bot, st):
-    live, reason, age = live_info(st)
-    return {
-        "bot": bot, "live": live, "reason": reason, "age": age,
-        "balance": st.get("balance"), "equity": st.get("equity"),
-        "profit": st.get("profit"), "opentrades": st.get("opentrades"),
-        "symbol": st.get("symbol"), "winrate": st.get("winrate"),
-        "drawdown": st.get("drawdown"), "account": st.get("account"),
-        "broker": st.get("broker"), "trading": st.get("trading"),
-        "symbols": build_symbols(tok, bot, st),
-        "pending": len(COMMANDS.get(tok, {}).get(bot, [])),
-    }
-
-
-@app.route("/state", methods=["GET"])
-def get_state():
-    tok = request.args.get("token") or MASTER_TOKEN
-    want = request.args.get("bot")
-    bots = STATES.get(tok, {})
-
-    # --- liiska botyada (had iyo jeer la diraa)
+# --------------------------------------------------------------------------
+# Admin
+# --------------------------------------------------------------------------
+@app.get("/admin")
+@admin_required
+def admin():
+    with db() as con:
+        users = con.execute("SELECT * FROM users ORDER BY approved ASC, id ASC").fetchall()
+        snaps = {r["account"]: r["updated_at"] for r in
+                 con.execute("SELECT account,updated_at FROM snapshots").fetchall()}
     now = time.time()
-    summaries = [bot_summary(tok, b, s) for b, s in sorted(bots.items())
-                 if (now - (s.get("updated") or 0)) < FORGET_SECONDS]
-
-    if not bots:
-        out = blank_state()
-        out.update({"live": False, "reason": "no_data", "age": None,
-                    "symbols": [], "bots": [], "bot": None})
-        return jsonify(out)
-
-    # --- hal bot oo keliya: muuqaalka buuxa ayaa la tusayaa, ma aha isu-geynta
-    if not want and len(bots) == 1:
-        want = list(bots.keys())[0]
-
-    # --- bot gaar ah
-    if want:
-        bot = clean_bot(want)
-        st = bots.get(bot)
-        if not st:
-            out = blank_state()
-            out.update({"live": False, "reason": "no_data", "age": None,
-                        "symbols": [], "bots": summaries, "bot": bot})
-            return jsonify(out)
-        out = dict(st)
-        live, reason, age = live_info(st)
-        out.update({"live": live, "reason": reason, "age": age, "bot": bot,
-                    "age_text": age_text(age), "has_data": bool(st.get("updated")),
-                    "symbols": build_symbols(tok, bot, st), "bots": summaries})
-        return jsonify(out)
-
-    # --- "Dhammaan": ma isku darno balance-ka (waxay noqon kartaa isku akoon
-    #     ama laba akoon oo kala duwan). Waxaa la diraa liiska botyada,
-    #     iyo kaliya waxa si sax ah loo isku daro: profit + trades furan.
-    out = blank_state()
-    live_any = any(b["live"] for b in summaries)
-    prof = sum((b["profit"] or 0) for b in summaries if b["live"])
-    opens = sum((b["opentrades"] or 0) for b in summaries if b["live"])
-    syms = []
-    for b in summaries:
-        for s in b["symbols"]:
-            row = dict(s)
-            row["bot"] = b["bot"]
-            syms.append(row)
-    trades = []
-    for b, s in sorted(bots.items()):
-        for t in (s.get("trades") or []):
-            row = dict(t)
-            row["bot"] = b
-            trades.append(row)
-
-    out.update({
-        "live": live_any,
-        "reason": "live" if live_any else (summaries[0]["reason"] if summaries else "no_data"),
-        "age": min([b["age"] for b in summaries if b["age"] is not None], default=None),
-        "has_data": any(b["age"] is not None for b in summaries),
-        "bot": None, "bots": summaries, "symbols": syms,
-        "profit": round(prof, 2), "opentrades": opens,
-        "trades": trades, "aggregate": True,
-    })
-    return jsonify(out)
-
-
-
-# ============ 2b) JOURNAL - taariikhda trade-yada ============
-#
-#  Bootku wuxuu soo diraa ilaa 100 trade oo xiran wicitaan kasta.
-#  Server-ku ticket-ka ayuu ku kala saaraa, marka mid laba jeer lama
-#  tirinayo. Render markuu hurdo ka soo kaco, xusuustu waa madhan -
-#  laakiin bootku wuxuu dib u buuxinayaa 5 sekan gudahood. Sidaas
-#  darteed database looma baahna: MT5 history-gu waa isha runta ah.
-
-JOURNAL = {}   # token -> bot -> {ticket: trade}
-
-
-
-# ============ DATABASE — xogtu waa inay sii jirtaa ============
-#
-#  Render free tier: server-ku wuu hurdaa 15 daqiiqo ka dib, deploy
-#  kastana wuu dib u bilaabmaa. Xusuusta wax lagu kaydiyo way baaba'ayaan.
-#  Sidaas darteed journal-ka waxaa lagu kaydiyaa Postgres.
-#
-#  DATABASE_URL env var haddii la dhigo -> Postgres (xogtu way sii jirtaa).
-#  Haddii aan la dhigin       -> xusuusta (tijaabo kaliya, way baaba'aysaa).
-#
-#  Postgres bilaash ah: neon.tech ama supabase.com -> connection string
-#  ka qaado, Render -> Environment -> DATABASE_URL.
-
-DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
-DB_OK = False
-DB_ERR = ""
-_pg = None
-
-if DATABASE_URL:
-    try:
-        import psycopg
-        _pg = psycopg
-        url = DATABASE_URL
-        if url.startswith("postgres://"):
-            url = "postgresql://" + url[len("postgres://"):]
-        DATABASE_URL = url
-        with _pg.connect(DATABASE_URL, connect_timeout=8) as cx:
-            with cx.cursor() as cur:
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS journal (
-                        token   TEXT   NOT NULL,
-                        tk      TEXT   NOT NULL,
-                        bot     TEXT,
-                        sym     TEXT,
-                        ct      BIGINT,
-                        profit  DOUBLE PRECISION,
-                        data    TEXT   NOT NULL,
-                        PRIMARY KEY (token, tk)
-                    )""")
-                cur.execute("CREATE INDEX IF NOT EXISTS journal_ct ON journal (token, ct DESC)")
-            cx.commit()
-        DB_OK = True
-    except Exception as e:
-        DB_ERR = str(e)[:200]
-
-
-def db_save(tok, bot, rows):
-    """Trade xiran kaydi. Ticket ahaan - isma celcelinayaan."""
-    if not DB_OK or not rows:
-        return False
-    try:
-        with _pg.connect(DATABASE_URL, connect_timeout=8) as cx:
-            with cx.cursor() as cur:
-                for t in rows:
-                    cur.execute(
-                        """INSERT INTO journal (token,tk,bot,sym,ct,profit,data)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s)
-                           ON CONFLICT (token,tk) DO NOTHING""",
-                        (tok, str(t.get("tk")), bot, (t.get("sym") or "").upper(),
-                         int(t.get("ct") or 0), float(t.get("profit") or 0),
-                         json.dumps(t)))
-            cx.commit()
-        return True
-    except Exception as e:
-        globals()["DB_ERR"] = str(e)[:200]
-        return False
-
-
-def db_load(tok, bot=None, limit=20000):
-    if not DB_OK:
-        return None
-    try:
-        with _pg.connect(DATABASE_URL, connect_timeout=8) as cx:
-            with cx.cursor() as cur:
-                if bot:
-                    cur.execute("SELECT data FROM journal WHERE token=%s AND bot=%s "
-                                "ORDER BY ct DESC LIMIT %s", (tok, bot, limit))
-                else:
-                    cur.execute("SELECT data FROM journal WHERE token=%s "
-                                "ORDER BY ct DESC LIMIT %s", (tok, limit))
-                return [json.loads(r[0]) for r in cur.fetchall()]
-    except Exception as e:
-        globals()["DB_ERR"] = str(e)[:200]
-        return None
-
-
-def db_count(tok):
-    if not DB_OK:
-        return 0
-    try:
-        with _pg.connect(DATABASE_URL, connect_timeout=8) as cx:
-            with cx.cursor() as cur:
-                cur.execute("SELECT COUNT(*) FROM journal WHERE token=%s", (tok,))
-                return cur.fetchone()[0]
-    except Exception:
-        return 0
-
-def _norm_trade(t):
-    """
-    Laba qaab ayaa timaada:
-      (a) BuildHistoryJSON ee EA-ga: sym,type,strat,lot,open,close,points,profit,otime,ctime
-      (b) qaabkii hore: sym,type,strat,st,tk,ot,ct,entry,exitp,profit
-    Halkan mid ayaa laga dhigayaa.
-    """
-    out = dict(t)
-    # waqtiyada (qaab kasta oo EA-gu diro)
-    for dst, srcs in (("ct", ("ctime", "close_t", "closetime")),
-                      ("ot", ("otime", "open_t", "opentime"))):
-        if out.get(dst) is None:
-            for k in srcs:
-                if t.get(k) is not None:
-                    out[dst] = t.get(k); break
-    # qiimaha
-    if out.get("entry") is None:
-        for k in ("open", "openprice"):
-            if t.get(k) is not None:
-                out["entry"] = t.get(k); break
-    if out.get("exitp") is None:
-        for k in ("close", "cur", "closeprice"):
-            if t.get(k) is not None:
-                out["exitp"] = t.get(k); break
-    # ticket
-    if out.get("tk") is None and t.get("ticket") is not None:
-        out["tk"] = t.get("ticket")
-    # aqoonsi: haddii tk maqan yahay, mid ka samee xogta
-    if out.get("tk") is None:
-        out["tk"] = "%s|%s|%s|%s" % (out.get("sym"), out.get("ot"),
-                                     out.get("ct"), out.get("profit"))
-    # history-gu wuxuu had iyo jeer yahay trade xiran
-    out["st"] = "CLOSED"
-    return out
-
-
-INGEST = {}   # token -> {"closed":n,"stored":n,"no_time":n,"sample":{...}}
-
-
-def merge_journal(tok, bot, trades):
-    if not isinstance(trades, list):
-        return
-    ing = INGEST.setdefault(tok, {"closed": 0, "stored": 0, "no_time": 0, "sample": None})
-    store = JOURNAL.setdefault(tok, {}).setdefault(bot, {})
-    for raw in trades:
-        if not isinstance(raw, dict):
-            continue
-        # qaabka (b): trade furan iska dhaaf
-        if (raw.get("st") or "").upper() == "OPEN":
-            continue
-        ing["closed"] += 1
-        t = _norm_trade(raw)
-        if t.get("ct") is None:
-            #  EA-gu waqtiga xiritaanka ma dirin -> kala saarid ma suurtogal aha.
-            #  Waa astaanta EA nooc hore ah.
-            ing["no_time"] += 1
-            if ing["sample"] is None:
-                ing["sample"] = {k: raw.get(k) for k in list(raw)[:12]}
-            continue
-        ing["stored"] += 1
-        store[str(t["tk"])] = t
-    #  Xusuusta way ku jiraan; database-kuna wuu kaydiyaa si ay u sii jiraan
-    #  marka server-ku hurdo ama dib u bilaabmo.
-    db_save(tok, bot, list(store.values()))
-
-    # kaliya 100-ka ugu dambeeya (waqtiga xiritaanka)
-    if len(store) > MAX_JOURNAL:
-        keep = sorted(store.items(), key=lambda kv: kv[1].get("ct") or 0,
-                      reverse=True)[:MAX_JOURNAL]
-        JOURNAL[tok][bot] = dict(keep)
-
-
-def journal_rows(tok, bot=None):
-    #  Database-ku waa runta. Xusuustu waa kaash kaliya.
-    fromdb = db_load(tok, bot)
-    if fromdb is not None:
-        fromdb.sort(key=lambda r: (r.get("ct") or 0), reverse=True)
-        return fromdb
-
-    tenant = JOURNAL.get(tok, {})
     rows = []
-    for b, store in tenant.items():
-        if bot and b != bot:
-            continue
-        for t in store.values():
-            r = dict(t)
-            r["bot"] = b
-            rows.append(r)
-    rows.sort(key=lambda r: r.get("ct") or 0, reverse=True)
-    return rows
-
-
-def _pips(t):
-    """Farqiga qiimaha oo points ah. Symbol-ka digits-kiisa lama hayo,
-    marka waxaa la isticmaalayaa qiyaas ku salaysan qiimaha."""
-    try:
-        e, x = float(t.get("entry") or 0), float(t.get("exit") or 0)
-    except (TypeError, ValueError):
-        return None
-    if e <= 0 or x <= 0:
-        return None
-    d = (x - e) if (t.get("type") == "BUY") else (e - x)
-    scale = 100.0 if e > 20 else 10000.0     # JPY/dahab vs lammaanaha kale
-    return round(d * scale, 1)
-
-
-def stats_for(rows):
-    wins = [r for r in rows if (r.get("profit") or 0) > 0]
-    loss = [r for r in rows if (r.get("profit") or 0) < 0]
-    gp = sum(float(r.get("profit") or 0) for r in wins)
-    gl = abs(sum(float(r.get("profit") or 0) for r in loss))
-    n = len(wins) + len(loss)
-    return {
-        "trades": n, "wins": len(wins), "losses": len(loss),
-        "winrate": round(len(wins) / n * 100, 1) if n else None,
-        "gross_profit": round(gp, 2), "gross_loss": round(gl, 2),
-        "net": round(gp - gl, 2),
-        "pf": round(gp / gl, 2) if gl > 0 else (999.0 if gp > 0 else 0.0),
-        "avg_win": round(gp / len(wins), 2) if wins else 0.0,
-        "avg_loss": round(-gl / len(loss), 2) if loss else 0.0,
-        "best": round(max([float(r.get("profit") or 0) for r in rows], default=0), 2),
-        "worst": round(min([float(r.get("profit") or 0) for r in rows], default=0), 2),
-    }
-
-
-
-def _range_args():
-    """from / to / days -> (from_epoch, to_epoch). None = xad la'aan."""
-    def ep(txt, eod=False):
-        try:
-            e = int(calendar.timegm(time.strptime(txt.strip()[:10], "%Y-%m-%d")))
-            return e + 86399 if eod else e
-        except Exception:
-            return None
-    a = ep(request.args.get("from") or "")
-    b = ep(request.args.get("to") or "", eod=True)
-    d = request.args.get("days")
-    if d and a is None:
-        try:
-            n = int(d)
-            #  days=0 macnaheedu waa "dhammaan" - xad ma leh.
-            a = (int(time.time()) - n * 86400) if n > 0 else None
-        except ValueError:
-            a = None
-    return a, b
-
-
-def _apply_range(rows, a, b):
-    if a is not None:
-        rows = [r for r in rows if (r.get("ct") or 0) >= a]
-    if b is not None:
-        rows = [r for r in rows if (r.get("ct") or 0) <= b]
-    return rows
-
-
-@app.route("/journal", methods=["GET"])
-def journal():
-    tok = request.args.get("token") or MASTER_TOKEN
-    bot = request.args.get("bot")
-    sym = (request.args.get("symbol") or "").upper()
-
-    rows = journal_rows(tok, clean_bot(bot) if bot else None)
-    for r in rows:
-        r["pips"] = _pips(r)
-
-    # ---- taariikhda: from / to (YYYY-MM-DD), ama days=30 ----
-    d_from, d_to = _range_args()
-    rows = _apply_range(rows, d_from, d_to)
-
-    span = None
-    if rows:
-        cts = [r.get("ct") or 0 for r in rows if r.get("ct")]
-        if cts:
-            span = {"first": min(cts), "last": max(cts)}
-
-    # --- kala saarid symbol kasta (halkan ayaa jawaabtu ku jirto)
-    per = {}
-    for r in rows:
-        per.setdefault((r.get("sym") or "?").upper(), []).append(r)
-    by_symbol = []
-    for k, v in per.items():
-        st = stats_for(v)
-        st["symbol"] = k
-        by_symbol.append(st)
-    by_symbol.sort(key=lambda x: -x["net"])
-
-    shown = [r for r in rows if not sym or (r.get("sym") or "").upper() == sym]
-
-    overall = stats_for(shown if sym else rows)
-
-    #  Win rate-ka loo BAAHAN YAHAY, marka la eego nisbadda dhabta ah.
-    #  Lambar keligiis wax ma sheegayo - barbar dhigga ayaa sheegaya.
-    aw, al = overall["avg_win"], abs(overall["avg_loss"])
-    overall["need_winrate"] = round(al / (aw + al) * 100.0, 1) if (aw > 0 and al > 0) else None
-
-    n, pf = overall["trades"], overall["pf"]
-    if n < 30:
-        verdict, msg = "wait", "%d trade — %d ayaa haray ka hor inta aan wax lagu xukumin." % (n, 30 - n)
-    elif pf >= 1.3:
-        verdict, msg = "good", "%d trade, PF %.2f — xoog leh. Sii wad ilaa 100." % (n, pf)
-    elif pf >= 0.9:
-        verdict, msg = "mixed", "%d trade, PF %.2f — mugdi. Sample kordhi, wax ha beddelin." % (n, pf)
-    else:
-        verdict, msg = "bad", "%d trade, PF %.2f — ma shaqeynayso. Wax beddel." % (n, pf)
-
-    return jsonify({
-        "trades": shown[:500],
-        "range": {"from": d_from, "to": d_to, "span": span},
-        "overall": overall,
-        "stats": overall,
-        "by_symbol": by_symbol,
-        "symbols": sorted(per.keys()),
-        "verdict": verdict, "message": msg,
-        "stored": len(rows),
-        "capacity": MAX_JOURNAL,
-    })
-
-
-@app.route("/journal.csv", methods=["GET"])
-def journal_csv():
-    # taariikhda isla sida /journal
-    tok = request.args.get("token") or MASTER_TOKEN
-    rows = _apply_range(journal_rows(tok), *_range_args())
-    sym = (request.args.get("symbol") or "").upper()
-    if sym:
-        rows = [r for r in rows if (r.get("sym") or "").upper() == sym]
-    for r in rows:
-        r["pips"] = _pips(r)
-    out = ["ticket,bot,symbol,type,strategy,lot,entry,exit,open_time,close_time,pips,profit"]
-    for r in rows:
-        out.append(",".join(str(x) for x in [
-            r.get("tk", ""), r.get("bot", ""), r.get("sym", ""), r.get("type", ""),
-            (r.get("strat") or "").replace(",", " "), r.get("lot", ""),
-            r.get("entry", ""), r.get("exit", ""),
-            time.strftime("%Y-%m-%d %H:%M", time.gmtime(r.get("ot") or 0)) if r.get("ot") else "",
-            time.strftime("%Y-%m-%d %H:%M", time.gmtime(r.get("ct") or 0)) if r.get("ct") else "",
-            _pips(r) if _pips(r) is not None else "", r.get("profit", ""),
-        ]))
-    csv = "\n".join(out)
-    return Response(csv, mimetype="text/csv",
-                    headers={"Content-Disposition": "attachment; filename=moha_trades.csv"})
-
-# ============ 3) SYMBOLS ============
-def build_symbols(tok, bot, st):
-    if not st:
-        return []
-    explicit = st.get("symbols")
-    if isinstance(explicit, list) and explicit:
-        return explicit
-
-    trades = st.get("trades") or []
-    flags = SYMBOL_FLAGS.setdefault(tok, {}).setdefault(bot, {})
-    agg = {}
-
-    for t in trades:
-        sym = (t.get("sym") or "").upper()
-        if not sym:
-            continue
-        row = agg.setdefault(sym, {
-            "symbol": sym, "open": 0, "closed": 0,
-            "open_pnl": 0.0, "closed_pnl": 0.0,
-            "strategies": [], "enabled": flags.get(sym, True),
-        })
-        try:
-            pnl = float(t.get("profit") or 0)
-        except (TypeError, ValueError):
-            pnl = 0.0
-        if (t.get("st") or "").upper() == "OPEN":
-            row["open"] += 1
-            row["open_pnl"] += pnl
-        else:
-            row["closed"] += 1
-            row["closed_pnl"] += pnl
-        strat = t.get("strat")
-        if strat and strat not in row["strategies"]:
-            row["strategies"].append(strat)
-
-    for sym, on in flags.items():
-        if sym not in agg:
-            agg[sym] = {"symbol": sym, "open": 0, "closed": 0,
-                        "open_pnl": 0.0, "closed_pnl": 0.0,
-                        "strategies": [], "enabled": on}
-
-    rows = list(agg.values())
-    for r in rows:
-        r["open_pnl"] = round(r["open_pnl"], 2)
-        r["closed_pnl"] = round(r["closed_pnl"], 2)
-    rows.sort(key=lambda r: (-r["open"], -abs(r["open_pnl"]), r["symbol"]))
-    return rows
-
-
-@app.route("/symbols", methods=["GET"])
-def symbols_endpoint():
-    tok = request.args.get("token") or MASTER_TOKEN
-    bot = clean_bot(request.args.get("bot"))
-    st = STATES.get(tok, {}).get(bot)
-    return jsonify({"bot": bot,
-                    "symbols": build_symbols(tok, bot, st),
-                    "flags": SYMBOL_FLAGS.get(tok, {}).get(bot, {})})
-
-
-# ============ 4) Bootka <- Server: amarrada ============
-@app.route("/api/commands", methods=["GET"])
-def commands():
-    tok = get_token(request)
-    if not tok:
-        return jsonify({"error": "no token"}), 401
-    bot = get_bot(request)
-    q = COMMANDS.get(tok, {}).get(bot) or []
-    cmd = q.pop(0) if q else ""
-    payload = json.dumps({"token": tok, "bot": bot, "command": cmd},
-                         separators=(",", ":"))
-    return Response(payload, mimetype="application/json")
-
-
-# ============ 5) Admin -> Server ============
-SIMPLE_COMMANDS = {"START", "STOP", "PAUSE", "RESUME", "CLOSE_ALL", "CLOSE_PROFIT"}
-STRATEGIES = {"SR", "BB", "EMA", "SMC", "VSA", "RSI", "POC", "SCALP", "GRID"}
-
-
-def validate(cmd):
-    if cmd in SIMPLE_COMMANDS:
-        return True, ""
-    if cmd.startswith("STRATEGY:"):
-        s = cmd.split(":", 1)[1]
-        return (True, "") if s in STRATEGIES else (False, "strategy aan la aqoon: " + s)
-    if cmd.startswith("SYMBOL_ON:") or cmd.startswith("SYMBOL_OFF:"):
-        s = cmd.split(":", 1)[1]
-        if s and s.replace(".", "").replace("_", "").isalnum() and len(s) <= 16:
-            return True, ""
-        return False, "symbol aan sax ahayn: " + s
-    return False, "amar aan la aqoon"
-
-
-@app.route("/admin/command", methods=["POST", "OPTIONS"])
-def set_command():
-    if request.method == "OPTIONS":
-        return ("", 204)
-
-    tok = get_token(request) or MASTER_TOKEN
-    data = request.get_json(silent=True) or request.form
-    cmd = (data.get("command") or "").strip().upper()
-
-    ok, msg = validate(cmd)
-    if not ok:
-        return jsonify({
-            "error": msg,
-            "allowed": sorted(SIMPLE_COMMANDS)
-                       + ["STRATEGY:" + s for s in sorted(STRATEGIES)]
-                       + ["SYMBOL_ON:<SYM>", "SYMBOL_OFF:<SYM>"],
-        }), 400
-
-    # bot: mid gaar ah, ama "*" = dhammaan botyada la yaqaan
-    raw = (data.get("bot") or "").strip()
-    if raw == "*":
-        targets = sorted(STATES.get(tok, {}).keys())
-        if not targets:
-            return jsonify({"error": "bot lama helin"}), 404
-    else:
-        targets = [clean_bot(raw)]
-
-    sent = []
-    for bot in targets:
-        if cmd.startswith("SYMBOL_ON:"):
-            SYMBOL_FLAGS.setdefault(tok, {}).setdefault(bot, {})[cmd.split(":", 1)[1]] = True
-        elif cmd.startswith("SYMBOL_OFF:"):
-            SYMBOL_FLAGS.setdefault(tok, {}).setdefault(bot, {})[cmd.split(":", 1)[1]] = False
-
-        q = COMMANDS.setdefault(tok, {}).setdefault(bot, [])
-        q.append(cmd)
-        if len(q) > MAX_QUEUE:
-            del q[0:len(q) - MAX_QUEUE]
-        sent.append(bot)
-
-    return jsonify({"ok": True, "queued": cmd, "bots": sent})
-
-
-# ============ 6) DIAG ============
-@app.route("/admin/forget_bot", methods=["POST", "OPTIONS"])
-def forget_bot():
-    """Bot duug ah liiska ka saar. Haddii uu wali wax dirayo, wuu soo laaban doonaa."""
-    if request.method == "OPTIONS":
-        return ("", 204)
-    tok = get_token(request) or MASTER_TOKEN
-    data = request.get_json(silent=True) or request.form
-    bot = clean_bot(data.get("bot"))
-    removed = STATES.get(tok, {}).pop(bot, None) is not None
-    COMMANDS.get(tok, {}).pop(bot, None)
-    SYMBOL_FLAGS.get(tok, {}).pop(bot, None)
-    SEEN.get(tok, {}).pop(bot, None)
-    return jsonify({"ok": True, "removed": removed, "bot": bot})
-
-
-
-def _ingest_report(tok):
-    ing = INGEST.get(tok)
-    if not ing:
-        return {"note": "Bootku trade xiran midna ma soo dirin weli."}
-    out = dict(ing)
-    if ing["no_time"] and not ing["stored"]:
-        out["diagnosis"] = ("EA-gu waqtiga xiritaanka (close_t/ctime) ma dirayo. "
-                            "Waa nooc hore. Ku beddel MOHA_PRO_V57_3_JOURNAL.mq5, "
-                            "compile (F7), chart-ka dib u dhaji.")
-    elif ing["stored"]:
-        out["diagnosis"] = "Waa hagaag — trade-yada waa la kaydinayaa."
-    return out
-
-
-@app.route("/diag", methods=["GET"])
-def diag():
-    rows = []
-    for tok, bots in STATES.items():
-        for bot, st in sorted(bots.items()):
-            live, reason, age = live_info(st)
-            seen = SEEN.get(tok, {}).get(bot, {})
-            rows.append({
-                "bot": bot,
-                "token_preview": (tok[:6] + "..." + tok[-4:]) if len(tok) > 12 else tok,
-                "token_matches_env": tok == MASTER_TOKEN,
-                "live": live, "reason": reason, "age_seconds": age,
-                "updates_received": seen.get("count", 0),
-                "last_ip": seen.get("ip", ""),
-                "symbols_found": len(build_symbols(tok, bot, st)),
-                "pending_commands": len(COMMANDS.get(tok, {}).get(bot, [])),
-            })
-
-    default_named = [r for r in rows if r["bot"] == DEFAULT_BOT]
-
-    if not rows:
-        hint = ("Boot NA soo gaarin. Hubi: (1) URL-ka /update ee EA-ga, "
-                "(2) URL-ka ku jira liiska 'Allow WebRequest' ee MT4/MT5, "
-                "(3) in EA-gu shaqeynayo oo AutoTrading la furay.")
-    elif not any(r["token_matches_env"] for r in rows):
-        hint = ("Boot wuu soo gaaray laakiin token-kiisu kama mid aha AUTH_TOKEN "
-                "ee Render. Taasi waa sababta DEMO.")
-    elif not any(r["live"] for r in rows):
-        hint = ("Xog hore ayaa timid laakiin way duugowday (>%ds)." % STALE_SECONDS)
-    elif len(rows) == 1 and default_named:
-        hint = ("Hal bot ayaa soo gaaraya, magacna ma laha. Geli InpCloudBotName "
-                "EA kasta si ay dashboard-ka ugu kala muuqdaan.")
-    else:
-        hint = "Wax walba way shaqeynayaan. Botyada la helay: %d" % len(rows)
-
-    return jsonify({
-        "build": BUILD,
-        "journal_ingest": _ingest_report(MASTER_TOKEN),
-        "database": ("postgres — xogtu way sii jiraysaa" if DB_OK else
-                     ("KHALAD: " + DB_ERR if DB_ERR else
-                      "xusuusta kaliya — DATABASE_URL ma jiro, xogtu way baaba'aysaa")),
-        "journal_rows": db_count(MASTER_TOKEN) if DB_OK else None,
-        "server_time": int(time.time()),
-        "env_auth_token_preview": (MASTER_TOKEN[:6] + "..." + MASTER_TOKEN[-4:]
-                                   if len(MASTER_TOKEN) > 12 else MASTER_TOKEN),
-        "stale_after_seconds": STALE_SECONDS,
-        "bots": rows,
-        "diagnosis": hint,
-    })
-
-
-# ============ 7) SIGNALS ============
-def _ema(values, period):
-    if len(values) < period:
-        return None
-    k = 2.0 / (period + 1)
-    e = sum(values[:period]) / period
-    for v in values[period:]:
-        e = v * k + e * (1 - k)
-    return e
-
-
-def _rsi(values, period=14):
-    if len(values) <= period:
-        return None
-    gains = losses = 0.0
-    for i in range(1, period + 1):
-        d = values[i] - values[i - 1]
-        if d >= 0:
-            gains += d
-        else:
-            losses -= d
-    ag, al = gains / period, losses / period
-    for i in range(period + 1, len(values)):
-        d = values[i] - values[i - 1]
-        ag = (ag * (period - 1) + (d if d > 0 else 0.0)) / period
-        al = (al * (period - 1) + (-d if d < 0 else 0.0)) / period
-    if al == 0:
-        return 100.0
-    return 100.0 - 100.0 / (1.0 + ag / al)
-
-
-def _fetch_closes(symbol, interval, size=60):
-    if not TWELVEDATA_KEY:
-        return None, None, "no_key"
-    q = urllib.parse.urlencode({"symbol": symbol, "interval": interval,
-                                "outputsize": size, "apikey": TWELVEDATA_KEY,
-                                "format": "JSON"})
-    try:
-        with urllib.request.urlopen("https://api.twelvedata.com/time_series?" + q,
-                                    timeout=8) as r:
-            data = json.loads(r.read().decode())
-    except Exception as e:
-        return None, None, "fetch_error: " + str(e)
-    if isinstance(data, dict) and data.get("status") == "error":
-        return None, None, data.get("message", "api_error")
-    vals = data.get("values") or []
-    if not vals:
-        return None, None, "no_data"
-    closes = [float(x["close"]) for x in vals]
-    closes.reverse()
-    return closes, vals[0].get("datetime"), None
-
-
-def _compute_signal(closes):
-    e9, e21 = _ema(closes, 9), _ema(closes, 21)
-    r = _rsi(closes, 14)
-    mom = closes[-1] - closes[-4] if len(closes) >= 4 else 0.0
-    score, reasons = 0.0, []
-    if e9 is not None and e21 is not None:
-        if e9 > e21:
-            score += 1; reasons.append("EMA up")
-        else:
-            score -= 1; reasons.append("EMA down")
-    if r is not None:
-        score += (1 if r > 50 else -1) * min(abs(r - 50) / 20.0, 1.0)
-        reasons.append("RSI %.0f" % r)
-    if mom > 0:
-        score += 1; reasons.append("Momentum up")
-    elif mom < 0:
-        score -= 1; reasons.append("Momentum down")
-    return {"direction": "UP" if score > 0.5 else ("DOWN" if score < -0.5 else "NEUTRAL"),
-            "confidence": int(min(abs(score) / 3.0 * 100, 99)),
-            "rsi": round(r, 1) if r is not None else None,
-            "reasons": reasons}
-
-
-@app.route("/signals", methods=["GET"])
-def signals():
-    if not TWELVEDATA_KEY:
-        return jsonify({"error": "no_api_key",
-                        "hint": "Geli TWELVEDATA_KEY env var"}), 200
-    out, now = [], time.time()
-    for sym in SIGNAL_PAIRS:
-        cached = _signal_cache.get(sym)
-        if cached and (now - cached[0] < SIGNAL_CACHE_SEC):
-            out.append(cached[1]); continue
-        closes, last_dt, err = _fetch_closes(sym, SIGNAL_INTERVAL)
-        if err or not closes or len(closes) < 22:
-            item = {"symbol": sym, "direction": "N/A", "confidence": 0,
-                    "rsi": None, "reasons": [err or "insufficient"], "time": last_dt}
-        else:
-            item = _compute_signal(closes)
-            item["symbol"], item["time"] = sym, last_dt
-        _signal_cache[sym] = (now, item)
-        out.append(item)
-    return jsonify({"pairs": out, "interval": SIGNAL_INTERVAL, "generated": int(now)})
-
-
-
-# ============ 7b) BINARY SIGNALS (on-demand + honest tracking) ============
-#
-#  Falsafada qaybtan: signal-ka la bixiyo LA CABBIRAA. Signal kasta natiijadiisa
-#  si toos ah ayaa la hubiyaa marka muddadu dhammaato, saxnaanta dhabta ahna
-#  waxaa la barbar dhigaa break-even-ka payout-kaaga. Ma jirto lambar la
-#  qurxiyay - haddii uu edge-gu maqan yahay, si cad ayaa loo tusayaa.
-
-SIGNALS = {}            # token -> [record]
-MAX_SIGNALS = 300
-SIGNAL_SYMBOLS = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", "EUR/JPY"]
-EXPIRY_CHOICES = {5: "5min", 15: "15min", 60: "1h"}
-_price_cache = {}       # symbol -> (ts, price)
-
-
-def _spot(symbol):
-    """Qiimaha hadda. 20 sekan ayaa la kaydiyaa (rate limit)."""
-    now = time.time()
-    c = _price_cache.get(symbol)
-    if c and now - c[0] < 20:
-        return c[1], None
-    closes, _, err = _fetch_closes(symbol, "1min", 5)
-    if err or not closes:
-        return None, (err or "no_data")
-    _price_cache[symbol] = (now, closes[-1])
-    return closes[-1], None
-
-
-def verify_pending(tok):
-    """Signal-adii muddadoodu dhammaatay natiijadooda hubi."""
-    recs = SIGNALS.get(tok) or []
-    now = time.time()
-    checked = 0
-    for r in recs:
-        if r["status"] != "pending" or r["expires_at"] > now:
-            continue
-        if checked >= 3:          # rate limit: saddex hubin call kasta
-            break
-        checked += 1
-        price, err = _spot(r["symbol"])
-        if price is None:
-            continue
-        r["exit_price"] = price
-        move = price - r["entry_price"]
-        if move == 0:
-            r["status"] = "void"          # isku qiime = broker-ku badanaa waa refund
-        elif (move > 0) == (r["direction"] == "BUY"):
-            r["status"] = "correct"
-        else:
-            r["status"] = "wrong"
-
-
-def signal_stats(tok, payout):
-    recs = [r for r in (SIGNALS.get(tok) or []) if r["status"] in ("correct", "wrong")]
-    total = len(recs)
-    wins = sum(1 for r in recs if r["status"] == "correct")
-    acc = (wins / total * 100.0) if total else None
-    breakeven = 100.0 / (100.0 + float(payout))* 100.0
-    return {
-        "total": total, "wins": wins, "losses": total - wins,
-        "accuracy": round(acc, 1) if acc is not None else None,
-        "breakeven": round(breakeven, 1),
-        "payout": float(payout),
-        "above_breakeven": (acc is not None and acc >= breakeven),
-        "pending": sum(1 for r in (SIGNALS.get(tok) or []) if r["status"] == "pending"),
-    }
-
-
-@app.route("/signal/request", methods=["POST", "OPTIONS"])
-def signal_request():
-    if request.method == "OPTIONS":
-        return ("", 204)
-    if not TWELVEDATA_KEY:
-        return jsonify({"error": "no_api_key",
-                        "hint": "Geli TWELVEDATA_KEY env var ee Render (bilaash: twelvedata.com)"}), 200
-
-    tok = get_token(request) or MASTER_TOKEN
-    data = request.get_json(silent=True) or {}
-    symbol = (data.get("symbol") or "EUR/USD").upper()
-    if symbol not in SIGNAL_SYMBOLS:
-        return jsonify({"error": "symbol aan la aqoon"}), 400
-    try:
-        expiry = int(data.get("expiry") or 5)
-    except (TypeError, ValueError):
-        expiry = 5
-    if expiry not in EXPIRY_CHOICES:
-        expiry = 5
-
-    # Suuqa forex-ku wuu xiran yahay Sabtida iyo Axadda -> xog cusub ma jirto.
-    wd = time.gmtime().tm_wday          # 0=Isniin ... 5=Sabti, 6=Axad
-    hr = time.gmtime().tm_hour
-    closed = (wd == 5) or (wd == 6 and hr < 21) or (wd == 4 and hr >= 21)
-    if closed:
-        return jsonify({"error": "market_closed",
-                        "hint": "Suuqa forex-ku hadda wuu xiran yahay (Sabti/Axad). "
-                                "Signal lama bixin karo ilaa suuqu furmo Axada 21:00 GMT."}), 200
-
-    closes, last_dt, err = _fetch_closes(symbol, EXPIRY_CHOICES[expiry], 60)
-    if err or not closes or len(closes) < 22:
-        return jsonify({"error": err or "xog kuma filna",
-                        "hint": "Xogta qiimaha lama helin: " + str(err or "kuma filna")}), 200
-
-    sig = _compute_signal(closes)
-    if sig["direction"] == "NEUTRAL":
-        return jsonify({"neutral": True, "symbol": symbol, "expiry": expiry,
-                        "reasons": sig["reasons"],
-                        "message": "Suuqu isku dheelitiran yahay - signal lama bixinayo."}), 200
-
-    now = time.time()
-    rec = {
-        "id": int(now * 1000) % 10**10,
-        "symbol": symbol, "expiry": expiry,
-        "direction": "BUY" if sig["direction"] == "UP" else "SELL",
-        "score": sig["confidence"], "reasons": sig["reasons"], "rsi": sig["rsi"],
-        "entry_price": closes[-1], "exit_price": None,
-        "created": int(now), "expires_at": now + expiry * 60,
-        "status": "pending", "bar_time": last_dt,
-    }
-    q = SIGNALS.setdefault(tok, [])
-    q.insert(0, rec)
-    del q[MAX_SIGNALS:]
-    return jsonify({"signal": rec})
-
-
-@app.route("/signal/history", methods=["GET"])
-def signal_history():
-    tok = request.args.get("token") or MASTER_TOKEN
-    try:
-        payout = float(request.args.get("payout") or 80)
-    except ValueError:
-        payout = 80.0
-    verify_pending(tok)
-    recs = (SIGNALS.get(tok) or [])[:40]
-    return jsonify({"signals": recs, "stats": signal_stats(tok, payout),
-                    "symbols": SIGNAL_SYMBOLS, "expiries": sorted(EXPIRY_CHOICES),
-                    "has_key": bool(TWELVEDATA_KEY)})
-
-
-
-
-
-@app.route("/trades", methods=["POST", "OPTIONS"])
-def post_trades():
-    """
-    EA-ga journal poster-kiisu halkan ayuu wax u diraa:
-        POST /trades   {"token":..., "bot":..., "trades":[...]}
-
-    /update ayaa xogta nool qaata; kani wuxuu qaataa trade-yada XIRAN
-    ee journal-ka. Hore ma jirin -> EA-gu 404 ayuu helayay.
-    """
-    if request.method == "OPTIONS":
-        return ("", 204)
-
-    tok = get_token(request)
-    if not tok:
-        return jsonify({"error": "no token"}), 401
-
-    bot = get_bot(request)
-    data = request.get_json(silent=True) or {}
-    rows = data.get("trades")
-    if not isinstance(rows, list):
-        return jsonify({"error": "trades array lama helin"}), 400
-
-    before = len(JOURNAL.get(tok, {}).get(bot, {}))
-    merge_journal(tok, bot, rows)
-    after = len(JOURNAL.get(tok, {}).get(bot, {}))
-
-    return jsonify({"ok": True, "bot": bot,
-                    "received": len(rows),
-                    "stored": after,
-                    "added": after - before})
-
-# ============ 8) Pages ============
-EMBEDDED_HTML = """<!DOCTYPE html>
-<html lang="so">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-<meta name="theme-color" content="#0a0a0f">
-<title>MOHA PRO — Bot Control</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='78' font-size='78'>&#9889;</text></svg>">
-<style>
+    for u in users:
+        up = snaps.get(u["account"])
+        rows.append(dict(
+            account=u["account"], name=u["name"], role=u["role"],
+            approved=bool(u["approved"]), can_control=bool(u["can_control"]),
+            created_at=u["created_at"], last_login=u["last_login"] or "-",
+            online=(up is not None and now - up < STALE_SECONDS),
+            has_data=(up is not None),
+        ))
+    orphans = sorted(set(snaps) - {u["account"] for u in users})
+    return render_template_string(T_ADMIN, rows=rows, me=request.user["account"],
+                                  orphans=orphans)
+
+
+@app.post("/admin/user")
+@admin_required
+def admin_user():
+    acc    = clean_account(request.form.get("account"))
+    action = request.form.get("action", "")
+    me     = request.user["account"]
+    if not acc:
+        return redirect(url_for("admin"))
+    with db() as con:
+        tgt = con.execute("SELECT * FROM users WHERE account=?", (acc,)).fetchone()
+        if tgt is None:
+            return redirect(url_for("admin"))
+        if acc == me and action in ("revoke", "delete", "demote"):
+            return redirect(url_for("admin"))     # naftaada ha xidhin
+        if action == "approve":
+            con.execute("UPDATE users SET approved=1 WHERE account=?", (acc,))
+        elif action == "revoke":
+            con.execute("UPDATE users SET approved=0 WHERE account=?", (acc,))
+        elif action == "control_on":
+            con.execute("UPDATE users SET can_control=1 WHERE account=?", (acc,))
+        elif action == "control_off":
+            con.execute("UPDATE users SET can_control=0 WHERE account=?", (acc,))
+        elif action == "promote":
+            con.execute("UPDATE users SET role='admin', approved=1 WHERE account=?", (acc,))
+        elif action == "demote":
+            con.execute("UPDATE users SET role='user' WHERE account=?", (acc,))
+        elif action == "delete":
+            con.execute("DELETE FROM users WHERE account=?", (acc,))
+        elif action == "reset_pw":
+            newpw = request.form.get("newpw", "")
+            if len(newpw) >= 8:
+                con.execute("UPDATE users SET pw=? WHERE account=?",
+                            (generate_password_hash(newpw), acc))
+    return redirect(url_for("admin"))
+
+
+@app.post("/admin/create")
+@admin_required
+def admin_create():
+    acc  = clean_account(request.form.get("account"))
+    name = (request.form.get("name") or "").strip()[:60]
+    pw   = request.form.get("password", "")
+    if len(acc) >= 4 and len(pw) >= 8:
+        with db() as con:
+            if not con.execute("SELECT 1 FROM users WHERE account=?", (acc,)).fetchone():
+                con.execute(
+                    "INSERT INTO users(account,name,pw,role,approved,can_control,created_at)"
+                    " VALUES(?,?,?,'user',1,1,?)",
+                    (acc, name, generate_password_hash(pw), _now_iso()))
+    return redirect(url_for("admin"))
+
+# ==========================================================================
+# Templates
+# ==========================================================================
+CSS = """
 :root{
-  --bg:#0a0a0f; --surface:#15151e; --surface-2:#1c1c27; --line:#282833; --line-2:#34343f;
-  --ink:#fff; --ink-2:#a6a6ba; --muted:#6f6f85;
-  --orange:#f0872a; --orange-2:#ff9a3c; --orange-d:#c9661a;
-  --good:#22b455; --good-ink:#3ad46e; --bad:#e0524f; --bad-ink:#f0736f; --info:#3987e5;
-  --font:system-ui,-apple-system,"Segoe UI",sans-serif; --mono:ui-monospace,"Roboto Mono",monospace;
+  color-scheme:dark;
+  --plane:#0d0d0d; --surface:#1a1a19; --line:#2e2e2c;
+  --ink:#ffffff; --ink2:#c3c2b7; --ink3:#8b8a82;
+  --s1:#3987e5;
+  --good:#0ca30c; --warn:#fab219; --crit:#d03b3b; --serious:#ec835a;
+  --r:12px;
 }
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--ink);font-family:var(--font);padding-bottom:80px;-webkit-font-smoothing:antialiased}
-.num{font-variant-numeric:tabular-nums;font-family:var(--mono)}
-.wrap{max-width:820px;margin:0 auto;padding:0 15px}
-button{font-family:inherit;cursor:pointer}
-:focus-visible{outline:2px solid var(--orange);outline-offset:2px}
+*{box-sizing:border-box}
+body{margin:0;background:var(--plane);color:var(--ink);
+  font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+a{color:var(--s1);text-decoration:none}
+.wrap{max-width:1180px;margin:0 auto;padding:16px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:18px}
+.center{min-height:100vh;display:grid;place-items:center;padding:16px}
+.auth{width:100%;max-width:400px}
+h1{font-size:22px;margin:0 0 4px}
+h2{font-size:15px;margin:0 0 12px;color:var(--ink2);font-weight:600;
+   text-transform:uppercase;letter-spacing:.06em}
+.sub{color:var(--ink3);font-size:13px;margin:0 0 20px}
+label{display:block;font-size:13px;color:var(--ink2);margin:14px 0 6px}
+input,select{width:100%;padding:11px 12px;border-radius:9px;border:1px solid var(--line);
+  background:#121211;color:var(--ink);font-size:15px;font-family:inherit}
+input:focus,select:focus{outline:2px solid var(--s1);outline-offset:1px;border-color:transparent}
+button,.btn{cursor:pointer;border:1px solid var(--line);background:#232322;color:var(--ink);
+  padding:10px 14px;border-radius:9px;font-size:14px;font-family:inherit}
+button:hover,.btn:hover{background:#2e2e2c}
+.btn-pri{background:var(--s1);border-color:var(--s1);color:#fff;width:100%;padding:12px;
+  font-weight:600;margin-top:20px}
+.btn-pri:hover{filter:brightness(1.1);background:var(--s1)}
+.msg{padding:11px 13px;border-radius:9px;font-size:14px;margin:14px 0 0}
+.msg.err{background:rgba(208,59,59,.15);border:1px solid var(--crit);color:#ffb3b3}
+.msg.ok{background:rgba(12,163,12,.15);border:1px solid var(--good);color:#a9e8a9}
+.foot{margin-top:18px;text-align:center;font-size:13px;color:var(--ink3)}
+.top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  padding:14px 16px;background:var(--surface);border-bottom:1px solid var(--line)}
+.brand{font-weight:700;letter-spacing:.04em}
+.spacer{flex:1}
+.pill{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--ink2);
+  background:#121211;border:1px solid var(--line);padding:6px 11px;border-radius:999px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ink3)}
+.dot.on{background:var(--good)} .dot.off{background:var(--crit)}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));margin-bottom:16px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px}
+.tile .k{font-size:12px;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em}
+.tile .v{font-size:25px;font-weight:650;margin-top:5px;font-variant-numeric:tabular-nums}
+.pos{color:var(--good)} .neg{color:var(--crit)} .neu{color:var(--ink)}
+.cols{display:grid;gap:16px;grid-template-columns:1fr;margin-bottom:16px}
+@media(min-width:900px){.cols.two{grid-template-columns:3fr 2fr}}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th{text-align:left;font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--ink3);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line)}
+td{padding:9px 10px;border-bottom:1px solid #232322;font-variant-numeric:tabular-nums}
+tr:last-child td{border-bottom:none}
+.tag{font-size:11px;padding:2px 7px;border-radius:5px;background:#232322;color:var(--ink2)}
+.tag.buy{background:rgba(12,163,12,.18);color:#7fd67f}
+.tag.sell{background:rgba(208,59,59,.18);color:#f0a0a0}
+.empty{color:var(--ink3);font-size:13.5px;padding:18px 0;text-align:center}
+.ctl{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.ctl button{flex:1;min-width:104px}
+.b-stop{border-color:var(--crit);color:#f0a0a0}
+.b-go{border-color:var(--good);color:#7fd67f}
+.jr{font-size:13px;padding:7px 0;border-bottom:1px solid #232322;color:var(--ink2)}
+.jr:last-child{border:none}
+.scroll{max-height:340px;overflow:auto}
+.xscroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.xscroll table{min-width:420px}
+@media(max-width:560px){ #tt th:nth-child(3), #tt td:nth-child(3){display:none}
+  .xscroll table{min-width:0}}
+@media(max-width:640px){td,th{padding:9px 8px}
+  .top{padding:10px 12px;gap:8px} .wrap{padding:12px}}
+.chart{width:100%;height:210px;display:block}
+.chart .grid-l{stroke:#2e2e2c;stroke-width:1}
+.chart .ln{fill:none;stroke:var(--s1);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.chart .ar{fill:var(--s1);opacity:.12}
+.chart text{fill:var(--ink3);font-size:11px}
+.tip{position:fixed;pointer-events:none;background:#121211;border:1px solid var(--line);
+  border-radius:8px;padding:7px 10px;font-size:12.5px;opacity:0;transition:opacity .1s;z-index:9}
+.note{font-size:12.5px;color:var(--ink3);margin-top:10px}
+"""
 
-/* ===== HERO ===== */
-.hero{position:relative;width:100%;overflow:hidden;min-height:210px;background:#120a06}
-.hero img{width:100%;height:auto;display:block;min-height:210px;object-fit:cover}
-.hero-grad{position:absolute;inset:0;background:linear-gradient(180deg,rgba(10,10,15,.3) 0%,rgba(10,10,15,0) 35%,rgba(10,10,15,.55) 70%,var(--bg) 100%)}
-.hero-top{position:absolute;top:14px;left:0;right:0;padding:0 16px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
-.chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:7px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.5);backdrop-filter:blur(6px);color:#fff}
-.chip:active{opacity:.6}
-.st-pill{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:700;padding:7px 13px;border-radius:999px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.55);backdrop-filter:blur(6px);letter-spacing:.4px}
-.st-pill .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
-.st-pill.on{color:var(--good-ink)} .st-pill.on .dot{background:var(--good-ink);animation:pulse 2s infinite}
-.st-pill.demo{color:var(--orange-2)} .st-pill.demo .dot{background:var(--orange-2)}
-.st-pill.off{color:var(--bad-ink)} .st-pill.off .dot{background:var(--bad-ink)}
-@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(34,180,85,.5)}70%{box-shadow:0 0 0 7px rgba(34,180,85,0)}100%{box-shadow:0 0 0 0 rgba(34,180,85,0)}}
-.hero-title{position:absolute;left:18px;bottom:16px;right:18px}
-.hero-title h1{font-size:36px;font-weight:800;letter-spacing:-1px;line-height:.95;text-shadow:0 3px 16px rgba(0,0,0,.8)}
-.hero-title h1 .v{color:var(--orange)}
-.hero-title p{font-size:12px;color:#e0bfa0;margin-top:6px;font-weight:500;text-shadow:0 2px 8px rgba(0,0,0,.9)}
+T_LOGIN = """<!doctype html><html lang="so"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MOHA PRO — Gal</title><style>""" + CSS + """</style></head><body>
+<div class="center"><div class="card auth">
+  <h1>MOHA PRO</h1>
+  <p class="sub">Geli lambarka account-kaaga MT5.</p>
+  <form method="post" autocomplete="on">
+    <label for="a">Lambarka account-ka MT5</label>
+    <input id="a" name="account" inputmode="numeric" pattern="[0-9]*" required
+           autocomplete="username" placeholder="tusaale 51234567">
+    <label for="p">Password</label>
+    <input id="p" name="password" type="password" required autocomplete="current-password">
+    {% if err %}<div class="msg err">{{ err }}</div>{% endif %}
+    <button class="btn-pri" type="submit">GAL</button>
+  </form>
+  <p class="foot">Account ma lihid? <a href="/register">Isdiiwaangeli</a></p>
+</div></div></body></html>"""
 
-/* ===== BOT LINE ===== */
-.botline{display:flex;align-items:center;gap:9px;margin:16px 2px 12px;font-size:14px;font-weight:600}
-.botline .bd{width:10px;height:10px;border-radius:50%;background:var(--bad)}
-.botline.run .bd{background:var(--good);box-shadow:0 0 0 4px rgba(34,180,85,.2)}
-.botline .clock{margin-left:auto;font-family:var(--mono);font-size:12.5px;color:var(--muted);font-weight:500}
+T_REGISTER = """<!doctype html><html lang="so"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MOHA PRO — Isdiiwaangeli</title><style>""" + CSS + """</style></head><body>
+<div class="center"><div class="card auth">
+  <h1>Isdiiwaangeli</h1>
+  <p class="sub">Admin-ku waa inuu ku ansixiyaa ka hor inta aadan gali karin.</p>
+  <form method="post">
+    <label for="a">Lambarka account-ka MT5</label>
+    <input id="a" name="account" inputmode="numeric" pattern="[0-9]*" required>
+    <label for="n">Magacaaga</label>
+    <input id="n" name="name" maxlength="60">
+    <label for="p">Password (ugu yaraan 8 xaraf)</label>
+    <input id="p" name="password" type="password" minlength="8" required
+           autocomplete="new-password">
+    <label for="p2">Ku celi password-ka</label>
+    <input id="p2" name="password2" type="password" minlength="8" required
+           autocomplete="new-password">
+    {% if err %}<div class="msg err">{{ err }}</div>{% endif %}
+    {% if ok %}<div class="msg ok">{{ ok }}</div>{% endif %}
+    <button class="btn-pri" type="submit">DIIWAANGELI</button>
+  </form>
+  <p class="foot"><a href="/login">Dib ugu noqo galitaanka</a></p>
+</div></div></body></html>"""
 
-/* ===== ACTIONS ===== */
-.actions{display:grid;grid-template-columns:1fr 1fr 1fr;background:linear-gradient(135deg,var(--orange-2),var(--orange-d));border-radius:16px;overflow:hidden;margin-bottom:14px}
-.actions button{border:none;background:transparent;color:#1a0e00;padding:15px 6px;display:flex;flex-direction:column;align-items:center;gap:5px;position:relative;transition:background .15s}
-.actions button:not(:last-child){border-right:1px solid rgba(0,0,0,.15)}
-.actions button:active{background:rgba(0,0,0,.12)}
-.actions button svg{width:23px;height:23px;stroke:#1a0e00;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
-.actions button .al{font-size:12.5px;font-weight:700;letter-spacing:.4px}
-.cmd-note{text-align:center;font-size:12px;color:var(--muted);min-height:16px;margin-bottom:14px}
-
-/* ===== BANNER ===== */
-.banner{border-radius:12px;padding:11px 14px;font-size:12.5px;font-weight:600;text-align:center;margin-bottom:15px;line-height:1.5}
-.banner.demo{background:rgba(240,135,42,.13);border:1px solid rgba(240,135,42,.4);color:var(--orange-2)}
-.banner.live{background:rgba(34,180,85,.13);border:1px solid rgba(34,180,85,.45);color:var(--good-ink)}
-.banner.stale{background:rgba(57,135,229,.12);border:1px solid rgba(57,135,229,.45);color:#7fb4f0}
-.st-pill.stale{color:#7fb4f0} .st-pill.stale .dot{background:#7fb4f0}
-.banner a{color:inherit}
-
-/* ===== BOT SWITCHER ===== */
-.botsw{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;margin-bottom:15px;-webkit-overflow-scrolling:touch}
-.botsw button{flex-shrink:0;display:flex;align-items:center;gap:7px;background:var(--surface);border:1px solid var(--line);color:var(--ink-2);border-radius:999px;padding:9px 15px;font-size:13px;font-weight:600;white-space:nowrap}
-.botsw button.on{background:var(--orange);border-color:var(--orange);color:#0a0a0f}
-.botsw button .bdot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex-shrink:0}
-.botsw button .bdot.live{background:var(--good-ink)}
-.botsw button.on .bdot{background:rgba(0,0,0,.45)}
-.botsw button.on .bdot.live{background:#0a3d1c}
-.botcard{display:flex;align-items:center;gap:12px;padding:13px 2px;border-bottom:1px solid var(--line);cursor:pointer}
-.botcard:last-child{border-bottom:none}
-.botcard .bn{font-size:15px;font-weight:700;display:flex;align-items:center;gap:7px}
-.botcard .bm{font-size:12px;color:var(--muted);margin-top:3px;font-variant-numeric:tabular-nums}
-.botcard .bp{margin-left:auto;text-align:right;flex-shrink:0}
-.botcard .bp .v{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
-.botcard .bp .l{font-size:11px;color:var(--muted);margin-top:2px}
-.hide{display:none!important}
-
-/* ===== TABS ===== */
-.tabs{display:flex;background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:3px;gap:3px;margin-bottom:16px}
-.tabs div{flex:1;text-align:center;font-size:13px;font-weight:600;color:var(--ink-2);padding:9px 0;border-radius:8px;cursor:pointer;transition:.15s}
-.tabs div.on{background:var(--orange);color:#0a0a0f}
-.pane{display:none} .pane.on{display:block}
-
-/* ===== SECTIONS ===== */
-.sec-h{font-size:13px;color:var(--orange);font-weight:700;margin:0 2px 12px;display:flex;align-items:center;gap:8px}
-.sec-h::before{content:"";width:4px;height:14px;border-radius:2px;background:var(--orange)}
-.sec-h .rt{margin-left:auto;font-size:11.5px;color:var(--muted);font-weight:500}
-.block{margin-bottom:18px}
-.card{background:var(--surface);border:1px solid var(--line);border-radius:15px;padding:14px}
-
-/* ===== KPI ===== */
-.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-.kpi .lbl{font-size:11px;color:var(--muted);font-weight:600}
-.kpi .val{font-size:19px;font-weight:700;margin-top:6px;letter-spacing:-.4px}
-.up{color:var(--good-ink)} .down{color:var(--bad-ink)} .or{color:var(--orange)}
-.kpi.accent{background:linear-gradient(135deg,rgba(240,135,42,.12),var(--surface));border-color:rgba(240,135,42,.3)}
-
-/* ===== SYMBOLS ===== */
-.symrow{display:flex;align-items:center;gap:12px;padding:13px 2px;border-bottom:1px solid var(--line)}
-.symrow:last-child{border-bottom:none}
-.symrow .si{flex:1;min-width:0}
-.symrow .sn{font-size:15px;font-weight:700;letter-spacing:-.2px}
-.symrow .sm{font-size:12px;color:var(--muted);margin-top:2px;font-variant-numeric:tabular-nums}
-.symrow .sm b{font-weight:600}
-.sw{width:44px;height:26px;border-radius:13px;background:var(--line-2);border:none;padding:0;position:relative;flex-shrink:0;transition:background .18s}
-.sw::after{content:"";position:absolute;left:3px;top:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform .18s}
-.sw.on{background:var(--good)}
-.sw.on::after{transform:translateX(18px)}
-.sym-empty{color:var(--muted);text-align:center;padding:26px 10px;font-size:13px;line-height:1.6}
-.addrow{display:flex;gap:8px;margin-top:14px}
-.addrow input{flex:1;background:var(--surface-2);border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:10px 12px;font-family:var(--mono);font-size:13px;text-transform:uppercase}
-.addrow input::placeholder{color:var(--muted);text-transform:none;font-family:var(--font)}
-.addrow button{background:var(--orange);color:#0a0a0f;border:none;border-radius:9px;padding:0 18px;font-weight:700;font-size:13px}
-
-/* ===== STRATEGY ===== */
-.strats{display:flex;gap:9px;flex-wrap:wrap}
-.strat{padding:9px 17px;border-radius:999px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink-2);font-size:13px;font-weight:600;transition:all .15s}
-.strat.active{background:linear-gradient(135deg,var(--orange-2),var(--orange-d));color:#1a0e00;border-color:var(--orange)}
-
-/* ===== TABLE ===== */
-.tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
-.tbl{width:100%;border-collapse:collapse;font-size:13px}
-.tbl th{text-align:left;font-size:11px;color:var(--muted);font-weight:600;padding:9px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
-.tbl td{padding:10px;border-bottom:1px solid rgba(255,255,255,.05);font-variant-numeric:tabular-nums;white-space:nowrap}
-.tbl tbody tr:last-child td{border-bottom:none}
-.tbl .sym{font-weight:700}
-.badge{display:inline-block;padding:3px 9px;border-radius:6px;font-size:10.5px;font-weight:700}
-.badge.buy{color:var(--good-ink);background:rgba(34,180,85,.14)}
-.badge.sell{color:var(--bad-ink);background:rgba(224,82,79,.14)}
-.badge.strat{color:var(--orange);background:rgba(240,135,42,.14)}
-.badge.op{color:var(--info);background:rgba(57,135,229,.16)}
-.badge.cl{color:var(--muted);background:rgba(119,119,140,.16)}
-.pl-pos{color:var(--good-ink);font-weight:700} .pl-neg{color:var(--bad-ink);font-weight:700}
-.trow{cursor:pointer} .trow:active{background:rgba(240,135,42,.08)}
-.carcell{width:20px;padding-right:0!important} .car{color:var(--orange);font-size:12px}
-.detrow td{padding:0!important;border:none!important}
-.tdet{background:var(--surface-2);border-radius:0 0 10px 10px;padding:12px 14px!important}
-.det-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-.dc{background:#13131c;border:1px solid var(--line);border-radius:8px;padding:9px 11px}
-.dc span{display:block;font-size:10px;color:var(--muted);margin-bottom:4px;font-weight:600}
-.dc b{font-size:14px;font-variant-numeric:tabular-nums}
-@media(max-width:640px){.det-grid{grid-template-columns:repeat(2,1fr)}}
-.ot-empty{color:var(--muted);text-align:center;padding:20px;font-size:13px}
-
-/* ===== JOURNAL ===== */
-.jhero{display:flex;gap:10px;margin-bottom:13px}
-.jhero .jg{flex:1;background:linear-gradient(135deg,rgba(34,227,122,.13),var(--surface));border:1px solid rgba(34,227,122,.5);border-radius:13px;padding:12px 14px}
-.jhero .jg.d{background:linear-gradient(135deg,rgba(240,135,42,.12),var(--surface));border-color:var(--orange)}
-.jhero .jl{font-size:11px;color:var(--ink-2);font-weight:600}
-.jhero .jv{font-size:21px;font-weight:800;margin-top:3px;color:var(--good-ink)}
-.jhero .jv.or{color:var(--orange)} .jhero .jv.neg{color:var(--bad)}
-.jhero .js{font-size:11px;color:var(--muted);margin-top:2px}
-.jmon-h{font-size:12px;color:var(--ink-2);font-weight:600;margin:6px 0 8px}
-#j_bars svg{display:block;width:100%;height:130px}
-.jmrow{display:flex;justify-content:space-between;font-size:9.5px;color:var(--muted);margin-top:5px;padding:0 2px}
-.jgrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px;margin-top:14px}
-.jst{background:#0f0f17;border:1px solid var(--line);border-radius:11px;padding:10px 11px}
-.jst .jl2{font-size:10px;color:var(--ink-2);font-weight:600}
-.jst .jv2{font-size:15px;font-weight:700;margin-top:3px}
-.jst .jv2.g{color:var(--good-ink)} .jst .jv2.r{color:var(--bad-ink)} .jst .jv2.o{color:var(--orange)}
-
-/* ===== SIGNALS ===== */
-.tabs{overflow-x:auto;-webkit-overflow-scrolling:touch}
-.tabs div{flex:0 0 auto;padding:9px 14px;white-space:nowrap}
-.chips{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px}
-.chip2{padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink-2);font-size:12.5px;font-weight:600}
-.chip2.on{background:linear-gradient(135deg,var(--orange-2),var(--orange-d));border-color:var(--orange);color:#1a0e00;font-weight:700}
-.exp{display:flex;gap:7px;margin-bottom:15px}
-.exp button{flex:1;padding:9px 0;border-radius:9px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink-2);font-size:12.5px;font-weight:600}
-.exp button.on{background:#2a2333;border-color:var(--orange);color:var(--orange);font-weight:700}
-.bigbtn{width:100%;border:none;border-radius:13px;padding:16px;background:linear-gradient(135deg,var(--orange-2),var(--orange-d));color:#1a0e00;font-size:15px;font-weight:800;letter-spacing:.3px}
-.bigbtn:disabled{opacity:.5}
-.sigcard{border-radius:15px;padding:15px;margin-top:14px}
-.sigcard.buy{background:linear-gradient(135deg,rgba(34,180,85,.16),var(--surface));border:1px solid rgba(34,180,85,.45)}
-.sigcard.sell{background:linear-gradient(135deg,rgba(224,82,79,.16),var(--surface));border:1px solid rgba(224,82,79,.5)}
-.sigcard.flat{background:var(--surface);border:1px solid var(--line)}
-.sigdir{font-size:30px;font-weight:800;line-height:1.1;margin-top:3px}
-.sigrow{display:flex;justify-content:space-between;font-size:12px;padding:3px 0;color:var(--ink-2)}
-.sighist{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:12.5px}
-.sighist:last-child{border-bottom:none}
-.acc{background:linear-gradient(135deg,rgba(240,135,42,.1),var(--surface));border:1px solid rgba(240,135,42,.4);border-radius:15px;padding:15px}
-.accbar{height:8px;border-radius:4px;background:var(--line);position:relative;overflow:hidden}
-.accbar i{display:block;height:100%}
-.accmark{position:absolute;top:-3px;width:2px;height:14px;background:#fff}
-.warnbox{background:rgba(224,82,79,.13);border-radius:9px;padding:11px 12px;font-size:12px;color:var(--bad-ink);line-height:1.6;margin-top:11px}
-.okbox{background:rgba(34,180,85,.13);border-radius:9px;padding:11px 12px;font-size:12px;color:var(--good-ink);line-height:1.6;margin-top:11px}
-
-/* ===== JOURNAL v2 ===== */
-.jsum{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:11px}
-.jbox{background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:.9rem}
-.jbox .l{font-size:11.5px;color:var(--muted)}
-.jbox .v{font-size:22px;font-weight:700;margin-top:3px;font-variant-numeric:tabular-nums}
-.jbox .s{font-size:11px;color:var(--muted);margin-top:2px}
-.jbox.good{background:linear-gradient(135deg,rgba(34,180,85,.13),var(--surface));border-color:rgba(34,180,85,.4)}
-.jbox.bad{background:linear-gradient(135deg,rgba(224,82,79,.13),var(--surface));border-color:rgba(224,82,79,.4)}
-.verdict{border-radius:13px;padding:12px 14px;margin-bottom:15px;font-size:12.5px;line-height:1.6}
-.verdict.good{background:rgba(34,180,85,.12);border:1px solid rgba(34,180,85,.45);color:var(--good-ink)}
-.verdict.bad{background:rgba(224,82,79,.12);border:1px solid rgba(224,82,79,.45);color:var(--bad-ink)}
-.verdict.wait,.verdict.unclear{background:rgba(240,135,42,.12);border:1px solid rgba(240,135,42,.4);color:var(--orange-2)}
-.trow2{display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--line)}
-.trow2:last-child{border-bottom:none}
-.trow2 .sy{font-size:14px;font-weight:600}
-.trow2 .mt{font-size:11.5px;color:var(--muted);margin-top:3px;font-variant-numeric:tabular-nums}
-.trow2 .pl{text-align:right;flex-shrink:0}
-.trow2 .pl .v{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums}
-.trow2 .pl .s{font-size:10.5px;color:var(--muted)}
-.symrow2{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--line);font-size:13px}
-.symrow2:last-child{border-bottom:none}
-
-/* ===== JOURNAL v2 ===== */
-.jstat{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:11px}
-.jbox{background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:.9rem}
-.jbox .l{font-size:11.5px;color:var(--muted)}
-.jbox .v{font-size:22px;font-weight:700;margin-top:3px;font-variant-numeric:tabular-nums}
-.jbox .s{font-size:11px;color:var(--muted);margin-top:2px}
-.jbox.good{background:linear-gradient(135deg,rgba(34,180,85,.13),var(--surface));border-color:rgba(34,180,85,.4)}
-.jbox.bad{background:linear-gradient(135deg,rgba(224,82,79,.13),var(--surface));border-color:rgba(224,82,79,.4)}
-.trow2{display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--line)}
-.trow2:last-child{border-bottom:none}
-.trow2 .m{font-size:11.5px;color:var(--muted);margin-top:3px;font-variant-numeric:tabular-nums}
-.trow2 .p{text-align:right;flex-shrink:0}
-.trow2 .p .v{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums}
-.trow2 .p .s{font-size:10.5px;color:var(--muted)}
-.tag{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:5px;margin-left:5px}
-.tag.b{color:var(--text-success);background:rgba(34,180,85,.14)}
-.tag.s{color:var(--text-danger);background:rgba(224,82,79,.14)}
-.symstat{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--line)}
-.symstat:last-child{border-bottom:none}
-
-/* ===== DATE RANGE ===== */
-.dr{display:flex;gap:7px;overflow-x:auto;padding-bottom:4px;margin-bottom:11px;-webkit-overflow-scrolling:touch}
-.dr button{flex:0 0 auto;padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink-2);font-size:12.5px;font-weight:600;white-space:nowrap}
-.dr button.on{background:linear-gradient(135deg,var(--orange-2),var(--orange-d));border-color:var(--orange);color:#1a0e00;font-weight:700}
-.drx{display:flex;gap:8px;align-items:center;margin-bottom:13px}
-.drx input{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:9px 10px;font-size:12.5px;font-family:var(--mono)}
-.drx span{font-size:12px;color:var(--muted)}
-.wl{font-size:10.5px;font-weight:800;padding:3px 8px;border-radius:5px;letter-spacing:.3px}
-.wl.w{color:var(--text-success);background:rgba(34,180,85,.16)}
-.wl.l{color:var(--text-danger);background:rgba(224,82,79,.16)}
-.wl.f{color:var(--text-muted);background:rgba(119,119,140,.16)}
-
-/* ===== NAV ===== */
-.navbar{position:fixed;left:0;right:0;bottom:0;z-index:50;display:flex;justify-content:space-around;background:rgba(14,14,22,.96);border-top:1px solid var(--line);padding:7px 4px calc(7px + env(safe-area-inset-bottom));backdrop-filter:blur(10px)}
-.navbar button{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:5px 2px;background:none;border:none;color:var(--muted);font-size:10.5px;font-weight:600}
-.navbar button svg{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-.navbar button.active{color:var(--orange)}
-.foot{text-align:center;color:var(--muted);font-size:10.5px;padding:8px 0 14px}
-</style>
-</head>
-<body>
-
-<div class="hero" id="top">
-  <img id="banner-img" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='300'%3E%3Crect width='800' height='300' fill='%23120a06'/%3E%3C/svg%3E" alt="MOHA PRO">
-  <input type="file" id="img-input" accept="image/*" style="display:none">
-  <div class="hero-grad"></div>
-  <div class="hero-top">
-    <span id="status" class="st-pill off"><span class="dot"></span>OFFLINE</span>
-    <button class="chip" id="change-btn">Beddel sawirka</button>
-  </div>
-  <div class="hero-title">
-    <h1>MOHA PRO <span class="v">v56</span></h1>
-    <p>MT4 / MT5 · Bot control</p>
-  </div>
+T_DASH = """<!doctype html><html lang="so"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MOHA PRO — Dashboard</title><style>""" + CSS + """</style></head><body>
+<div class="top">
+  <span class="brand">MOHA PRO</span>
+  <span class="pill"><span class="dot" id="dot"></span><span id="st">Xiriirinaya…</span></span>
+  {% if is_admin %}
+  <select id="accSel" style="width:auto;padding:7px 10px;font-size:13px">
+    {% for a in accounts %}<option value="{{ a }}" {% if a==me %}selected{% endif %}>{{ a }}</option>{% endfor %}
+    {% if me not in accounts %}<option value="{{ me }}" selected>{{ me }}</option>{% endif %}
+  </select>
+  {% else %}<span class="pill">Account: {{ me }}</span>{% endif %}
+  <span class="spacer"></span>
+  <span class="pill" id="who" title="Isticmaalaha">{{ name }}</span>
+  {% if is_admin %}<a class="btn" href="/admin">Maamul</a>{% endif %}
+  <a class="btn" href="/logout">Bax</a>
 </div>
 
 <div class="wrap">
-
-  <div class="botline" id="botline"><span class="bd"></span><span>Bot <span id="botstate">Stopped</span></span><span class="clock" id="clock">--:--:--</span></div>
-
-  <div class="actions">
-    <button onclick="sendCmd('START')"><svg viewBox="0 0 24 24"><polygon points="6 4 20 12 6 20 6 4"/></svg><span class="al">START</span></button>
-    <button onclick="sendCmd('STOP')"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg><span class="al">STOP</span></button>
-    <button onclick="if(confirm('Xir dhammaan trade-yada?'))sendCmd('CLOSE_ALL')"><svg viewBox="0 0 24 24"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg><span class="al">CLOSE</span></button>
-  </div>
-  <div class="cmd-note" id="cmdNote"></div>
-
-  <div class="banner demo" id="dataMode">Xogta lama helin weli</div>
-
-  <div class="botsw" id="botsw"></div>
-
-  <div class="tabs" id="tabs">
-    <div data-t="overview" class="on">Guud</div>
-    <div data-t="symbols">Symbols</div>
-    <div data-t="signals">Signals</div>
-    <div data-t="chart">Chart</div>
-    <div data-t="journal">Journal</div>
+  <div class="grid">
+    <div class="tile"><div class="k">Balance</div><div class="v neu" id="bal">—</div></div>
+    <div class="tile"><div class="k">Equity</div><div class="v neu" id="eq">—</div></div>
+    <div class="tile"><div class="k">Faa'iidada maanta</div><div class="v" id="pf">—</div></div>
+    <div class="tile"><div class="k">Win rate</div><div class="v neu" id="wr">—</div></div>
+    <div class="tile"><div class="k">Drawdown</div><div class="v" id="dd">—</div></div>
+    <div class="tile"><div class="k">Trade furan</div><div class="v neu" id="ot">—</div></div>
   </div>
 
-  <!-- ===== OVERVIEW ===== -->
-  <section class="pane on" data-p="overview">
-    <div class="card block hide" id="botsBlock">
-      <h2 class="sec-h">Botyada <span class="rt" id="bots-live">0 nool</span></h2>
-      <div id="botList"></div>
+  <div class="cols two">
+    <div class="card">
+      <h2>Equity — 12 saac ee ugu dambeeyay</h2>
+      <svg class="chart" id="chart" role="img" aria-label="Equity-ga waqti ahaan"></svg>
+      <div class="note" id="chartNote"></div>
     </div>
-
-    <div class="block" id="acctBlock">
-      <h2 class="sec-h">Akoonka <span class="rt" id="symbol">—</span></h2>
-      <div class="kpis">
-        <div class="card kpi accent"><div class="lbl">Balance</div><div class="val num" id="k_balance">$0.00</div></div>
-        <div class="card kpi"><div class="lbl">Equity</div><div class="val num" id="k_equity">$0.00</div></div>
-        <div class="card kpi"><div class="lbl">Faa'iido</div><div class="val num up" id="k_profit">+$0.00</div></div>
-        <div class="card kpi"><div class="lbl">Win rate</div><div class="val num or" id="k_wr">0.0%</div></div>
-        <div class="card kpi"><div class="lbl">Drawdown</div><div class="val num down" id="k_dd">0.0%</div></div>
-        <div class="card kpi"><div class="lbl">Furan</div><div class="val num" id="k_open">0</div></div>
+    <div class="card">
+      <h2>Kontarool</h2>
+      {% if can_control %}
+      <div class="ctl">
+        <button class="b-go"   data-cmd="START">SHID</button>
+        <button class="b-stop" data-cmd="STOP">DAMI</button>
       </div>
-    </div>
-
-    <div class="card block" id="stratBlock">
-      <h2 class="sec-h">Xeeladda <span class="rt">guji si aad u beddesho</span></h2>
-      <div class="strats" id="strats">
-        <button class="strat" data-s="SR">SR</button><button class="strat" data-s="BB">BB</button>
-        <button class="strat" data-s="EMA">EMA</button><button class="strat" data-s="SMC">SMC</button>
-        <button class="strat" data-s="VSA">VSA</button><button class="strat" data-s="POC">POC</button>
+      <div class="ctl">
+        <button class="b-stop" data-cmd="CLOSE_ALL">XIDH DHAMMAAN</button>
+        <button data-cmd="CLOSE_PROFIT">XIDH FAA'IIDO</button>
       </div>
+      <label for="stratSel">Beddel xeeladda</label>
+      <select id="stratSel">
+        <option value="">— dooro —</option>
+        <option value="STRATEGY:SR">SR</option>
+        <option value="STRATEGY:BB">Bollinger</option>
+        <option value="STRATEGY:EMA">EMA</option>
+        <option value="STRATEGY:SMC">SMC</option>
+        <option value="STRATEGY:VSA">VSA</option>
+        <option value="STRATEGY:POC">POC</option>
+      </select>
+      <div class="note" id="cmdNote">Amarku wuxuu gaadhayaa EA-da 3–5 ilbiriqsi gudahood.</div>
+      {% else %}
+      <p class="empty">Akhris kaliya. Amar diritaanka lagaama ogola.</p>
+      {% endif %}
+      <div class="note" id="meta"></div>
     </div>
+  </div>
 
-    <div class="card block">
-      <h2 class="sec-h">Ganacsiyada <span class="rt" id="trades-count">0</span></h2>
-      <div class="tbl-wrap">
-        <table class="tbl">
-          <thead><tr><th></th><th>Lammaane</th><th>Nooc</th><th>Xeelad</th><th>P&amp;L</th><th>Xaalad</th></tr></thead>
-          <tbody id="tradesBody"><tr><td colspan="6" class="ot-empty">Trade ma jiro</td></tr></tbody>
-        </table>
-      </div>
-    </div>
-  </section>
+  <div class="card" style="margin-bottom:16px">
+    <h2>Trade-yada furan</h2>
+    <div class="scroll xscroll"><table id="tt">
+      <thead><tr><th>Symbol</th><th>Nooc</th><th>Xeelad</th><th>Lots</th>
+        <th style="text-align:right">P/L</th></tr></thead>
+      <tbody><tr><td colspan="5" class="empty">Wax lama helin.</td></tr></tbody>
+    </table></div>
+  </div>
 
-  <!-- ===== SYMBOLS ===== -->
-  <section class="pane" data-p="symbols">
-    <div class="card block">
-      <h2 class="sec-h">Symbols <span class="rt" id="sym-count">0 firfircoon</span></h2>
-      <div id="symList"><div class="sym-empty">Symbol lama helin weli.<br>Marka bootku trade furo, halkan ayuu ka soo muuqan doonaa.</div></div>
-      <div class="addrow">
-        <input id="symInput" placeholder="Ku dar symbol, tusaale XAUUSD" maxlength="16">
-        <button onclick="addSymbol()">Ku dar</button>
-      </div>
-    </div>
-    <div class="card block">
-      <h2 class="sec-h">Fiiro gaar ah</h2>
-      <p style="font-size:13px;color:var(--ink-2);line-height:1.7">
-        Damintu waxay amar u dirtaa bootka. EA-gu wuxuu qaataa markuu xiga poll-ka
-        (3–10 sekan). Trade-yada horeba u furan ma xirmaan — isticmaal CLOSE.
-      </p>
-    </div>
-  </section>
-
-  <!-- ===== SIGNALS ===== -->
-  <section class="pane" data-p="signals">
-    <div class="card block">
-      <h2 class="sec-h">Codso signal <span class="rt" id="sig-key"></span></h2>
-      <p style="font-size:11.5px;color:var(--muted);font-weight:600;margin-bottom:9px">Lammaanaha</p>
-      <div class="chips" id="sigSyms"></div>
-      <p style="font-size:11.5px;color:var(--muted);font-weight:600;margin-bottom:9px">Muddada</p>
-      <div class="exp" id="sigExp">
-        <button data-e="5" class="on">5 min</button>
-        <button data-e="15">15 min</button>
-        <button data-e="60">1 saac</button>
-      </div>
-      <button class="bigbtn" id="sigGo">CODSO SIGNAL</button>
-      <div id="sigOut"></div>
-    </div>
-
-    <div class="card block">
-      <h2 class="sec-h">Signal-adii hore <span class="rt" id="sig-pending"></span></h2>
-      <div id="sigHist"><div class="ot-empty">Signal weli lama codsan</div></div>
-    </div>
-
-    <div class="block">
-      <div class="acc">
-        <div style="font-size:11.5px;color:var(--orange);font-weight:700;margin-bottom:12px">Saxnaantaada dhabta ah</div>
-        <div style="display:flex;align-items:flex-end;gap:13px">
-          <div><div id="accVal" style="font-size:28px;font-weight:800;line-height:1">—</div>
-               <div id="accN" style="font-size:10.5px;color:var(--muted);margin-top:3px">0 signal</div></div>
-          <div style="flex:1">
-            <div class="accbar"><i id="accBar" style="width:0%;background:var(--muted)"></i><span class="accmark" id="accMark" style="left:55.6%"></span></div>
-            <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:5px">
-              <span>0%</span><span id="accBE">break-even 55.6%</span><span>100%</span></div>
-          </div>
-        </div>
-        <div style="display:flex;align-items:center;gap:9px;margin-top:13px">
-          <span style="font-size:11.5px;color:var(--ink-2)">Payout broker-kaaga</span>
-          <input id="payout" type="number" min="50" max="100" value="80" style="width:64px;background:var(--surface-2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:7px 9px;font-size:13px;font-variant-numeric:tabular-nums">
-          <span style="font-size:13px;color:var(--ink-2)">%</span>
-        </div>
-        <div id="accNote"></div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ===== CHART ===== -->
-  <section class="pane" data-p="chart">
-    <div class="card block">
-      <h2 class="sec-h">Chart <span class="rt" id="chartsym">GBPUSD · M5</span></h2>
-      <div id="tvchart" style="height:340px;border-radius:10px;overflow:hidden"></div>
-    </div>
-  </section>
-
-  <!-- ===== JOURNAL ===== -->
-  <section class="pane" data-p="journal">
-    <div class="block">
-      <h2 class="sec-h">Journal <span class="rt" id="j-cap"></span></h2>
-      <div class="dr" id="jRange">
-        <button data-d="1">Maanta</button>
-        <button data-d="7">7 maalmood</button>
-        <button data-d="30" class="on">30 maalmood</button>
-        <button data-d="90">3 bilood</button>
-        <button data-d="0">Dhammaan</button>
-      </div>
-      <div class="drx">
-        <input id="jFrom" type="date" aria-label="Laga bilaabo">
-        <span>→</span>
-        <input id="jTo" type="date" aria-label="Ilaa">
-      </div>
-      <div class="chips" id="jSyms"></div>
-      <div class="kpis" style="grid-template-columns:repeat(2,minmax(0,1fr))">
-        <div class="card kpi"><div class="lbl">Trade guud</div><div class="val num" id="j_total">—</div><div id="j_wl" style="font-size:11px;color:var(--muted);margin-top:2px"></div></div>
-        <div class="card kpi"><div class="lbl">Win rate</div><div class="val num or" id="j_wr">—</div><div id="j_need" style="font-size:11px;color:var(--muted);margin-top:2px"></div></div>
-        <div class="card kpi accent"><div class="lbl">Profit factor</div><div class="val num" id="j_pf">—</div></div>
-        <div class="card kpi"><div class="lbl">Net</div><div class="val num" id="j_net">—</div></div>
-      </div>
-      <div id="j_verdict"></div>
-    </div>
-
-    <div class="card block">
-      <h2 class="sec-h">Lammaanaha <span class="rt">ugu wanaagsan hore</span></h2>
-      <div id="jPerSym"><div class="ot-empty">Xog weli ma jirto</div></div>
-    </div>
-
-    <div class="card block">
-      <h2 class="sec-h">Trade-yada <span class="rt" id="j-count"></span></h2>
-      <div id="jList"><div class="ot-empty">Bootku wuu soo dirayaa taariikhda…</div></div>
-    </div>
-
-    <div class="block" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-      <button id="jCsv" style="height:44px">Soo dejiso CSV</button>
-      <button id="jRefresh" style="height:44px">Cusboonaysii</button>
-    </div>
-  </section>
-
-  <div class="foot">MOHA PRO · Bot Control · build <span id="buildTag">__BUILD__</span></div>
+  <div class="card">
+    <h2>Journal</h2>
+    <div class="scroll" id="jr"><p class="empty">Wax lama helin.</p></div>
+  </div>
 </div>
-
-<nav class="navbar" id="nav">
-  <button data-t="overview" class="active"><svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Guud</button>
-  <button data-t="symbols"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/></svg>Symbols</button>
-  <button data-t="chart"><svg viewBox="0 0 24 24"><path d="M3 15l5-5 4 4 8-8"/></svg>Chart</button>
-  <button data-t="journal"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="16" y2="13"/></svg>Journal</button>
-  <button data-t="signals"><svg viewBox="0 0 24 24"><polyline points="3 17 9 11 13 15 21 6"/><circle cx="9" cy="11" r="1.4"/></svg>Signals</button>
-</nav>
+<div class="tip" id="tip"></div>
 
 <script>
-const $=id=>document.getElementById(id);
-const TOKEN=new URLSearchParams(location.search).get('token')||"MohaPro_Live_2026_MySecret";
-const POLL_MS=5000;
-let CUR_BOT=null;      // null = Dhammaan
-let BOTS=[];
-const money=n=>{const v=+n||0;return (v<0?'-$':'$')+Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});};
+const $=s=>document.querySelector(s);
+const accSel=$("#accSel");
+let HIST=[];
 
-/* clock */
-function tick(){$('clock').textContent=new Date().toLocaleTimeString('en-GB');}
-setInterval(tick,1000);tick();
+const money=v=>(v==null||isNaN(v))?"—":Number(v).toLocaleString("en-US",
+  {minimumFractionDigits:2,maximumFractionDigits:2});
+const cls=v=>v>0?"pos":(v<0?"neg":"neu");
 
-/* ===== TABS ===== */
-function showTab(t){
-  document.querySelectorAll('.pane').forEach(p=>p.classList.toggle('on',p.dataset.p===t));
-  document.querySelectorAll('#tabs div').forEach(d=>d.classList.toggle('on',d.dataset.t===t));
-  document.querySelectorAll('#nav button[data-t]').forEach(b=>b.classList.toggle('active',b.dataset.t===t));
-  if(t==='chart')initChart(LAST_SYMBOL);
-  if(t==='signals')loadSignals();
-  if(t==='journal')loadJournal();
-  if(t==='journal')loadJournal();
-  if(t==='journal')loadJournal();
-  if(t==='journal')loadJournal();
-  if(t==='journal')loadJournal();
-  if(t==='journal')loadJournal();
-  if(t==='journal')loadJournal();
-  if(t==='journal')loadJournal();
-  window.scrollTo({top:0,behavior:'smooth'});
-}
-document.querySelectorAll('#tabs div').forEach(d=>d.addEventListener('click',()=>showTab(d.dataset.t)));
-document.querySelectorAll('#nav button[data-t]').forEach(b=>b.addEventListener('click',()=>showTab(b.dataset.t)));
+function paint(d){
+  const x=d.data||{};
+  $("#dot").className="dot "+(d.online?"on":"off");
+  $("#st").textContent=d.online?("ONLINE · "+(d.age||0)+"s ka hor")
+    :(d.age==null?"Xog lama helin":"OFFLINE · "+d.age+"s ka hor");
+  $("#bal").textContent=money(x.balance);
+  $("#eq").textContent=money(x.equity);
+  const p=Number(x.profit||0);
+  $("#pf").textContent=(p>0?"+":"")+money(p); $("#pf").className="v "+cls(p);
+  $("#wr").textContent=(x.winrate==null?"—":Number(x.winrate).toFixed(1)+"%");
+  const dd=Number(x.drawdown||0);
+  $("#dd").textContent=dd.toFixed(1)+"%"; $("#dd").className="v "+(dd>=8?"neg":(dd>=5?"neu":"neu"));
+  $("#ot").textContent=x.opentrades==null?"—":x.opentrades;
 
-/* ===== CHART ===== */
-let tvStarted=false,tvSym='',LAST_SYMBOL='GBPUSD';
-function tvSymbolFor(raw){let s=(raw||'GBPUSD').toUpperCase().replace(/[^A-Z].*$/,'');if(s.length<6)s='GBPUSD';return 'FX:'+s.slice(0,6);}
-function loadTV(cb){if(window.TradingView){cb();return;}if(!tvStarted){tvStarted=true;const s=document.createElement('script');s.src='https://s3.tradingview.com/tv.js';s.onload=cb;document.head.appendChild(s);}else{setTimeout(()=>loadTV(cb),300);}}
-function initChart(raw){
-  const sym=tvSymbolFor(raw);if(sym===tvSym)return;tvSym=sym;
-  $('chartsym').textContent=sym.replace('FX:','')+' · M5';
-  loadTV(()=>{const el=$('tvchart');if(!el||!window.TradingView)return;el.innerHTML='';
-    new TradingView.widget({container_id:'tvchart',autosize:true,symbol:sym,interval:'5',timezone:'Etc/UTC',theme:'dark',style:'1',locale:'en',toolbar_bg:'#15151e',hide_side_toolbar:true,allow_symbol_change:true});});
-}
+  const bits=[];
+  if(x.broker)bits.push(x.broker);
+  if(x.server)bits.push(x.server);
+  if(x.currency)bits.push(x.currency);
+  if(x.bot)bits.push(x.bot);
+  if(d.pending&&d.pending.length)bits.push("Amar sugaya: "+d.pending.join(", "));
+  $("#meta").textContent=bits.join(" · ");
 
-/* ===== BANNER ===== */
-(function(){const img=$('banner-img'),inp=$('img-input');
-  try{const s=localStorage.getItem('moha_banner');if(s)img.src=s;}catch(e){}
-  const open=()=>inp.click();
-  $('change-btn').addEventListener('click',open);
-  inp.addEventListener('change',e=>{const f=e.target.files&&e.target.files[0];if(!f)return;const r=new FileReader();
-    r.onload=ev=>{img.src=ev.target.result;try{localStorage.setItem('moha_banner',ev.target.result);}catch(x){}};r.readAsDataURL(f);});
-})();
-
-/* ===== STRATEGY ===== */
-document.querySelectorAll('.strat').forEach(el=>el.addEventListener('click',()=>{
-  sendCmd('STRATEGY:'+el.dataset.s);
-  document.querySelectorAll('.strat').forEach(x=>x.classList.remove('active'));el.classList.add('active');}));
-
-/* ===== COMMANDS ===== */
-async function sendCmd(cmd){
-  if(!CUR_BOT && BOTS.length>1 && (cmd==='CLOSE_ALL'||cmd==='STOP'||cmd==='CLOSE_PROFIT')){
-    if(!confirm(cmd+' waxay u socotaa DHAMMAAN botyada ('+BOTS.length+'). Sii wad?'))return;
-  }
-  const note=$('cmdNote');note.style.color='var(--muted)';note.textContent='Diraya '+cmd+'…';
-  try{
-    const r=await fetch('/admin/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:TOKEN,bot:(CUR_BOT||'*'),command:cmd})});
-    const d=await r.json();
-    if(d.ok){note.style.color='var(--good-ink)';
-      note.textContent=cmd+' → '+(d.bots||[]).join(', ')+' (~3s gudahood)';}
-    else{note.style.color='var(--bad-ink)';note.textContent=d.error||'Amarka lama aqbalin';}
-  }catch(e){note.style.color='var(--bad-ink)';note.textContent='Server-ka lama gaari karin';}
-}
-
-/* ===== BOT SWITCHER ===== */
-function renderBots(list){
-  BOTS=list||[];
-  const sw=$('botsw');
-  if(!BOTS.length){sw.innerHTML='';$('botsBlock').classList.add('hide');$('acctBlock').classList.remove('hide');return;}
-  if(CUR_BOT&&!BOTS.some(b=>b.bot===CUR_BOT))CUR_BOT=null;
-  if(!CUR_BOT&&BOTS.length===1)CUR_BOT=BOTS[0].bot;   // hal bot = si toos ah u dooro
-
-  sw.innerHTML='';
-  const mk=(label,val,live)=>{
-    const b=document.createElement('button');
-    b.className=(val===CUR_BOT?'on':'');
-    b.innerHTML='<span class="bdot'+(live?' live':'')+'"></span>'+esc(label);
-    b.addEventListener('click',()=>{CUR_BOT=val;renderBots(BOTS);poll();});
-    sw.appendChild(b);
-  };
-  if(BOTS.length>1)mk('Dhammaan',null,BOTS.some(b=>b.live));
-  BOTS.forEach(b=>mk(b.bot,b.bot,b.live));
-
-  const all=!CUR_BOT&&BOTS.length>1;
-  $('botsBlock').classList.toggle('hide',!all);
-  $('acctBlock').classList.toggle('hide',all);
-  $('stratBlock').classList.toggle('hide',all);
-  $('bots-live').textContent=BOTS.filter(b=>b.live).length+' nool';
-
-  if(all){
-    const box=$('botList');box.innerHTML='';
-    BOTS.forEach(b=>{
-      const row=document.createElement('div');row.className='botcard';
-      const p=+b.profit||0;
-      row.innerHTML='<div style="flex:1;min-width:0">'+
-        '<div class="bn"><span class="bdot'+(b.live?' live':'')+'"></span>'+esc(b.bot)+'</div>'+
-        '<div class="bm">'+(b.live?('Balance '+money(b.balance)+' · '+(b.opentrades||0)+' furan'):
-          (b.reason==='stale'?'Duugoobay '+(b.age||0)+'s':'Xog ma jirto'))+'</div></div>'+
-        '<div class="bp"><div class="v '+(p>=0?'up':'down')+'">'+(b.live?((p>=0?'+':'')+money(Math.abs(p))):'—')+'</div>'+
-        '<div class="l">floating</div></div>';
-      row.addEventListener('click',()=>{CUR_BOT=b.bot;renderBots(BOTS);poll();});
-      let lp=null;
-      const startLP=()=>{lp=setTimeout(()=>{
-        if(confirm(b.bot+' liiska ka saar? Haddii uu wali wax dirayo, wuu soo laaban doonaa.')){
-          fetch('/admin/forget_bot',{method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({token:TOKEN,bot:b.bot})}).then(()=>{CUR_BOT=null;poll();});
-        }},700);};
-      const endLP=()=>{if(lp){clearTimeout(lp);lp=null;}};
-      row.addEventListener('touchstart',startLP,{passive:true});
-      ['touchend','touchmove','touchcancel'].forEach(e=>row.addEventListener(e,endLP));
-      row.addEventListener('mousedown',startLP);
-      ['mouseup','mouseleave'].forEach(e=>row.addEventListener(e,endLP));
-      box.appendChild(row);
-    });
-  }
-}
-
-/* ===== SYMBOLS ===== */
-let SYMS=[];
-function renderSymbols(list){
-  SYMS=list||[];const box=$('symList');
-  const on=SYMS.filter(s=>s.enabled!==false).length;
-  $('sym-count').textContent=on+' firfircoon';
-  if(!SYMS.length){box.innerHTML='<div class="sym-empty">Symbol lama helin weli.<br>Marka bootku trade furo, halkan ayuu ka soo muuqan doonaa.</div>';return;}
-  box.innerHTML='';
-  SYMS.forEach(s=>{
-    const row=document.createElement('div');row.className='symrow';
-    const pnl=+s.open_pnl||0;
-    const meta=s.open>0
-      ? s.open+' furan · <b class="'+(pnl>=0?'pl-pos':'pl-neg')+'">'+(pnl>=0?'+':'')+money(Math.abs(pnl))+'</b>'
-      : (s.enabled===false?'Damisan':'Bannaan');
-    const strat=s.strategies&&s.strategies.length?' · '+s.strategies.join(', '):'';
-    const who=s.bot?' · '+esc(s.bot):'';
-    row.innerHTML='<div class="si"><div class="sn">'+esc(s.symbol)+'</div><div class="sm">'+meta+strat+who+'</div></div>';
-    const sw=document.createElement('button');
-    sw.className='sw'+(s.enabled===false?'':' on');
-    sw.setAttribute('aria-label',(s.enabled===false?'Fur ':'Dami ')+s.symbol);
-    sw.addEventListener('click',()=>{
-      const turnOn=!sw.classList.contains('on');
-      sw.classList.toggle('on',turnOn);
-      const keep=CUR_BOT;if(s.bot)CUR_BOT=s.bot;
-      sendCmd((turnOn?'SYMBOL_ON:':'SYMBOL_OFF:')+s.symbol);CUR_BOT=keep;
-    });
-    row.appendChild(sw);box.appendChild(row);
-  });
-}
-function addSymbol(){
-  const v=($('symInput').value||'').trim().toUpperCase();
-  if(!v){$('symInput').focus();return;}
-  sendCmd('SYMBOL_ON:'+v);$('symInput').value='';
-  setTimeout(poll,600);
-}
-
-/* ===== TRADES ===== */
-function esc(s){const d=document.createElement('div');d.textContent=(s==null?'':s);return d.innerHTML;}
-function f5(v){return (+v||0).toFixed(5);}
-function detHTML(t,open){
-  return '<div class="det-grid">'+
-    '<div class="dc"><span>Entry</span><b>'+f5(t.entry)+'</b></div>'+
-    '<div class="dc"><span>'+(open?'Hadda':'Close')+'</span><b>'+f5(t.cur)+'</b></div>'+
-    '<div class="dc"><span>Stop loss</span><b class="pl-neg">'+f5(t.sl)+'</b></div>'+
-    '<div class="dc"><span>Take profit</span><b class="pl-pos">'+f5(t.tp)+'</b></div>'+
-    '<div class="dc"><span>Lot</span><b>'+(+t.lot||0).toFixed(2)+'</b></div>'+
-    '<div class="dc"><span>P&L</span><b class="'+((+t.profit||0)>=0?'pl-pos':'pl-neg')+'">'+money(+t.profit||0)+'</b></div>'+
-  '</div>';
-}
-function renderTrades(trades){
-  const tb=$('tradesBody'),cnt=$('trades-count');
-  if(!trades||!trades.length){tb.innerHTML='<tr><td colspan="6" class="ot-empty">Trade ma jiro weli</td></tr>';cnt.textContent='0';return;}
-  cnt.textContent=trades.length;tb.innerHTML='';
-  trades.slice(0,20).forEach((t,i)=>{
-    const p=+t.profit||0,buy=(t.type||'').toUpperCase()==='BUY',open=(t.st||'')==='OPEN';
-    const tr=document.createElement('tr');tr.className='trow';
-    tr.innerHTML='<td class="carcell"><span class="car" id="car'+i+'">&#9656;</span></td>'+
-      '<td class="sym">'+esc(t.sym)+'</td>'+
-      '<td><span class="badge '+(buy?'buy':'sell')+'">'+esc(t.type)+'</span></td>'+
-      '<td><span class="badge strat">'+esc(t.strat)+'</span></td>'+
-      '<td class="'+(p>=0?'pl-pos':'pl-neg')+'">'+(p>=0?'+':'')+money(p)+'</td>'+
-      '<td><span class="badge '+(open?'op':'cl')+'">'+(open?'FURAN':'XIRAN')+'</span></td>';
-    tr.addEventListener('click',()=>{const d=$('det'+i),c=$('car'+i);const sh=d.style.display==='none';
-      d.style.display=sh?'table-row':'none';if(c)c.innerHTML=sh?'&#9662;':'&#9656;';});
-    tb.appendChild(tr);
-    const dr=document.createElement('tr');dr.id='det'+i;dr.style.display='none';dr.className='detrow';
-    dr.innerHTML='<td colspan="6" class="tdet">'+detHTML(t,open)+'</td>';
-    tb.appendChild(dr);
-  });
-}
-
-
-
-/* ===== JOURNAL ===== */
-let JN_SYM='', JN_DAYS=90, JN_FROM='', JN_TO='';
-
-function jnQuery(){
-  let q='token='+encodeURIComponent(TOKEN);
-  if(JN_SYM) q+='&symbol='+encodeURIComponent(JN_SYM);
-  if(JN_DAYS==='custom'){
-    if(JN_FROM) q+='&from='+JN_FROM;
-    if(JN_TO)   q+='&to='+JN_TO;
-  }else if(JN_DAYS){ q+='&days='+JN_DAYS; }
-  return q;
-}
-function dlCsv(){ window.open('/journal.csv?'+jnQuery(),'_blank'); }
-
-function jnRanges(){
-  const box=$('jnRange');box.innerHTML='';
-  const opts=[['30 maalmood',30],['3 bilood',90],['6 bilood',180],['Sanad',365],
-              ['Dhammaan',0],['Taariikh dooro','custom']];
-  opts.forEach(([label,val])=>{
-    const b=document.createElement('button');
-    b.className='chip2'+(val===JN_DAYS?' on':'');b.textContent=label;
-    b.addEventListener('click',()=>{
-      JN_DAYS=val;
-      $('jnCustom').classList.toggle('hide',val!=='custom');
-      jnRanges();
-      if(val!=='custom'||JN_FROM||JN_TO) loadJournal();
-    });
-    box.appendChild(b);
-  });
-}
-['jnFrom','jnTo'].forEach(id=>{
-  const el=$(id);
-  if(el) el.addEventListener('change',()=>{
-    JN_FROM=$('jnFrom').value; JN_TO=$('jnTo').value; JN_DAYS='custom'; loadJournal();
-  });
-});
-
-function jnSyms(list){
-  const box=$('jnSyms');box.innerHTML='';
-  const mk=(label,val)=>{
-    const b=document.createElement('button');
-    b.className='chip2'+(val===JN_SYM?' on':'');b.textContent=label;
-    b.addEventListener('click',()=>{JN_SYM=val;loadJournal();});
-    box.appendChild(b);
-  };
-  mk('Dhammaan','');
-  (list||[]).forEach(x=>mk(x,x));
-}
-
-function jnRows(rows){
-  const box=$('jnList');
-  if(!rows||!rows.length){box.innerHTML='<div class="ot-empty">Trade xiran weli lama helin</div>';return;}
-  box.innerHTML='';
-  rows.slice(0,60).forEach(r=>{
-    const win=(+r.profit||0)>0;
-    const d=document.createElement('div');
-    d.style.cssText='display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--line)';
-    const ct=r.ct||r.close_t;const t=ct?new Date(ct*1000).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}):'';
-    const op=r.op||r.entry, cp=r.cp||r.exit;const px=(op&&cp)?(' · '+op+' → '+cp):'';
-    const pips=(r.pips!=null)?(' · '+(r.pips>0?'+':'')+r.pips+' pip'):'';
-    d.innerHTML='<div style="flex:1;min-width:0">'+
-      '<div style="font-size:14px;font-weight:600">'+esc(r.sym||r.symbol)+
-        ' <span class="badge '+(r.type==='BUY'?'buy':'sell')+'">'+esc(r.type)+'</span></div>'+
-      '<div style="font-size:11.5px;color:var(--muted);margin-top:3px;font-variant-numeric:tabular-nums">'+esc(t)+esc(px)+'</div></div>'+
-      '<div style="text-align:right;flex-shrink:0">'+
-      '<div style="font-size:15px;font-weight:700;color:var(--'+(win?'text-success':'text-danger')+');font-variant-numeric:tabular-nums">'+
-        (r.profit>=0?'+':'')+money(Math.abs(r.profit))+'</div>'+
-      '<div style="font-size:10.5px;color:var(--muted)">'+esc(r.strat||'')+esc(pips)+'</div></div>';
-    box.appendChild(d);
-  });
-}
-
-async function loadJournal(){
-  try{
-    const u='/journal?'+jnQuery();
-    const d=await (await fetch(u,{cache:'no-store'})).json();
-    const s=d.overall||d.stats;
-    jnRanges();
-    jnSyms(d.symbols);
-    $('jn-stored').textContent=d.stored?d.stored+' kaydsan':'';
-    const sp=d.range&&d.range.span;
-    $('jnSpan').textContent = sp
-      ? ('Trade-yada la muujiyay: '+new Date(sp.first*1000).toLocaleDateString('en-GB')
-         +' ilaa '+new Date(sp.last*1000).toLocaleDateString('en-GB'))
-      : 'Muddadan trade lama helin';
-    $('jn_total').textContent=s.trades||'—';
-    $('jn_wl').textContent=s.trades?(s.wins+' W · '+s.losses+' L'):'';
-    $('jn_wr').textContent=(s.winrate!=null)?s.winrate+'%':'—';
-    $('jn_need').textContent=(s.need_winrate!=null)?('u baahan '+s.need_winrate+'%'):'';
-    $('jn_pf').textContent=s.trades?s.pf:'—';
-    $('jn_pf').className='val num '+(s.pf>=1.3?'up':(s.pf>=0.9?'or':'down'));
-    $('jn_net').textContent=s.trades?((s.net>=0?'+':'')+money(Math.abs(s.net))):'—';
-    $('jn_net').className='val num '+(s.net>=0?'up':'down');
-    const v=$('jn_verdict');
-    v.className='banner '+((d.verdict==='good')?'live':'demo');
-    v.textContent=d.message;
-    jnRows(d.trades);
-  }catch(e){}
-}
-
-
-/* ===== JOURNAL (kaydsan) ===== */
-let JR_SYM=null;
-const tstr=t=>{if(!t)return'—';const d=new Date(t*1000);
-  return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short'})+' '+
-         d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});};
-
-function dlCsv(){window.open('/journal.csv?token='+encodeURIComponent(TOKEN),'_blank');}
-
-function jrStats(st,need){
-  const set=(id,v,cls)=>{const e=$(id);e.textContent=(v==null?'—':v);if(cls)e.className=cls;};
-  if(!st||!st.trades){['jr_n','jr_wr','jr_req','jr_pf','jr_net','jr_edge'].forEach(i=>set(i,null,'val num'));
-    $('jr_n').textContent='0';return;}
-  set('jr_n',st.trades,'val num');
-  set('jr_wr',(st.winrate!=null?st.winrate+'%':'—'),'val num or');
-  set('jr_req',(need!=null?need+'%':'—'),'val num');
-  set('jr_pf',st.pf,'val num '+(st.pf>=1.3?'up':(st.pf>=0.9?'or':'down')));
-  set('jr_net',(st.net>=0?'+':'')+money(Math.abs(st.net)),'val num '+(st.net>=0?'up':'down'));
-  if(need==null||st.winrate==null) set('jr_edge',null,'val num');
-  else{const e=Math.round((st.winrate-need)*10)/10;
-       set('jr_edge',(e>=0?'+':'')+e+'%','val num '+(e>=0?'up':'down'));}
-}
-
-function jrVerdict(level,msg,need,wr){
-  const box=$('jr_verdict');
-  if(!msg){box.innerHTML='';return;}
-  const cls=(level==='good')?'okbox':'warnbox';
-  const extra=(need!=null&&wr!=null)
-    ? '<br>Nisbaddaadu waxay u baahan tahay '+need+'% — hadda '+wr+'%.' : '';
-  box.innerHTML='<div class="'+cls+'" style="margin-top:14px">'+esc(msg)+extra+'</div>';
-}
-
-function jrPerSymbol(list){
-  const box=$('jrPer');
-  if(!list||!list.length){box.innerHTML='<div class="ot-empty">Xog weli ma jirto</div>';return;}
-  box.innerHTML='';
-  list.forEach(st=>{
-    const aw=st.avg_win, al=Math.abs(st.avg_loss);
-    const need=(aw>0&&al>0)?Math.round(al/(aw+al)*1000)/10:null;
-    const ok=(need!=null&&st.winrate!=null&&st.winrate>=need);
-    const row=document.createElement('div');row.className='symrow';
-    row.innerHTML='<div class="si"><div class="sn">'+esc(st.symbol)+'</div>'+
-      '<div class="sm">'+st.trades+' trade · '+(st.winrate!=null?st.winrate+'%':'—')+
-      (need!=null?' (u baahan '+need+'%)':'')+'</div></div>'+
-      '<div style="text-align:right"><div style="font-size:15px;font-weight:700;color:var(--'+
-      (st.net>=0?'text-success':'text-danger')+')">'+(st.net>=0?'+':'')+money(Math.abs(st.net))+'</div>'+
-      '<div style="font-size:11px;color:var(--'+(ok?'text-success':'text-muted')+')">PF '+st.pf+'</div></div>';
-    box.appendChild(row);
-  });
-}
-
-function jrList(list){
-  const box=$('jrList');
-  if(!list||!list.length){box.innerHTML='<div class="ot-empty">Xog weli ma jirto</div>';return;}
-  box.innerHTML='';
-  list.slice(0,40).forEach(t=>{
-    const p=+t.profit||0, win=p>=0, buy=(t.type||'')==='BUY';
-    const d=document.createElement('div');d.className='symrow';
-    d.innerHTML='<div class="si"><div class="sn" style="font-size:14px">'+esc(t.sym)+
-      ' <span class="badge '+(buy?'buy':'sell')+'">'+esc(t.type)+'</span></div>'+
-      '<div class="sm">'+tstr(t.ct)+' · '+esc(t.strat||'')+'</div></div>'+
-      '<div style="text-align:right"><div style="font-size:15px;font-weight:700;color:var(--'+
-      (win?'text-success':'text-danger')+')">'+(win?'+':'')+money(Math.abs(p))+'</div>'+
-      '<div style="font-size:10.5px;color:var(--text-muted)">'+(t.pips!=null?t.pips+' pip':'')+'</div></div>';
-    box.appendChild(d);
-  });
-}
-
-function jrSymChips(syms){
-  const box=$('jrSyms');box.innerHTML='';
-  const mk=(label,val)=>{const b=document.createElement('button');
-    b.className='chip2'+(val===JR_SYM?' on':'');b.textContent=label;
-    b.addEventListener('click',()=>{JR_SYM=val;loadJournal();});box.appendChild(b);};
-  mk('Dhammaan',null);(syms||[]).forEach(x=>mk(x,x));
-}
-
-async function loadJournal(){
-  try{
-    const u='/journal?token='+encodeURIComponent(TOKEN)+
-            (JR_SYM?'&symbol='+encodeURIComponent(JR_SYM):'');
-    const r=await fetch(u,{cache:'no-store'});const d=await r.json();
-    jrSymChips(d.symbols);
-    $('jr-count').textContent=(d.stored||0)+' kaydsan';
-    const ov=d.overall||{};
-    jrStats(ov, ov.need_winrate);
-    jrVerdict(d.verdict, d.message, ov.need_winrate, ov.winrate);
-    jrPerSymbol(d.by_symbol);
-    jrList(d.trades);
-  }catch(e){}
-}
-
-
-/* ===== JOURNAL ===== */
-let J_SYM='', J_DAYS=30, J_FROM='', J_TO='';
-function jMoney(v){const n=+v||0;return (n<0?'-$':'+$')+Math.abs(n).toFixed(2);}
-
-function renderPerSym(list){
-  const box=$('jPerSym');
-  if(!list||!list.length){box.innerHTML='<div class="ot-empty">Xog weli ma jirto</div>';return;}
-  box.innerHTML='';
-  list.forEach(s=>{
-    const good=s.pf>=1.3, bad=s.pf<0.9;
-    const col=good?'var(--text-success)':(bad?'var(--text-danger)':'var(--orange)');
-    const d=document.createElement('div');d.className='symrow';
-    d.innerHTML='<div class="si"><div class="sn">'+esc(s.symbol)+'</div>'+
-      '<div class="sm">'+s.trades+' trade · '+(s.winrate==null?'—':s.winrate+'%')+' win · net '+jMoney(s.net)+'</div></div>'+
-      '<div style="text-align:right;flex-shrink:0"><div style="font-size:16px;font-weight:700;color:'+col+';font-variant-numeric:tabular-nums">'+
-      (s.pf>=999?'∞':s.pf.toFixed(2))+'</div><div style="font-size:10px;color:var(--muted)">PF</div></div>';
-    box.appendChild(d);
-  });
-}
-
-function renderJList(rows){
-  const box=$('jList');
-  if(!rows||!rows.length){box.innerHTML='<div class="ot-empty">Trade xiran weli ma jiro</div>';return;}
-  box.innerHTML='';
-  rows.slice(0,60).forEach(r=>{
-    const p=+r.profit||0, buy=(r.type||'')==='BUY';
-    const t=(ts)=>{if(!ts)return '';const d=new Date(ts*1000);
-      return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short'})+' '+d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});};
-    const d=document.createElement('div');d.className='symrow';
-    d.innerHTML='<div class="si"><div class="sn" style="font-size:14px">'+esc(r.sym)+
-      ' <span class="badge '+(buy?'buy':'sell')+'" style="margin-left:4px">'+esc(r.type)+'</span></div>'+
-      '<div class="sm">'+t(r.ot)+' → '+t(r.ct)+' · '+r.entry+' → '+r.exitp+'</div></div>'+
-      '<div style="text-align:right;flex-shrink:0">'+'<div style="display:flex;align-items:center;gap:7px;justify-content:flex-end">'+'<span class="wl '+(p>0?'w':(p<0?'l':'f'))+'">'+(p>0?'WIN':(p<0?'LOSS':'FLAT'))+'</span>'+'<span style="font-size:15px;font-weight:700;color:var('+(p>=0?'--text-success':'--text-danger')+');font-variant-numeric:tabular-nums">'+jMoney(p)+'</span></div>'+'<div style="font-size:10px;color:var(--muted);margin-top:3px">'+esc(r.strat||'')+' · '+(+r.pips||+r.points||0).toFixed(1)+' pip</div></div>';
-    box.appendChild(d);
-  });
-}
-
-function renderJSyms(list){
-  const box=$('jSyms');box.innerHTML='';
-  const mk=(label,val)=>{
-    const b=document.createElement('button');
-    b.className='chip2'+(val===J_SYM?' on':'');b.textContent=label;
-    b.addEventListener('click',()=>{J_SYM=val;loadJournal();});
-    box.appendChild(b);
-  };
-  mk('Dhammaan','');
-  (list||[]).forEach(s=>mk(s,s));
-}
-
-async function loadJournal(){
-  try{
-    let url='/journal?token='+encodeURIComponent(TOKEN);
-    if(CUR_BOT)url+='&bot='+encodeURIComponent(CUR_BOT);
-    if(J_SYM)url+='&symbol='+encodeURIComponent(J_SYM);
-    if(J_FROM||J_TO){
-      if(J_FROM)url+='&from='+J_FROM;
-      if(J_TO)url+='&to='+J_TO;
-    }else if(J_DAYS>0)url+='&days='+J_DAYS;
-    const d=await (await fetch(url,{cache:'no-store'})).json();
-    const st=d.stats;
-    renderJSyms(d.symbols);
-    renderPerSym(d.by_symbol);
-    renderJList(d.trades);
-    $('j-cap').textContent=(d.stored||0)+' / '+d.capacity+' kaydsan';
-    $('j-count').textContent=(d.trades||[]).length;
-    if(d.range&&d.range.span){
-      const f=new Date(d.range.span.first*1000), l=new Date(d.range.span.last*1000);
-      const fmt=x=>x.toLocaleDateString('en-GB',{day:'2-digit',month:'short'});
-      $('j-cap').textContent=fmt(f)+' → '+fmt(l)+' · '+(d.stored||0)+'/'+d.capacity;
-    }else $('j-cap').textContent=(d.stored||0)+' / '+d.capacity+' kaydsan';
-    $('j_total').textContent=st.trades||0;
-    $('j_wl').textContent=st.wins+' W · '+st.losses+' L';
-    $('j_wr').textContent=st.winrate==null?'—':st.winrate+'%';
-    const pfEl=$('j_pf');
-    pfEl.textContent=st.pf>=999?'∞':(st.pf||0).toFixed(2);
-    pfEl.className='val num '+(st.pf>=1.3?'up':(st.pf<0.9?'down':'or'));
-    const netEl=$('j_net');
-    netEl.textContent=jMoney(st.net);
-    netEl.className='val num '+(st.net>=0?'up':'down');
-    $('j_need').textContent=(st.need_winrate==null)?'':('u baahan '+st.need_winrate+'%');
-    const cls=(d.verdict==='good')?'okbox':'warnbox';
-    $('j_verdict').innerHTML='<div class="'+cls+'" style="margin-top:13px">'+esc(d.message)+'</div>';
-  }catch(e){}
-}
-document.querySelectorAll('#jRange button').forEach(b=>b.addEventListener('click',()=>{
-  J_DAYS=+b.dataset.d; J_FROM=''; J_TO='';
-  $('jFrom').value=''; $('jTo').value='';
-  document.querySelectorAll('#jRange button').forEach(x=>x.classList.remove('on'));
-  b.classList.add('on');
-  loadJournal();
-}));
-['jFrom','jTo'].forEach(id=>$(id).addEventListener('change',()=>{
-  J_FROM=$('jFrom').value; J_TO=$('jTo').value;
-  if(J_FROM||J_TO)document.querySelectorAll('#jRange button').forEach(x=>x.classList.remove('on'));
-  loadJournal();
-}));
-$('jRefresh').addEventListener('click',loadJournal);
-$('jCsv').addEventListener('click',()=>{
-  let u='/journal.csv?token='+encodeURIComponent(TOKEN);
-  if(CUR_BOT)u+='&bot='+encodeURIComponent(CUR_BOT);
-  if(J_FROM)u+='&from='+J_FROM;
-  if(J_TO)u+='&to='+J_TO;
-  if(!J_FROM&&!J_TO&&J_DAYS>0)u+='&days='+J_DAYS;
-  window.open(u,'_blank');
-});
-
-/* ===== STATE ===== */
-const REASONS={
-  no_data:"Bootku xog ma soo dirin. PC-ga ma damsan yahay? Fur /diag si aad u aragto sababta.",
-  stale:"Xogtii ugu dambeysay way duugowday. Bootku ma shaqaynayo ama server-ku wuu hurday.",
-  offline:"Server-ka lama gaari karin."
-};
-
-function setStatus(s,reason,age,ageTxt){
-  const el=$('status'),bl=$('botline'),bs=$('botstate'),dm=$('dataMode');
-  el.className='st-pill '+s;
-  if(s==='on'){
-    el.innerHTML='<span class="dot"></span>LIVE';bl.classList.add('run');bs.textContent='Shaqeynaya';
-    dm.className='banner live';
-    const noName=BOTS.length&&BOTS.every(b=>b.bot==='default');
-    dm.innerHTML='Xog dhab ah — la cusboonaysiiyay '+(ageTxt||'hadda')+
-      (noName?'<br><span style="color:var(--orange-2)">Bootku magac ma laha. Geli InpCloudBotName.</span>':'');
-  }else if(s==='stale'){
-    // Xog DHAB AH oo duugoobay. PC-gu wuu damsan yahay - laakiin xogtu waa taada.
-    el.innerHTML='<span class="dot"></span>OFFLINE';
-    bl.classList.remove('run');bs.textContent='Offline';
-    dm.className='banner stale';
-    dm.innerHTML='Xogtaada dhabta ah — bootku offline buu yahay.<br>'+
-      'Kan waa xaaladdii ugu dambeysay, '+(ageTxt||'')+'.';
+  const tb=$("#tt tbody"); tb.innerHTML="";
+  const rows=Array.isArray(x.trades)?x.trades:[];
+  if(!rows.length){
+    tb.innerHTML='<tr><td colspan="5" class="empty">Trade furan ma jiro.</td></tr>';
   }else{
-    //  XOG MA JIRTO. Lambar la abuuray MARNABA lama muujiyo - dashboard-ku
-    //  lacag dhab ah ayuu maamulaa, oo tiro been ah waa khatar.
-    el.innerHTML='<span class="dot"></span>OFFLINE';
-    bl.classList.remove('run');bs.textContent='Offline';
-    dm.className='banner demo';
-    dm.innerHTML=(REASONS[reason]||REASONS.no_data)+
-      ' <a href="/diag" target="_blank">Fur /diag</a>';
+    for(const t of rows){
+      const pl=Number(t.profit||0);
+      const ty=String(t.type||t.dir||"").toUpperCase();
+      const tr=document.createElement("tr");
+      tr.innerHTML='<td>'+esc(t.symbol||t.sym||"")+'</td>'+
+        '<td><span class="tag '+(ty.indexOf("BUY")>=0?"buy":(ty.indexOf("SELL")>=0?"sell":""))+'">'+esc(ty||"—")+'</span></td>'+
+        '<td>'+esc(t.strategy||t.strat||"")+'</td>'+
+        '<td>'+esc(t.lots==null?"":t.lots)+'</td>'+
+        '<td style="text-align:right" class="'+cls(pl)+'">'+(pl>0?"+":"")+money(pl)+'</td>';
+      tb.appendChild(tr);
+    }
+  }
+
+  const jw=$("#jr");
+  const jl=Array.isArray(x.journal)?x.journal:[];
+  jw.innerHTML = jl.length ? "" : '<p class="empty">Wax lama helin.</p>';
+  for(const j of jl.slice(-60).reverse()){
+    const div=document.createElement("div");
+    div.className="jr";
+    div.textContent = (typeof j==="string") ? j :
+      [j.time||j.t||"", j.text||j.msg||JSON.stringify(j)].filter(Boolean).join("  ");
+    jw.appendChild(div);
+  }
+
+  HIST=d.history||[];
+  drawChart();
+}
+
+function esc(s){const n=document.createElement("span");n.textContent=s==null?"":s;return n.innerHTML;}
+
+/* ---- Equity line chart: hal series, crosshair + tooltip ---- */
+function drawChart(){
+  const svg=$("#chart"), note=$("#chartNote");
+  const W=svg.clientWidth||600, H=210, P={t:12,r:52,b:22,l:10};
+  svg.setAttribute("viewBox","0 0 "+W+" "+H);
+  svg.innerHTML="";
+  if(HIST.length<2){ note.textContent="Xogta taariikhda weli way yar tahay."; return; }
+  note.textContent="";
+  const xs=HIST.map(p=>p.t), ys=HIST.map(p=>p.e);
+  const x0=Math.min(...xs), x1=Math.max(...xs);
+  let y0=Math.min(...ys), y1=Math.max(...ys);
+  if(y1-y0<1e-9){ y0-=1; y1+=1; }
+  const pad=(y1-y0)*0.12; y0-=pad; y1+=pad;
+  const px=t=>P.l+(W-P.l-P.r)*((t-x0)/((x1-x0)||1));
+  const py=v=>P.t+(H-P.t-P.b)*(1-(v-y0)/((y1-y0)||1));
+  const NS="http://www.w3.org/2000/svg";
+  const add=(n,a)=>{const e=document.createElementNS(NS,n);
+    for(const k in a)e.setAttribute(k,a[k]);svg.appendChild(e);return e;};
+
+  for(let i=0;i<=3;i++){
+    const v=y0+(y1-y0)*i/3, y=py(v);
+    add("line",{class:"grid-l",x1:P.l,x2:W-P.r,y1:y,y2:y});
+    const tx=add("text",{x:W-P.r+7,y:y+4});
+    tx.textContent=Math.round(v).toLocaleString("en-US");
+  }
+  const d=HIST.map((p,i)=>(i?"L":"M")+px(p.t).toFixed(1)+" "+py(p.e).toFixed(1)).join(" ");
+  add("path",{class:"ar",d:d+" L"+px(x1).toFixed(1)+" "+py(y0)+" L"+px(x0).toFixed(1)+" "+py(y0)+" Z"});
+  add("path",{class:"ln",d:d});
+  const t0=new Date(x0*1000), t1=new Date(x1*1000);
+  const fmt=dt=>String(dt.getHours()).padStart(2,"0")+":"+String(dt.getMinutes()).padStart(2,"0");
+  const a=add("text",{x:P.l,y:H-5}); a.textContent=fmt(t0);
+  const b=add("text",{x:W-P.r,y:H-5,"text-anchor":"end"}); b.textContent=fmt(t1);
+
+  const ch=add("line",{class:"grid-l",x1:0,x2:0,y1:P.t,y2:H-P.b,opacity:0});
+  const mk=add("circle",{r:4.5,fill:"var(--s1)",stroke:"var(--surface)","stroke-width":2,opacity:0});
+  const hit=add("rect",{x:0,y:0,width:W,height:H,fill:"transparent"});
+  const tip=$("#tip");
+  hit.addEventListener("pointermove",ev=>{
+    const r=svg.getBoundingClientRect();
+    const mx=(ev.clientX-r.left)*(W/r.width);
+    let best=0,bd=1e9;
+    HIST.forEach((p,i)=>{const dd=Math.abs(px(p.t)-mx); if(dd<bd){bd=dd;best=i;}});
+    const p=HIST[best], X=px(p.t), Y=py(p.e);
+    ch.setAttribute("x1",X); ch.setAttribute("x2",X); ch.setAttribute("opacity",1);
+    mk.setAttribute("cx",X); mk.setAttribute("cy",Y); mk.setAttribute("opacity",1);
+    tip.style.opacity=1;
+    tip.style.left=Math.min(window.innerWidth-170,ev.clientX+14)+"px";
+    tip.style.top=(ev.clientY-46)+"px";
+    tip.innerHTML="<b>"+money(p.e)+"</b><br>Balance "+money(p.b)+"<br>"+
+      new Date(p.t*1000).toLocaleTimeString();
+  });
+  hit.addEventListener("pointerleave",()=>{
+    ch.setAttribute("opacity",0); mk.setAttribute("opacity",0); tip.style.opacity=0;
+  });
+}
+addEventListener("resize",drawChart);
+
+async function tick(){
+  try{
+    const q=accSel?("?account="+encodeURIComponent(accSel.value)):"";
+    const r=await fetch("/api/state"+q,{headers:{"Accept":"application/json"}});
+    if(r.status===401){location.href="/login";return;}
+    const d=await r.json();
+    if(d.ok)paint(d);
+  }catch(e){
+    $("#dot").className="dot off"; $("#st").textContent="Xiriir la'aan";
   }
 }
+document.querySelectorAll("[data-cmd]").forEach(b=>{
+  b.addEventListener("click",()=>send(b.dataset.cmd,b));
+});
+const ss=$("#stratSel");
+if(ss)ss.addEventListener("change",()=>{ if(ss.value){send(ss.value,null); ss.value=""; }});
 
-function applyState(d,strict){
-  // strict = xog dhab ah. Goob maqan waxay noqonaysaa "—", MARNABA lambar demo ah.
-  const put=(id,val,fmt,cls)=>{
-    const el=$(id);
-    if(val==null||val===''){ if(strict){el.textContent='—';if(cls)el.className='val num';} return; }
-    el.textContent=fmt(val); if(cls)el.className=cls(val);
-  };
-  put('k_balance',d.balance,money);
-  put('k_equity',d.equity,money);
-  put('k_profit',d.profit,v=>((+v>=0?'+':'')+money(Math.abs(+v))),v=>'val num '+(+v>=0?'up':'down'));
-  put('k_wr',d.winrate,v=>(+v).toFixed(1)+'%');
-  put('k_dd',d.drawdown,v=>(+v).toFixed(2)+'%');
-  put('k_open',d.opentrades,v=>String(v));
-  if(d.symbol){$('symbol').textContent=d.symbol;LAST_SYMBOL=d.symbol;}
-  else if(strict)$('symbol').textContent='—';
-  renderTrades(d.trades);
-  renderSymbols(d.symbols);
-  if(d.bots)renderBots(d.bots);
-}
-
-function blankState(reason){
-  ['k_balance','k_equity','k_profit','k_wr','k_dd','k_open'].forEach(id=>{
-    const el=$(id); if(el){ el.textContent='—'; el.className='val num'; }
-  });
-  $('symbol').textContent='—';
-  renderTrades([]); renderSymbols([]);
-  setStatus('off',reason||'no_data',null,null);
-}
-
-async function poll(){
+async function send(cmd,btn){
+  const note=$("#cmdNote"); if(!note)return;
+  if(btn){btn.disabled=true;}
   try{
-    const url='/state?token='+encodeURIComponent(TOKEN)+(CUR_BOT?'&bot='+encodeURIComponent(CUR_BOT):'');
-    const r=await fetch(url,{cache:'no-store'});
-    if(!r.ok)throw 0;
+    const body={cmd:cmd};
+    if(accSel)body.account=accSel.value;
+    const r=await fetch("/api/command",{method:"POST",
+      headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
     const d=await r.json();
-    if(d.live){ applyState(d,true); setStatus('on','live',d.age,d.age_text); }
-    else if(d.reason==='stale' || d.has_data){
-      // Bootku offline buu yahay, laakiin xogtu waa DHAB. Demo LOOMA beddelayo.
-      applyState(d,true); setStatus('stale',d.reason,d.age,d.age_text);
-    }
-    else{ blankState(d.reason); }
-  }catch(e){blankState('offline');}
+    note.textContent = d.ok ? ("Waa la diray: "+cmd+" — EA-du 3–5s gudahood buu qaadanayaa.")
+                            : ("Khalad: "+(d.error||"lama diri karin"));
+  }catch(e){ note.textContent="Khalad shabakad."; }
+  if(btn)setTimeout(()=>{btn.disabled=false;},1200);
+  tick();
 }
-blankState();poll();setInterval(poll,POLL_MS);
-</script>
-</body>
-</html>
-"""
+if(accSel)accSel.addEventListener("change",tick);
+tick(); setInterval(tick,5000);
+</script></body></html>"""
 
+T_ADMIN = """<!doctype html><html lang="so"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MOHA PRO — Admin</title><style>""" + CSS + """</style></head><body>
+<div class="top">
+  <span class="brand">MOHA PRO · ADMIN</span><span class="spacer"></span>
+  <a class="btn" href="/dashboard">Dashboard</a><a class="btn" href="/logout">Bax</a>
+</div>
+<div class="wrap">
+  <div class="card" style="margin-bottom:16px">
+    <h2>Isticmaalayaasha</h2>
+    <div class="scroll xscroll"><table>
+      <thead><tr><th>Account</th><th>Magac</th><th>Xaalad</th><th>Doorka</th>
+        <th>Xog</th><th>Galitaankii u dambeeyay</th><th>Ficil</th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td><b>{{ r.account }}</b></td>
+          <td>{{ r.name or "—" }}</td>
+          <td>{% if r.approved %}<span class="tag buy">LA ANSIXIYAY</span>
+              {% else %}<span class="tag sell">SUGAYA</span>{% endif %}</td>
+          <td>{{ r.role }}{% if not r.can_control %} · akhris{% endif %}</td>
+          <td>{% if r.online %}<span class="tag buy">ONLINE</span>
+              {% elif r.has_data %}<span class="tag">offline</span>
+              {% else %}<span class="tag">—</span>{% endif %}</td>
+          <td>{{ r.last_login }}</td>
+          <td style="white-space:nowrap">
+            {% if r.account != me %}
+            <form method="post" action="/admin/user" style="display:inline">
+              <input type="hidden" name="account" value="{{ r.account }}">
+              {% if r.approved %}
+                <button name="action" value="revoke">Xidh</button>
+                {% if r.can_control %}<button name="action" value="control_off">Akhris kaliya</button>
+                {% else %}<button name="action" value="control_on">Ogolow amar</button>{% endif %}
+              {% else %}
+                <button name="action" value="approve" class="b-go">Ansixi</button>
+              {% endif %}
+              <button name="action" value="delete" class="b-stop">Tirtir</button>
+            </form>
+            {% else %}<span class="tag">adiga</span>{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
 
-_dashboard_cache = {"mtime": 0, "html": None}
+  <div class="card" style="margin-bottom:16px">
+    <h2>Ku dar isticmaale toos ah</h2>
+    <form method="post" action="/admin/create"
+          style="display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));align-items:end">
+      <div><label for="ca">Account MT5</label>
+        <input id="ca" name="account" inputmode="numeric" required></div>
+      <div><label for="cn">Magac</label><input id="cn" name="name"></div>
+      <div><label for="cp">Password</label>
+        <input id="cp" name="password" type="password" minlength="8" required></div>
+      <div><button class="btn-pri" style="margin:0" type="submit">KU DAR</button></div>
+    </form>
+    <p class="note">Isticmaalaha sidan loo abuuray si toos ah ayaa loo ansixiyaa.</p>
+  </div>
 
-
-def dashboard_html():
-    try:
-        mtime = os.path.getmtime(DASHBOARD_FILE)
-        if _dashboard_cache["html"] is None or mtime != _dashboard_cache["mtime"]:
-            with open(DASHBOARD_FILE, "r", encoding="utf-8") as f:
-                _dashboard_cache["html"] = f.read()
-            _dashboard_cache["mtime"] = mtime
-        return _dashboard_cache["html"]
-    except OSError:
-        return EMBEDDED_HTML
-
-
-@app.route("/")
-@app.route("/admin")
-def index():
-    html = dashboard_html().replace("__BUILD__", BUILD)
-    r = Response(html, mimetype="text/html")
-    # Browser-ku HA hayn bog duug ah - taasi ayaa hore u dhibtay.
-    r.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    r.headers["Pragma"] = "no-cache"
-    r.headers["Expires"] = "0"
-    r.headers["X-Moha-Build"] = BUILD
-    return r
-
-
-@app.route("/version")
-def version():
-    return jsonify({"build": BUILD})
-
-
-@app.route("/health")
-def health():
-    return jsonify({"ok": True, "build": BUILD,
-                    "bots": sum(len(v) for v in STATES.values())})
-
-
+  {% if orphans %}
+  <div class="card">
+    <h2>Account xog soo dirtay laakiin aan isticmaale lahayn</h2>
+    <p class="note">{{ orphans|join(", ") }}</p>
+    <p class="note">Kuwan EA ayaa soo diraya. Abuur isticmaale lambarkiisa si uu u arko xogtiisa.</p>
+  </div>
+  {% endif %}
+</div></body></html>"""
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
