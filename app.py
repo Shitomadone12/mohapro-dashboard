@@ -124,6 +124,22 @@ CREATE TABLE IF NOT EXISTS closed_trades(
   UNIQUE(account, ticket)
 );
 CREATE INDEX IF NOT EXISTS ix_ct ON closed_trades(account, ts);
+CREATE TABLE IF NOT EXISTS ctrades(
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  account TEXT NOT NULL,
+  ticket  TEXT NOT NULL,
+  sym     TEXT NOT NULL DEFAULT '',
+  type    TEXT NOT NULL DEFAULT '',
+  strat   TEXT NOT NULL DEFAULT '',
+  lot     REAL NOT NULL DEFAULT 0,
+  points  REAL NOT NULL DEFAULT 0,
+  profit  REAL NOT NULL DEFAULT 0,
+  ot      INTEGER NOT NULL DEFAULT 0,
+  ct      INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(account, ticket)
+);
+CREATE INDEX IF NOT EXISTS ix_ctr  ON ctrades(account, ct);
+CREATE INDEX IF NOT EXISTS ix_ctrs ON ctrades(account, sym);
 CREATE TABLE IF NOT EXISTS branding(
   account    TEXT PRIMARY KEY,
   img        TEXT NOT NULL,
@@ -184,6 +200,42 @@ def init_db():
                     "INSERT INTO users(account,name,pw,role,approved,can_control,created_at)"
                     " VALUES(?,?,?,'user',1,1,?)", (uacc, uname, uh, _now_iso()))
             log.info("EXTRA_USERS: %s diyaar", uacc)
+
+def _num(v, d=0.0):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return d
+
+
+def _save_closed(con, acc, rows):
+    """Trade xidhan kasta hal mar ayaa la kaydiyaa (ticket = fure)."""
+    n = 0
+    for t in rows or []:
+        if not isinstance(t, dict):
+            continue
+        if str(t.get("st", "OPEN")).upper() == "OPEN":
+            continue
+        tk = str(t.get("tk") or t.get("ticket") or "")
+        if not tk:
+            continue
+        ct = int(_num(t.get("ct") or t.get("ot")))
+        if ct <= 0:
+            continue
+        con.execute(
+            "INSERT OR IGNORE INTO ctrades"
+            "(account,ticket,sym,type,strat,lot,points,profit,ot,ct)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (acc, tk,
+             str(t.get("sym") or t.get("symbol") or "")[:20],
+             str(t.get("type") or "")[:8].upper(),
+             str(t.get("strat") or t.get("strategy") or "")[:16],
+             _num(t.get("lot") or t.get("lots")),
+             _num(t.get("points")), _num(t.get("profit")),
+             int(_num(t.get("ot"))), ct))
+        n += 1
+    return n
+
 
 def _now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -288,6 +340,8 @@ def ea_update():
             " data=excluded.data, updated_at=excluded.updated_at",
             (acc, bot, json.dumps(d, ensure_ascii=False), now))
 
+        _save_closed(con, acc, d.get("trades"))
+
         last = con.execute("SELECT ts FROM history WHERE account=? ORDER BY ts DESC LIMIT 1",
                            (acc,)).fetchone()
         if last is None or now - last["ts"] >= HISTORY_EVERY:
@@ -318,6 +372,7 @@ def ea_trades():
     n = 0
     now = time.time()
     with db() as con:
+        _save_closed(con, acc, rows)
         for t in rows[:200]:
             if not isinstance(t, dict):
                 continue
@@ -581,6 +636,96 @@ def api_command():
 # --------------------------------------------------------------------------
 # Admin
 # --------------------------------------------------------------------------
+RANGES = {"day": 1, "week": 7, "month": 30, "year": 365, "all": 0}
+
+
+@app.get("/api/journal")
+@login_required
+def api_journal():
+    """Tirakoobka trade-yada la xidhay: symbol, saacad, xeelad, maalin, bil."""
+    u   = request.user
+    acc = _visible_account(u)
+    rng = request.args.get("range", "month")
+    if rng not in RANGES:
+        rng = "month"
+    days = RANGES[rng]
+
+    if days:
+        # maalinta waxay ka bilaabmaysaa 00:00 (UTC) maanta
+        now = datetime.now(timezone.utc)
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        cut = int(start.timestamp()) - (days - 1) * 86400
+    else:
+        cut = 0
+
+    with db() as con:
+        rows = con.execute(
+            "SELECT sym,type,strat,lot,points,profit,ot,ct FROM ctrades"
+            " WHERE account=? AND ct>=? ORDER BY ct DESC", (acc, cut)).fetchall()
+        first = con.execute("SELECT MIN(ct) m FROM ctrades WHERE account=?",
+                            (acc,)).fetchone()
+        total_all = con.execute("SELECT COUNT(*) c FROM ctrades WHERE account=?",
+                                (acc,)).fetchone()["c"]
+
+    def blank():
+        return {"n": 0, "w": 0, "net": 0.0, "gp": 0.0, "gl": 0.0}
+
+    def add(b, p):
+        b["n"] += 1
+        b["net"] += p
+        if p > 0:
+            b["w"] += 1; b["gp"] += p
+        else:
+            b["gl"] += abs(p)
+
+    tot = blank()
+    by_sym, by_hour, by_strat, by_day, by_month = {}, {}, {}, {}, {}
+    best = worst = None
+
+    for r in rows:
+        p = r["profit"]; add(tot, p)
+        for key, dic in ((r["sym"] or "?", by_sym),
+                         (r["strat"] or "?", by_strat)):
+            dic.setdefault(key, blank()); add(dic[key], p)
+        dt = datetime.fromtimestamp(r["ct"], timezone.utc)
+        for key, dic in ((dt.hour, by_hour),
+                         (dt.strftime("%Y-%m-%d"), by_day),
+                         (dt.strftime("%Y-%m"), by_month)):
+            dic.setdefault(key, blank()); add(dic[key], p)
+        item = {"sym": r["sym"], "type": r["type"], "strat": r["strat"],
+                "profit": p, "points": r["points"], "ct": r["ct"], "lot": r["lot"]}
+        if best  is None or p > best["profit"]:  best = item
+        if worst is None or p < worst["profit"]: worst = item
+
+    def pack(dic, keyname, sort_by_key=False):
+        out = [dict({keyname: k}, **v) for k, v in dic.items()]
+        if sort_by_key:
+            out.sort(key=lambda x: x[keyname])
+        else:
+            out.sort(key=lambda x: x["net"], reverse=True)
+        return out
+
+    def pf(b):
+        return round(b["gp"] / b["gl"], 2) if b["gl"] > 0 else (99.0 if b["gp"] > 0 else 0.0)
+
+    return jsonify(
+        ok=True, account=acc, range=rng,
+        summary={"n": tot["n"], "wins": tot["w"], "losses": tot["n"] - tot["w"],
+                 "winrate": round(tot["w"] / tot["n"] * 100, 1) if tot["n"] else 0,
+                 "net": round(tot["net"], 2), "gp": round(tot["gp"], 2),
+                 "gl": round(tot["gl"], 2), "pf": pf(tot),
+                 "avg": round(tot["net"] / tot["n"], 2) if tot["n"] else 0},
+        best=best, worst=worst,
+        by_symbol=pack(by_sym, "sym")[:12],
+        by_strategy=pack(by_strat, "strat"),
+        by_hour=pack(by_hour, "h", True),
+        by_day=pack(by_day, "d", True)[-31:],
+        by_month=pack(by_month, "m", True)[-12:],
+        stored_total=total_all,
+        since=(first["m"] if first and first["m"] else 0),
+    )
+
+
 MAX_IMG_CHARS = 1_400_000        # ~1 MB oo base64 ah
 
 @app.post("/api/branding")
@@ -927,6 +1072,25 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 .appbar button.on:hover{color:var(--s1)}
 .appbar svg{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:1.8;
   stroke-linecap:round;stroke-linejoin:round}
+.rng{display:flex;gap:7px;overflow-x:auto;margin-bottom:14px;padding-bottom:2px}
+.rng button{flex:1 1 auto;padding:8px 6px;border-radius:999px;font-size:12.5px;
+  white-space:nowrap;min-width:0}
+@media(min-width:520px){.rng button{flex:0 0 auto;padding:8px 16px;font-size:13px}}
+.rng button.on{background:var(--s1);border-color:var(--s1);color:#fff;font-weight:600}
+.bar{display:flex;align-items:center;gap:10px;padding:7px 0;
+  border-bottom:1px solid #232322;font-size:13.5px}
+.bar:last-child{border:none}
+.bar .lb{flex:0 0 74px;color:var(--ink2);font-variant-numeric:tabular-nums}
+.bar .tr{flex:1;height:9px;border-radius:5px;background:#232322;overflow:hidden;display:flex}
+.bar .fi{height:100%;border-radius:5px}
+.bar .fi.p{background:var(--good)} .bar .fi.n{background:var(--crit)}
+.bar .vl{flex:0 0 96px;text-align:right;font-variant-numeric:tabular-nums;font-size:13px}
+.bar .sb{flex:0 0 52px;text-align:right;color:var(--ink3);font-size:11.5px}
+.bw{font-size:14px}
+.bw .big{font-size:22px;font-weight:650;font-variant-numeric:tabular-nums}
+.bw .sm{color:var(--ink3);font-size:12.5px;margin-top:4px}
+@media(max-width:560px){ .bar .lb{flex-basis:62px} .bar .vl{flex-basis:80px}
+  .bar .sb{display:none} }
 .pane{display:none}
 .pane.on{display:block}
 @media(min-width:900px){.cols.two{grid-template-columns:1fr}}
@@ -1005,7 +1169,9 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
     <div class="grid">
       <div class="tile"><div class="k">Balance</div><div class="v neu" id="bal">—</div></div>
       <div class="tile"><div class="k">Equity</div><div class="v neu" id="eq">—</div></div>
-      <div class="tile"><div class="k">Faa'iidada maanta</div><div class="v" id="pf">—</div></div>
+      <div class="tile"><div class="k">Faa'iido xidhan (maanta)</div><div class="v" id="pf">—</div></div>
+      <div class="tile"><div class="k">Faa'iido furan (float)</div><div class="v" id="fl">—</div></div>
+      <div class="tile"><div class="k">Wadarta hadda</div><div class="v" id="tot">—</div></div>
       <div class="tile"><div class="k">Win rate</div><div class="v neu" id="wr">—</div></div>
       <div class="tile"><div class="k">Drawdown</div><div class="v" id="dd">—</div></div>
       <div class="tile"><div class="k">Trade furan</div><div class="v neu" id="ot">—</div></div>
@@ -1048,8 +1214,62 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 
   <!-- ============ JOURNAL ============ -->
   <section class="pane" id="pJournal">
-    <div class="card"><h2>Journal</h2>
-      <div class="scroll" id="jr"><p class="empty">Wax lama helin.</p></div></div>
+    <div class="rng" id="rng">
+      <button data-r="day">Maanta</button>
+      <button data-r="week">Usbuuc</button>
+      <button class="on" data-r="month">Bil</button>
+      <button data-r="year">Sanad</button>
+      <button data-r="all">Dhammaan</button>
+    </div>
+
+    <div class="grid">
+      <div class="tile"><div class="k">Wadarta</div><div class="v" id="jNet">—</div></div>
+      <div class="tile"><div class="k">Trade</div><div class="v neu" id="jN">—</div></div>
+      <div class="tile"><div class="k">Win rate</div><div class="v neu" id="jWR">—</div></div>
+      <div class="tile"><div class="k">Profit Factor</div><div class="v" id="jPF">—</div></div>
+    </div>
+
+    <div class="cols two" style="margin-bottom:16px">
+      <div class="card"><p class="sec-t">Ugu fiican</p>
+        <div class="bw" id="jBest"><span class="empty">—</span></div></div>
+      <div class="card"><p class="sec-t">Ugu xun</p>
+        <div class="bw" id="jWorst"><span class="empty">—</span></div></div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <h2>Lammaanaha</h2>
+      <div id="jSym"><p class="empty">Wax lama helin.</p></div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <h2>Saacadaha (waqtiga broker-ka)</h2>
+      <div id="jHour"><p class="empty">Wax lama helin.</p></div>
+      <div class="note">Sadarka cagaaran = faa'iido. Casaan = khasaare.</div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <h2>Xeeladaha</h2>
+      <div id="jStrat"><p class="empty">Wax lama helin.</p></div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <h2>Maalin kasta</h2>
+      <div class="scroll xscroll"><table id="jDay">
+        <thead><tr><th>Maalin</th><th>Trade</th><th>Guul</th>
+          <th style="text-align:right">Natiijo</th></tr></thead>
+        <tbody><tr><td colspan="4" class="empty">Wax lama helin.</td></tr></tbody>
+      </table></div>
+    </div>
+
+    <div class="card">
+      <h2>Bil kasta</h2>
+      <div class="scroll xscroll"><table id="jMon">
+        <thead><tr><th>Bil</th><th>Trade</th><th>Guul</th>
+          <th style="text-align:right">Natiijo</th></tr></thead>
+        <tbody><tr><td colspan="4" class="empty">Wax lama helin.</td></tr></tbody>
+      </table></div>
+      <div class="note" id="jStore"></div>
+    </div>
   </section>
 </div>
 
@@ -1150,16 +1370,10 @@ function paint(d){
       ((gp-gl)>0?"+":"")+money(gp-gl);
   }
 
-  const jw=$("#jr");
-  const jl=Array.isArray(x.journal)?x.journal:[];
-  jw.innerHTML = jl.length ? "" : '<p class="empty">Wax lama helin.</p>';
-  for(const j of jl.slice(-60).reverse()){
-    const div=document.createElement("div");
-    div.className="jr";
-    div.textContent = (typeof j==="string") ? j :
-      [j.time||j.t||"", j.text||j.msg||JSON.stringify(j)].filter(Boolean).join("  ");
-    jw.appendChild(div);
-  }
+  const flo=open.reduce((a,t)=>a+Number(t.profit||0),0);
+  $("#fl").textContent=(flo>0?"+":"")+money(flo); $("#fl").className="v "+cls(flo);
+  const all=p+flo;
+  $("#tot").textContent=(all>0?"+":"")+money(all); $("#tot").className="v "+cls(all);
 
   HIST=d.history||[];
   drawChart();
@@ -1340,11 +1554,92 @@ async function send(cmd,btn){
   if(btn)setTimeout(()=>{btn.disabled=false;},1200);
   tick();
 }
+/* ---- Journal: tirakoob ---- */
+let RANGE="month", jLoaded=false;
+
+document.querySelectorAll("#rng button").forEach(b=>{
+  b.addEventListener("click",()=>{
+    RANGE=b.dataset.r;
+    document.querySelectorAll("#rng button").forEach(x=>x.classList.toggle("on",x===b));
+    loadJournal();
+  });
+});
+
+function bars(host,items,keyf,labf){
+  const el=$(host);
+  if(!items || !items.length){ el.innerHTML='<p class="empty">Wax lama helin.</p>'; return; }
+  const mx=Math.max(...items.map(i=>Math.abs(i.net)),1);
+  el.innerHTML="";
+  for(const it of items){
+    const pos=it.net>=0, w=Math.max(2,Math.abs(it.net)/mx*100);
+    const wr=it.n?Math.round(it.w/it.n*100):0;
+    const d=document.createElement("div");
+    d.className="bar";
+    d.innerHTML='<span class="lb">'+esc(labf(it))+'</span>'+
+      '<span class="tr"><span class="fi '+(pos?"p":"n")+'" style="width:'+w.toFixed(1)+'%"></span></span>'+
+      '<span class="sb">'+it.n+"tr · "+wr+'%</span>'+
+      '<span class="vl '+cls(it.net)+'">'+(it.net>0?"+":"")+money(it.net)+'</span>';
+    el.appendChild(d);
+  }
+}
+
+function rowsInto(id,items,labf){
+  const tb=$(id+" tbody"); tb.innerHTML="";
+  if(!items || !items.length){
+    tb.innerHTML='<tr><td colspan="4" class="empty">Wax lama helin.</td></tr>'; return;
+  }
+  for(const it of items.slice().reverse()){
+    const tr=document.createElement("tr");
+    const wr=it.n?Math.round(it.w/it.n*100):0;
+    tr.innerHTML='<td>'+esc(labf(it))+'</td><td>'+it.n+'</td><td>'+it.w+' ('+wr+'%)</td>'+
+      '<td style="text-align:right" class="'+cls(it.net)+'">'+(it.net>0?"+":"")+money(it.net)+'</td>';
+    tb.appendChild(tr);
+  }
+}
+
+function bwCard(id,t,label){
+  const el=$(id);
+  if(!t){ el.innerHTML='<span class="empty">Weli midna lama xidhin.</span>'; return; }
+  el.innerHTML='<div class="big '+cls(t.profit)+'">'+(t.profit>0?"+":"")+money(t.profit)+'</div>'+
+    '<div class="sm">'+esc(t.sym||"")+" · "+esc(t.type||"")+" · "+esc(t.strat||"")+'</div>'+
+    '<div class="sm">'+esc(when(t.ct))+'</div>';
+}
+
+async function loadJournal(){
+  try{
+    let q="?range="+RANGE;
+    if(accSel)q+="&account="+encodeURIComponent(accSel.value);
+    const r=await fetch("/api/journal"+q);
+    if(r.status===401){location.href="/login";return;}
+    const d=await r.json();
+    if(!d.ok)return;
+    jLoaded=true;
+    const s=d.summary;
+    $("#jNet").textContent=(s.net>0?"+":"")+money(s.net); $("#jNet").className="v "+cls(s.net);
+    $("#jN").textContent=s.n;
+    $("#jWR").textContent=s.n?(s.winrate.toFixed(1)+"%"):"—";
+    $("#jPF").textContent=s.n?(s.pf>=99?"∞":s.pf.toFixed(2)):"—";
+    $("#jPF").className="v "+(s.n?(s.pf>=1.3?"pos":(s.pf>=1?"neu":"neg")):"neu");
+
+    bwCard("#jBest",d.best); bwCard("#jWorst",d.worst);
+    bars("#jSym",  d.by_symbol,  null, i=>i.sym);
+    bars("#jHour", d.by_hour,    null, i=>String(i.h).padStart(2,"0")+":00");
+    bars("#jStrat",d.by_strategy,null, i=>i.strat);
+    rowsInto("#jDay",d.by_day,i=>i.d);
+    rowsInto("#jMon",d.by_month,i=>i.m);
+
+    $("#jStore").textContent = d.stored_total
+      ? (d.stored_total+" trade oo kaydsan"+(d.since?(" · laga bilaabo "+when(d.since)):""))
+      : "Weli wax lama kaydin.";
+  }catch(e){}
+}
+
 /* ---- Tabs ---- */
 function tab(n){
   document.querySelectorAll(".pane").forEach(p=>p.classList.toggle("on",p.id==="p"+n));
   document.querySelectorAll(".appbar button").forEach(b=>b.classList.toggle("on",b.dataset.tab===n));
   if(n==="Chart") drawChart();
+  if(n==="Journal") loadJournal();
   try{ localStorage.setItem("mp_tab",n); }catch(e){}
   scrollTo({top:0,behavior:"instant"});
 }
@@ -1353,8 +1648,9 @@ document.querySelectorAll(".appbar button").forEach(b=>{
 });
 try{ const t=localStorage.getItem("mp_tab"); if(t && $("#p"+t)) tab(t); }catch(e){}
 
-if(accSel)accSel.addEventListener("change",tick);
+if(accSel)accSel.addEventListener("change",()=>{tick(); if(jLoaded)loadJournal();});
 tick(); setInterval(tick,5000);
+setInterval(()=>{ if(jLoaded && $("#pJournal").classList.contains("on")) loadJournal(); },30000);
 </script></body></html>"""
 
 T_ADMIN = """<!doctype html><html lang="so"><head><meta charset="utf-8">
