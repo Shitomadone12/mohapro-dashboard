@@ -49,6 +49,7 @@ CLOUD_TOKEN    = os.environ.get("CLOUD_TOKEN", "").strip()
 ADMIN_ACCOUNT  = re.sub(r"\D", "", os.environ.get("ADMIN_ACCOUNT", "").strip())
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 EXTRA_USERS    = os.environ.get("EXTRA_USERS", "")   # "acc:magac:pw, acc:magac:pw"
+BRAND_IMAGE_URL= os.environ.get("BRAND_IMAGE_URL", "").strip()   # sawir caadi ah (URL)
 SECRET_KEY     = os.environ.get("SECRET_KEY", "")
 
 STALE_SECONDS  = 90        # in ka badan = OFFLINE
@@ -123,6 +124,11 @@ CREATE TABLE IF NOT EXISTS closed_trades(
   UNIQUE(account, ticket)
 );
 CREATE INDEX IF NOT EXISTS ix_ct ON closed_trades(account, ts);
+CREATE TABLE IF NOT EXISTS branding(
+  account    TEXT PRIMARY KEY,
+  img        TEXT NOT NULL,
+  updated_at REAL NOT NULL
+);
 """
 
 def db():
@@ -525,6 +531,7 @@ def api_state():
         pend = con.execute(
             "SELECT cmd FROM commands WHERE account=? AND taken_at IS NULL ORDER BY id",
             (acc,)).fetchall()
+        br = con.execute("SELECT img FROM branding WHERE account=?", (acc,)).fetchone()
 
     data = json.loads(snap["data"]) if snap else {}
     age = (now - snap["updated_at"]) if snap else None
@@ -546,6 +553,7 @@ def api_state():
         pending=[p["cmd"] for p in pend],
         can_control=bool(u["can_control"]),
         is_admin=(u["role"] == "admin"),
+        brand=(br["img"] if br else BRAND_IMAGE_URL),
     )
 
 
@@ -573,6 +581,34 @@ def api_command():
 # --------------------------------------------------------------------------
 # Admin
 # --------------------------------------------------------------------------
+MAX_IMG_CHARS = 1_400_000        # ~1 MB oo base64 ah
+
+@app.post("/api/branding")
+@login_required
+def api_branding():
+    u = request.user
+    acc = _visible_account(u)
+    body = request.get_json(silent=True) or {}
+    img = str(body.get("img", "") or "")
+
+    if not img:                                   # tirtir
+        with db() as con:
+            con.execute("DELETE FROM branding WHERE account=?", (acc,))
+        return jsonify(ok=True, img="")
+
+    if not img.startswith(("data:image/jpeg;base64,", "data:image/png;base64,",
+                           "data:image/webp;base64,")):
+        return jsonify(ok=False, error="Nooca sawirka lama aqbali karo (JPEG/PNG/WEBP)."), 400
+    if len(img) > MAX_IMG_CHARS:
+        return jsonify(ok=False, error="Sawirku aad buu u weyn yahay."), 413
+
+    with db() as con:
+        con.execute("INSERT INTO branding(account,img,updated_at) VALUES(?,?,?)"
+                    " ON CONFLICT(account) DO UPDATE SET img=excluded.img,"
+                    " updated_at=excluded.updated_at", (acc, img, time.time()))
+    return jsonify(ok=True)
+
+
 @app.get("/admin")
 @admin_required
 def admin():
@@ -685,6 +721,34 @@ button:hover,.btn:hover{background:#2e2e2c}
 .msg.err{background:rgba(208,59,59,.15);border:1px solid var(--crit);color:#ffb3b3}
 .msg.ok{background:rgba(12,163,12,.15);border:1px solid var(--good);color:#a9e8a9}
 .foot{margin-top:18px;text-align:center;font-size:13px;color:var(--ink3)}
+.hero{position:relative;min-height:190px;display:flex;flex-direction:column;justify-content:flex-end;
+  padding:18px 20px;background:#151514;overflow:hidden;border-bottom:1px solid var(--line)}
+.hero-img{position:absolute;inset:0;background-size:cover;background-position:center;
+  background-repeat:no-repeat;transition:opacity .25s;opacity:0}
+.hero-img.on{opacity:1}
+.hero-fade{position:absolute;inset:0;background:
+  linear-gradient(180deg,rgba(13,13,13,.55) 0%,rgba(13,13,13,.15) 38%,rgba(13,13,13,.92) 100%)}
+.hero-ph{position:absolute;inset:0;background:
+  radial-gradient(1100px 380px at 18% -12%,rgba(57,135,229,.30),transparent 62%),
+  linear-gradient(135deg,#1b2432 0%,#141413 68%)}
+.hero-in{position:relative;z-index:2}
+.hero h1{font-size:34px;line-height:1.05;margin:0;letter-spacing:-.01em;
+  text-shadow:0 2px 14px rgba(0,0,0,.65)}
+.hero h1 b{color:var(--s1);font-weight:800}
+.hero .tag-line{color:#d8d7cf;font-size:13.5px;margin-top:5px;
+  text-shadow:0 1px 8px rgba(0,0,0,.7)}
+.hero-top{position:absolute;top:14px;left:20px;right:20px;z-index:3;
+  display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap}
+.glass{background:rgba(18,18,17,.72);backdrop-filter:blur(8px);
+  border:1px solid rgba(255,255,255,.14);color:#fff}
+.hero-top .btn{font-size:13px;padding:8px 12px;white-space:nowrap}
+.hero-btns{display:flex;gap:8px;margin-left:auto;flex:0 0 auto}
+@media(max-width:560px){ .hero{min-height:210px;padding:16px}
+  .hero-top{left:16px;right:16px}
+  .hero-top .pill{font-size:12px;padding:5px 9px}
+  .hero-top .btn{font-size:12px;padding:7px 10px}
+  .hero h1{font-size:28px} }
+#pick{display:none}
 .top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
   padding:14px 16px;background:var(--surface);border-bottom:1px solid var(--line)}
 .brand{font-weight:700;letter-spacing:.04em}
@@ -780,9 +844,28 @@ T_REGISTER = """<!doctype html><html lang="so"><head><meta charset="utf-8">
 T_DASH = """<!doctype html><html lang="so"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>MOHA PRO — Dashboard</title><style>""" + CSS + """</style></head><body>
+<div class="hero">
+  <div class="hero-ph"></div>
+  <div class="hero-img" id="heroImg"></div>
+  <div class="hero-fade"></div>
+
+  <div class="hero-top">
+    <span class="pill glass"><span class="dot" id="dot"></span><span id="st">Xiriirinaya…</span></span>
+    <span class="spacer"></span>
+    <span class="hero-btns">
+      <button class="btn glass" id="btnPic">Beddel sawirka</button>
+      <button class="btn glass" id="btnPicDel" style="display:none">Ka saar</button>
+    </span>
+  </div>
+
+  <div class="hero-in">
+    <h1>MOHA PRO <b>v59</b></h1>
+    <div class="tag-line">MT5 · Bot control · <span id="heroAcc">—</span></div>
+  </div>
+</div>
+<input type="file" id="pick" accept="image/png,image/jpeg,image/webp">
+
 <div class="top">
-  <span class="brand">MOHA PRO</span>
-  <span class="pill"><span class="dot" id="dot"></span><span id="st">Xiriirinaya…</span></span>
   {% if is_admin %}
   <select id="accSel" style="width:auto;padding:7px 10px;font-size:13px">
     {% for a in accounts %}<option value="{{ a }}" {% if a==me %}selected{% endif %}>{{ a }}</option>{% endfor %}
@@ -879,6 +962,8 @@ const cls=v=>v>0?"pos":(v<0?"neg":"neu");
 function paint(d){
   const x=d.data||{};
   $("#dot").className="dot "+(d.online?"on":"off");
+  $("#heroAcc").textContent="Account "+d.account;
+  setBrand(d.brand||"");
   $("#st").textContent=d.online?("ONLINE · "+(d.age||0)+"s ka hor")
     :(d.age==null?"Xog lama helin":"OFFLINE · "+d.age+"s ka hor");
   $("#bal").textContent=money(x.balance);
@@ -1037,6 +1122,70 @@ function drawChart(){
   });
 }
 addEventListener("resize",drawChart);
+
+/* ---- Sawirka hero-ka ---- */
+let BRAND="";
+function setBrand(src){
+  if(src===BRAND) return;
+  BRAND=src;
+  const el=$("#heroImg");
+  if(src){ el.style.backgroundImage="url('"+src.replace(/'/g,"%27")+"')"; el.classList.add("on"); }
+  else   { el.style.backgroundImage=""; el.classList.remove("on"); }
+  $("#btnPicDel").style.display = src ? "" : "none";
+}
+
+$("#btnPic").addEventListener("click",()=>$("#pick").click());
+
+$("#pick").addEventListener("change",async ev=>{
+  const f=ev.target.files && ev.target.files[0];
+  ev.target.value="";
+  if(!f) return;
+  const btn=$("#btnPic"); const old=btn.textContent;
+  btn.disabled=true; btn.textContent="Cusboonaysiinaya…";
+  try{
+    const data=await shrink(f,1400,0.82);
+    const body={img:data};
+    if(accSel)body.account=accSel.value;
+    const r=await fetch("/api/branding",{method:"POST",
+      headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const d=await r.json();
+    if(d.ok){ setBrand(data); }
+    else    { alert(d.error||"Sawirka lama keydin."); }
+  }catch(e){ alert("Sawirka lama akhriyi karin."); }
+  btn.disabled=false; btn.textContent=old;
+});
+
+$("#btnPicDel").addEventListener("click",async ()=>{
+  const body={img:""};
+  if(accSel)body.account=accSel.value;
+  await fetch("/api/branding",{method:"POST",
+    headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  setBrand("");
+});
+
+function shrink(file,maxW,q){
+  return new Promise((res,rej)=>{
+    const fr=new FileReader();
+    fr.onerror=()=>rej();
+    fr.onload=()=>{
+      const im=new Image();
+      im.onerror=()=>rej();
+      im.onload=()=>{
+        const sc=Math.min(1,maxW/im.width);
+        const w=Math.round(im.width*sc), h=Math.round(im.height*sc);
+        const cv=document.createElement("canvas");
+        cv.width=w; cv.height=h;
+        cv.getContext("2d").drawImage(im,0,0,w,h);
+        let out=cv.toDataURL("image/jpeg",q);
+        let step=q;
+        while(out.length>1300000 && step>0.4){ step-=0.12; out=cv.toDataURL("image/jpeg",step); }
+        res(out);
+      };
+      im.src=fr.result;
+    };
+    fr.readAsDataURL(file);
+  });
+}
 
 async function tick(){
   try{
