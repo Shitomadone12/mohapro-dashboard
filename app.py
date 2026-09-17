@@ -24,11 +24,19 @@ Web (session auth):
 
 import os, re, json, time, sqlite3, hmac, secrets, logging
 
-try:                                   # v3: Postgres (kayd joogto ah)
+# v3.1: Postgres — LABA darawal.
+#   pg8000  = Python saafi ah. Compile uma baahna, libpq uma baahna -> weligiis wuu rakibmayaa.
+#   psycopg2 = degdeg badan, laakiin wheel u baahan (Python version kasta mid u gaar ah).
+# Midkasta oo la helo waa la isticmaalayaa; pg8000 ayaa asal ahaan la rakibayaa.
+try:
     import psycopg2
     import psycopg2.extras
-except ImportError:                    # SQLite oo keliya
+except Exception:                      # ImportError, ama libpq maqan
     psycopg2 = None
+try:
+    import pg8000.dbapi as pg8000
+except Exception:
+    pg8000 = None
 from datetime import datetime, timezone
 from functools import wraps
 
@@ -53,9 +61,15 @@ def _db_path():
 DATABASE_URL   = os.environ.get("DATABASE_URL", "").strip()   # v3: Postgres (Neon)
 if DATABASE_URL.startswith("postgres://"):        # Neon/Heroku qaab duug ah
     DATABASE_URL = "postgresql://" + DATABASE_URL[len("postgres://"):]
-USE_PG = bool(DATABASE_URL) and psycopg2 is not None
-if DATABASE_URL and psycopg2 is None:
-    log.error("DATABASE_URL waa la dejiyay laakiin psycopg2 lama rakibin -> SQLite ayaa la isticmaalayaa.")
+
+PG_DRIVER = "psycopg2" if psycopg2 is not None else ("pg8000" if pg8000 is not None else "")
+USE_PG = bool(DATABASE_URL) and bool(PG_DRIVER)
+if DATABASE_URL and not PG_DRIVER:
+    log.error("DATABASE_URL waa la dejiyay laakiin darawal Postgres lama helin "
+              "(pg8000 ama psycopg2) -> SQLite ayaa la isticmaalayaa. "
+              "Ku dar 'pg8000' requirements.txt.")
+elif USE_PG:
+    log.info("Postgres: darawalka la isticmaalayo = %s", PG_DRIVER)
 
 DB_PATH        = _db_path()
 CLOUD_TOKEN    = os.environ.get("CLOUD_TOKEN", "").strip()
@@ -165,7 +179,53 @@ CREATE TABLE IF NOT EXISTS branding(
 # v3: LABA DIALECT — SQLite (local/fallback) iyo Postgres (Neon, joogto ah)
 # Koodka intiisa kale isku qaab ayuu u qoran yahay: con.execute("... ?", (a,b))
 # --------------------------------------------------------------------------
-DB_ERRORS = (sqlite3.Error,) if psycopg2 is None else (sqlite3.Error, psycopg2.Error)
+def _db_error_types():
+    t = [sqlite3.Error]
+    if psycopg2 is not None:
+        t.append(psycopg2.Error)
+    if pg8000 is not None:
+        t.append(pg8000.Error)
+    return tuple(t)
+
+
+DB_ERRORS = _db_error_types()
+
+
+def _pg_connect():
+    """Xidhiidh Postgres — darawalka la helay."""
+    if PG_DRIVER == "psycopg2":
+        return psycopg2.connect(DATABASE_URL, connect_timeout=10)
+    # pg8000 DSN ma aqbalo -> URL-ka waa la kala jarayaa.
+    import ssl as _ssl
+    from urllib.parse import urlparse, unquote
+    u = urlparse(DATABASE_URL)
+    ctx = _ssl.create_default_context()          # Neon SSL waa waajib (SNI la socda)
+    return pg8000.connect(
+        user=unquote(u.username or ""),
+        password=unquote(u.password or ""),
+        host=u.hostname or "localhost",
+        port=int(u.port or 5432),
+        database=(u.path or "/postgres").lstrip("/") or "postgres",
+        ssl_context=(ctx if (u.hostname or "") not in ("localhost", "127.0.0.1") else None),
+        timeout=10,
+    )
+
+
+class _DictCursor:
+    """pg8000 tuple ayuu soo celiya — dict u beddel si koodku isku mid u noqdo."""
+
+    __slots__ = ("cur", "cols")
+
+    def __init__(self, cur):
+        self.cur = cur
+        self.cols = [d[0] for d in (cur.description or [])]
+
+    def fetchone(self):
+        r = self.cur.fetchone()
+        return None if r is None else dict(zip(self.cols, r))
+
+    def fetchall(self):
+        return [dict(zip(self.cols, r)) for r in self.cur.fetchall()]
 
 
 def _pg_sql(sql):
@@ -197,9 +257,13 @@ class _Conn:
 
     def execute(self, sql, params=()):
         if self.pg:
-            cur = self.raw.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            if PG_DRIVER == "psycopg2":
+                cur = self.raw.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+                cur.execute(_pg_sql(sql), tuple(params))
+                return cur
+            cur = self.raw.cursor()
             cur.execute(_pg_sql(sql), tuple(params))
-            return cur
+            return _DictCursor(cur)
         return self.raw.execute(sql, params)
 
     def executemany(self, sql, seq):
@@ -250,8 +314,7 @@ class _Conn:
 
 def db():
     if USE_PG:
-        raw = psycopg2.connect(DATABASE_URL, connect_timeout=10)
-        return _Conn(raw, True)
+        return _Conn(_pg_connect(), True)
     con = sqlite3.connect(DB_PATH, timeout=15)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
@@ -584,13 +647,14 @@ def healthz():
     if not (USE_PG or DB_PATH.startswith("/var/data")):
         warnings.append("Kayd joogto ah ma jiro -> jirnalka, sawirka iyo isticmaalayaasha "
                         "way tirtirmayaan restart kasta. Ku dar DATABASE_URL (Postgres).")
-    if DATABASE_URL and psycopg2 is None:
-        problems.append("DATABASE_URL waa la dejiyay laakiin psycopg2 lama rakibin -> "
-                        "ku dar psycopg2-binary requirements.txt.")
+    if DATABASE_URL and not PG_DRIVER:
+        problems.append("DATABASE_URL waa la dejiyay laakiin darawal Postgres lama helin -> "
+                        "ku dar 'pg8000' requirements.txt.")
 
     return jsonify(
         ok=(not problems),
         db_engine=("postgres" if USE_PG else "sqlite"),
+        db_driver=(PG_DRIVER if USE_PG else "sqlite3"),
         db_path=("(postgres)" if USE_PG else DB_PATH),
         db_persistent=bool(USE_PG or DB_PATH.startswith("/var/data")),
         admin_account_set=bool(ADMIN_ACCOUNT),
