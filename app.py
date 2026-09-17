@@ -22,7 +22,7 @@ Web (session auth):
   POST /api/command       -> amar loo diro EA-da
 """
 
-import os, re, json, time, sqlite3, hmac, secrets, logging
+import os, re, json, time, sqlite3, hmac, secrets, logging, threading
 
 # v3.1: Postgres — LABA darawal.
 #   pg8000  = Python saafi ah. Compile uma baahna, libpq uma baahna -> weligiis wuu rakibmayaa.
@@ -263,11 +263,12 @@ class _Conn:
       (sqlite3 asalkiisa ma xidho -> xidhitaan la'aan = 'database is locked'.)
     """
 
-    __slots__ = ("raw", "pg")
+    __slots__ = ("raw", "pg", "pooled")
 
-    def __init__(self, raw, pg):
+    def __init__(self, raw, pg, pooled=False):
         self.raw = raw
         self.pg = pg
+        self.pooled = pooled
 
     def execute(self, sql, params=()):
         if self.pg:
@@ -307,6 +308,9 @@ class _Conn:
         self.raw.commit()
 
     def close(self):
+        """Xidhiidhka la dhawrayo LAMA xidho - dib ayaa loo isticmaalayaa."""
+        if self.pooled:
+            return
         try:
             self.raw.close()
         except Exception:
@@ -321,14 +325,60 @@ class _Conn:
                 self.raw.commit()
             else:
                 self.raw.rollback()
+        except Exception:                      # noqa: BLE001
+            _pg_pool_drop()                    # xidhiidhku waa xun -> tuur
+            return False
         finally:
+            if exc_type is not None and self.pooled:
+                _pg_pool_drop()                # qalad kadib dib ha loo isticmaalin
             self.close()
         return False
 
 
+# --------------------------------------------------------------------------
+# v3.2: XIDHIIDH LA DHAWRAYO (pool)
+# Hore: codsi KASTA xidhiidh cusub oo Neon ah (TLS handshake ~200ms, Ohio).
+# MT5-du ilbiriqsi kasta codsi bay dirtaa -> worker-ku wuu buuxsamayaa,
+# browser-yaduna way sugayaan ilaa ay ka quustaan.
+# Hadda: thread kastaa HAL xidhiidh ayuu haystaa oo dib u isticmaalayaa.
+# --------------------------------------------------------------------------
+_tl = threading.local()
+PG_PING_AFTER = 60          # ilbiriqsi: intaas kadib 'SELECT 1' hubi
+
+
+def _pg_pool_drop():
+    raw = getattr(_tl, "raw", None)
+    _tl.raw = None
+    _tl.last = 0.0
+    if raw is not None:
+        try:
+            raw.close()
+        except Exception:
+            pass
+
+
+def _pg_pooled():
+    now = time.time()
+    raw = getattr(_tl, "raw", None)
+    if raw is not None and now - getattr(_tl, "last", 0.0) > PG_PING_AFTER:
+        # Xidhiidhku ma weli nool yahay? (hal mar daqiiqaddii, ma aha codsi kasta)
+        try:
+            c = raw.cursor()
+            c.execute("SELECT 1")
+            c.fetchone()
+        except Exception:                      # noqa: BLE001
+            _pg_pool_drop()
+            raw = None
+    if raw is None:
+        raw = _pg_connect()
+        _tl.raw = raw
+    _tl.last = now
+    return raw
+
+
 def db():
     if USE_PG:
-        return _Conn(_pg_connect(), True)
+        return _Conn(_pg_pooled(), True, pooled=True)
     con = sqlite3.connect(DB_PATH, timeout=15)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
