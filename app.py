@@ -191,13 +191,28 @@ def _db_error_types():
 DB_ERRORS = _db_error_types()
 
 
-PG_CONNECT_TIMEOUT = int(os.environ.get("PG_CONNECT_TIMEOUT", "15"))
+PG_CONNECT_TIMEOUT = int(os.environ.get("PG_CONNECT_TIMEOUT", "8"))
 PG_CONNECT_TRIES   = int(os.environ.get("PG_CONNECT_TRIES", "3"))
+PG_STATEMENT_MS    = int(os.environ.get("PG_STATEMENT_MS", "8000"))
+
+
+def _pg_harden(raw):
+    """Server-side: query weligeed ma istaagayso. Socket-ka timeout wuu leeyahay,
+    tanina waxay ilaalinaysaa dhinaca server-ka."""
+    try:
+        c = raw.cursor()
+        c.execute("SET statement_timeout = %d" % PG_STATEMENT_MS)
+        c.execute("SET idle_in_transaction_session_timeout = %d" % (PG_STATEMENT_MS * 2))
+        raw.commit()
+    except Exception:                                        # noqa: BLE001
+        pass
+    return raw
 
 
 def _pg_connect_once():
     if PG_DRIVER == "psycopg2":
-        return psycopg2.connect(DATABASE_URL, connect_timeout=PG_CONNECT_TIMEOUT)
+        return _pg_harden(psycopg2.connect(DATABASE_URL,
+                                           connect_timeout=PG_CONNECT_TIMEOUT))
     # pg8000 DSN ma aqbalo -> URL-ka waa la kala jarayaa.
     import ssl as _ssl
     from urllib.parse import urlparse, unquote
@@ -206,16 +221,16 @@ def _pg_connect_once():
     ctx = None
     if host not in ("localhost", "127.0.0.1"):
         ctx = _ssl.create_default_context()      # Neon: SSL waajib, SNI la socda
-    return pg8000.connect(
+    return _pg_harden(pg8000.connect(
         user=unquote(u.username or ""),
         password=unquote(u.password or ""),
         host=host,
         port=int(u.port or 5432),
         database=(u.path or "/postgres").lstrip("/") or "postgres",
         ssl_context=ctx,
-        timeout=PG_CONNECT_TIMEOUT,
+        timeout=PG_CONNECT_TIMEOUT,      # socket timeout - AKHRIS KASTA wuu xadidan yahay
         tcp_keepalive=True,
-    )
+    ))
 
 
 def _pg_connect():
@@ -331,6 +346,8 @@ class _Conn:
         finally:
             if exc_type is not None and self.pooled:
                 _pg_pool_drop()                # qalad kadib dib ha loo isticmaalin
+                if exc_type is not DbUnavailable and issubclass(exc_type, DB_ERRORS):
+                    _cb_lose(exc)              # qaladka query-ga dabka ha tiriyo
             self.close()
         return False
 
@@ -343,7 +360,47 @@ class _Conn:
 # Hadda: thread kastaa HAL xidhiidh ayuu haystaa oo dib u isticmaalayaa.
 # --------------------------------------------------------------------------
 _tl = threading.local()
-PG_PING_AFTER = 60          # ilbiriqsi: intaas kadib 'SELECT 1' hubi
+PG_PING_AFTER   = 20        # ilbiriqsi: intaas kadib 'SELECT 1' hubi
+PG_MAX_IDLE     = 150       # ilbiriqsi: intaas kadib xidhiidhka la cusboonaysiiyo
+PG_TRIP_FAILS   = 3         # guuldarro isku xigta -> dabku wuu go'ayaa
+PG_TRIP_SECONDS = int(os.environ.get("PG_TRIP_SECONDS", "10"))
+# 10s: ku filan in thread-yada aan la xannibin, gaaban si app-ku dhakhso u soo kabsado.
+# Hal thread oo keliya ayaa tijaabinaya (_probe_lock), sidaas darteed gaaban waa ammaan.
+
+_cb_lock   = threading.Lock()
+_probe_lock = threading.Lock()   # xidhiidh cusub: HAL thread oo keliya marka la shakisan yahay
+_cb_fails = 0               # guuldarrooyin isku xigta
+_cb_until = 0.0             # waqtiga dabku dib u shidmayo
+_cb_trips = 0               # immisa jeer uu go'ay (tirakoob)
+
+
+class DbUnavailable(Exception):
+    """Database ma diyaar aha. Degdeg ayaa loo tuurayaa - LAMA sugayo."""
+
+
+def _cb_ok():
+    """Dabku ma shidan yahay?"""
+    with _cb_lock:
+        return time.time() >= _cb_until
+
+
+def _cb_win():
+    global _cb_fails, _cb_until
+    with _cb_lock:
+        if _cb_fails or _cb_until:
+            _cb_fails = 0
+            _cb_until = 0.0
+
+
+def _cb_lose(err):
+    global _cb_fails, _cb_until, _cb_trips
+    with _cb_lock:
+        _cb_fails += 1
+        if _cb_fails >= PG_TRIP_FAILS and time.time() >= _cb_until:
+            _cb_until = time.time() + PG_TRIP_SECONDS
+            _cb_trips += 1
+            log.error("DATABASE: dabku wuu go'ay (%d guuldarro). %ds ma isku dayeyno. %s",
+                      _cb_fails, PG_TRIP_SECONDS, str(err)[:160])
 
 
 def _pg_pool_drop():
@@ -358,10 +415,19 @@ def _pg_pool_drop():
 
 
 def _pg_pooled():
-    now = time.time()
-    raw = getattr(_tl, "raw", None)
-    if raw is not None and now - getattr(_tl, "last", 0.0) > PG_PING_AFTER:
-        # Xidhiidhku ma weli nool yahay? (hal mar daqiiqaddii, ma aha codsi kasta)
+    if not _cb_ok():
+        # Dabku wuu go'an yahay -> ISLA MARKIIBA tuur. Thread ma xannibayno,
+        # sidaas darteed browser-yadu weligood ma safaysanayaan.
+        raise DbUnavailable("database circuit open")
+
+    now  = time.time()
+    raw  = getattr(_tl, "raw", None)
+    idle = now - getattr(_tl, "last", 0.0)
+
+    if raw is not None and idle > PG_MAX_IDLE:
+        _pg_pool_drop()                       # duug - cusub ka fiican
+        raw = None
+    elif raw is not None and idle > PG_PING_AFTER:
         try:
             c = raw.cursor()
             c.execute("SELECT 1")
@@ -369,9 +435,23 @@ def _pg_pooled():
         except Exception:                      # noqa: BLE001
             _pg_pool_drop()
             raw = None
+
     if raw is None:
-        raw = _pg_connect()
-        _tl.raw = raw
+        # Marka guuldarro dhow jirto, HAL thread oo keliya ayaa isku dayaya.
+        # Haddii kale thread kasta PG_CONNECT_TIMEOUT wuu sugayaa -> worker wuu buuxsamayaa.
+        suspect = _cb_fails > 0
+        if suspect and not _probe_lock.acquire(blocking=False):
+            raise DbUnavailable("database probe in progress")
+        try:
+            raw = _pg_connect()
+            _tl.raw = raw
+        except Exception as e:                 # noqa: BLE001
+            _cb_lose(e)
+            raise
+        finally:
+            if suspect:
+                _probe_lock.release()
+    _cb_win()
     _tl.last = now
     return raw
 
@@ -513,12 +593,18 @@ _DB_LAST_ERR = ""
 _DB_TRIES = 0
 
 
-def ensure_db():
-    """init_db() hal mar oo guulaysta. Weligiis ma tuurayo."""
+def ensure_db(retry=True):
+    """init_db() hal mar oo guulaysta. Weligiis ma tuurayo.
+
+    retry=True  -> kacitaanka (isku day dhowr jeer)
+    retry=False -> codsi caadi ah (HAL isku day, sug la'aan)
+    """
     global _DB_READY, _DB_LAST_ERR, _DB_TRIES
     if _DB_READY:
         return True
-    tries = max(1, PG_CONNECT_TRIES) if USE_PG else 1
+    if USE_PG and not _cb_ok():
+        return False                  # dabku go'an - ha sugin
+    tries = (2 if USE_PG else 1) if retry else 1
     for i in range(tries):
         _DB_TRIES += 1
         try:
@@ -531,15 +617,27 @@ def ensure_db():
         except Exception as e:                               # noqa: BLE001
             _DB_LAST_ERR = "%s: %s" % (type(e).__name__, str(e)[:240])
             log.error("init_db fashilmay (isku day #%d): %s", _DB_TRIES, _DB_LAST_ERR)
-            if i + 1 < tries:
+            if retry and i + 1 < tries:
                 time.sleep(2)
     return False
 
 
 @app.before_request
 def _db_gate():
+    # Codsiga caadiga ah: HAL isku day, sug la'aan, oo kaliya haddii dabku shidan yahay.
     if not _DB_READY:
-        ensure_db()
+        ensure_db(retry=False)
+
+
+@app.errorhandler(DbUnavailable)
+def _db_unavailable(e):
+    """Database ma diyaar aha -> 503 degdeg ah. App-ku ma dhimanayo."""
+    return jsonify(ok=False, error="Database ma diyaar aha - dib isku day."), 503
+
+
+@app.errorhandler(500)
+def _internal(e):
+    return jsonify(ok=False, error="Qalad server-ka."), 500
 
 
 ensure_db()   # isku day marka la kacayo - laakiin ma dilayo app-ka
@@ -764,6 +862,9 @@ def healthz():
         db_ready=_DB_READY,
         db_error=(_DB_LAST_ERR or None),
         db_init_tries=_DB_TRIES,
+        db_circuit=("open" if not _cb_ok() else "closed"),
+        db_circuit_trips=_cb_trips,
+        db_recent_fails=_cb_fails,
         db_engine=("postgres" if USE_PG else "sqlite"),
         db_driver=(PG_DRIVER if USE_PG else "sqlite3"),
         db_path=("(postgres)" if USE_PG else DB_PATH),
