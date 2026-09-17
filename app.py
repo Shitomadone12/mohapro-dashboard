@@ -23,6 +23,12 @@ Web (session auth):
 """
 
 import os, re, json, time, sqlite3, hmac, secrets, logging
+
+try:                                   # v3: Postgres (kayd joogto ah)
+    import psycopg2
+    import psycopg2.extras
+except ImportError:                    # SQLite oo keliya
+    psycopg2 = None
 from datetime import datetime, timezone
 from functools import wraps
 
@@ -43,6 +49,13 @@ def _db_path():
     if os.path.isdir("/var/data") and os.access("/var/data", os.W_OK):
         return "/var/data/mohapro.db"
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "mohapro.db")
+
+DATABASE_URL   = os.environ.get("DATABASE_URL", "").strip()   # v3: Postgres (Neon)
+if DATABASE_URL.startswith("postgres://"):        # Neon/Heroku qaab duug ah
+    DATABASE_URL = "postgresql://" + DATABASE_URL[len("postgres://"):]
+USE_PG = bool(DATABASE_URL) and psycopg2 is not None
+if DATABASE_URL and psycopg2 is None:
+    log.error("DATABASE_URL waa la dejiyay laakiin psycopg2 lama rakibin -> SQLite ayaa la isticmaalayaa.")
 
 DB_PATH        = _db_path()
 CLOUD_TOKEN    = os.environ.get("CLOUD_TOKEN", "").strip()
@@ -89,6 +102,7 @@ CREATE TABLE IF NOT EXISTS users(
   role        TEXT    NOT NULL DEFAULT 'user',
   approved    INTEGER NOT NULL DEFAULT 0,
   can_control INTEGER NOT NULL DEFAULT 1,
+  pw_self     INTEGER NOT NULL DEFAULT 0,
   created_at  TEXT    NOT NULL,
   last_login  TEXT
 );
@@ -147,16 +161,118 @@ CREATE TABLE IF NOT EXISTS branding(
 );
 """
 
+# --------------------------------------------------------------------------
+# v3: LABA DIALECT — SQLite (local/fallback) iyo Postgres (Neon, joogto ah)
+# Koodka intiisa kale isku qaab ayuu u qoran yahay: con.execute("... ?", (a,b))
+# --------------------------------------------------------------------------
+DB_ERRORS = (sqlite3.Error,) if psycopg2 is None else (sqlite3.Error, psycopg2.Error)
+
+
+def _pg_sql(sql):
+    """?  ->  %s   (xariiqyada hal-xaraf ah kuma jiraan SQL-kan)."""
+    return sql.replace("?", "%s")
+
+
+def _pg_schema(sql):
+    """SQLite DDL -> Postgres DDL."""
+    sql = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "BIGSERIAL PRIMARY KEY")
+    # REAL ee Postgres waa float4 (7 tirooyin) - epoch-ku wuu jabayaa. Isticmaal float8.
+    sql = re.sub(r"\bREAL\b", "DOUBLE PRECISION", sql)
+    return sql
+
+
+class _Conn:
+    """Duub ku dhow sqlite3.Connection, laakiin Postgres-na wuu qabtaa.
+
+    - execute(sql, params) -> cursor (fetchone/fetchall -> dict-like)
+    - `with db() as con:`  -> commit haddii wax khaldan jirin, kadibna XIR.
+      (sqlite3 asalkiisa ma xidho -> xidhitaan la'aan = 'database is locked'.)
+    """
+
+    __slots__ = ("raw", "pg")
+
+    def __init__(self, raw, pg):
+        self.raw = raw
+        self.pg = pg
+
+    def execute(self, sql, params=()):
+        if self.pg:
+            cur = self.raw.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute(_pg_sql(sql), tuple(params))
+            return cur
+        return self.raw.execute(sql, params)
+
+    def executemany(self, sql, seq):
+        if self.pg:
+            cur = self.raw.cursor()
+            cur.executemany(_pg_sql(sql), [tuple(x) for x in seq])
+            return cur
+        return self.raw.executemany(sql, seq)
+
+    def script(self, sql):
+        """CREATE TABLE ... ; ... — mid mid."""
+        if not self.pg:
+            self.raw.executescript(sql)
+            return
+        cur = self.raw.cursor()
+        for stmt in _pg_schema(sql).split(";"):
+            stmt = stmt.strip()
+            if stmt:
+                cur.execute(stmt)
+
+    def insert_ignore(self, sql, params=(), conflict=""):
+        """INSERT ... ON CONFLICT DO NOTHING (labada dialect)."""
+        tail = " ON CONFLICT %s DO NOTHING" % conflict if conflict else " ON CONFLICT DO NOTHING"
+        return self.execute(sql + tail, params)
+
+    def commit(self):
+        self.raw.commit()
+
+    def close(self):
+        try:
+            self.raw.close()
+        except Exception:
+            pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            if exc_type is None:
+                self.raw.commit()
+            else:
+                self.raw.rollback()
+        finally:
+            self.close()
+        return False
+
+
 def db():
+    if USE_PG:
+        raw = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+        return _Conn(raw, True)
     con = sqlite3.connect(DB_PATH, timeout=15)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA busy_timeout=8000")
-    return con
+    return _Conn(con, False)
 
 def init_db():
     with db() as con:
-        con.executescript(_SCHEMA)
+        con.script(_SCHEMA)
+        # Migration: DB hore oo aan pw_self lahayn.
+        # Postgres: statement fashilma wuxuu burinayaa transaction-ka oo dhan ->
+        # IF NOT EXISTS ayaa loo baahan yahay. SQLite taas ma taageerto -> try/except.
+        if con.pg:
+            con.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS pw_self"
+                        " INTEGER NOT NULL DEFAULT 0")
+        else:
+            try:
+                con.execute("ALTER TABLE users ADD COLUMN pw_self INTEGER NOT NULL DEFAULT 0")
+                log.info("Migration: users.pw_self la daray")
+            except DB_ERRORS:
+                pass
         if ADMIN_ACCOUNT and ADMIN_PASSWORD:
             row = con.execute("SELECT id FROM users WHERE account=?", (ADMIN_ACCOUNT,)).fetchone()
             pwh = generate_password_hash(ADMIN_PASSWORD)
@@ -192,14 +308,30 @@ def init_db():
             if uacc == ADMIN_ACCOUNT:
                 continue
             uh = generate_password_hash(upw)
-            if con.execute("SELECT 1 FROM users WHERE account=?", (uacc,)).fetchone():
+            row = con.execute("SELECT pw_self FROM users WHERE account=?", (uacc,)).fetchone()
+            if row is not None:
+                if int(row["pw_self"] or 0) == 1:
+                    # Qofku password uu isagu doortay wuu leeyahay -> HA TAABAN.
+                    con.execute("UPDATE users SET name=?, approved=1 WHERE account=?",
+                                (uname, uacc))
+                    log.info("EXTRA_USERS: %s (password-kiisa gaarka ah waa la ilaaliyay)", uacc)
+                    continue
                 con.execute("UPDATE users SET pw=?, name=?, approved=1 WHERE account=?",
                             (uh, uname, uacc))
             else:
                 con.execute(
-                    "INSERT INTO users(account,name,pw,role,approved,can_control,created_at)"
-                    " VALUES(?,?,?,'user',1,1,?)", (uacc, uname, uh, _now_iso()))
+                    "INSERT INTO users(account,name,pw,role,approved,can_control,pw_self,created_at)"
+                    " VALUES(?,?,?,'user',1,1,0,?)", (uacc, uname, uh, _now_iso()))
             log.info("EXTRA_USERS: %s diyaar", uacc)
+
+def _col(row, key, default=None):
+    """sqlite3.Row iyo RealDictRow labadaba - si ammaan ah tiir u soo qaad."""
+    try:
+        v = row[key]
+    except (KeyError, IndexError):
+        return default
+    return default if v is None else v
+
 
 def _num(v, d=0.0):
     try:
@@ -222,8 +354,8 @@ def _save_closed(con, acc, rows):
         ct = int(_num(t.get("ct") or t.get("ot")))
         if ct <= 0:
             continue
-        con.execute(
-            "INSERT OR IGNORE INTO ctrades"
+        con.insert_ignore(
+            "INSERT INTO ctrades"
             "(account,ticket,sym,type,strat,lot,points,profit,ot,ct)"
             " VALUES(?,?,?,?,?,?,?,?,?,?)",
             (acc, tk,
@@ -232,7 +364,8 @@ def _save_closed(con, acc, rows):
              str(t.get("strat") or t.get("strategy") or "")[:16],
              _num(t.get("lot") or t.get("lots")),
              _num(t.get("points")), _num(t.get("profit")),
-             int(_num(t.get("ot"))), ct))
+             int(_num(t.get("ot"))), ct),
+            conflict="(account, ticket)")
         n += 1
     return n
 
@@ -380,11 +513,12 @@ def ea_trades():
             if not tk:
                 continue
             try:
-                con.execute("INSERT OR IGNORE INTO closed_trades(account,ticket,data,ts)"
-                            " VALUES(?,?,?,?)",
-                            (acc, tk, json.dumps(t, ensure_ascii=False), now))
+                con.insert_ignore("INSERT INTO closed_trades(account,ticket,data,ts)"
+                                  " VALUES(?,?,?,?)",
+                                  (acc, tk, json.dumps(t, ensure_ascii=False), now),
+                                  conflict="(account, ticket)")
                 n += 1
-            except sqlite3.Error:
+            except DB_ERRORS:
                 pass
         con.execute(
             "DELETE FROM closed_trades WHERE account=? AND id NOT IN"
@@ -447,14 +581,18 @@ def healthz():
         problems.append("Database qalad: " + str(db_err))
     if ADMIN_ACCOUNT and nusers == 0:
         problems.append("Isticmaale lama abuurin. Dib u deploy gareey.")
-    if not DB_PATH.startswith("/var/data"):
-        warnings.append("Disk joogto ah ma jiro -> isticmaalayaasha /register way tirtirmayaan "
-                        "restart kasta. Isticmaal EXTRA_USERS, ama ku dar Disk /var/data.")
+    if not (USE_PG or DB_PATH.startswith("/var/data")):
+        warnings.append("Kayd joogto ah ma jiro -> jirnalka, sawirka iyo isticmaalayaasha "
+                        "way tirtirmayaan restart kasta. Ku dar DATABASE_URL (Postgres).")
+    if DATABASE_URL and psycopg2 is None:
+        problems.append("DATABASE_URL waa la dejiyay laakiin psycopg2 lama rakibin -> "
+                        "ku dar psycopg2-binary requirements.txt.")
 
     return jsonify(
         ok=(not problems),
-        db_path=DB_PATH,
-        db_persistent=DB_PATH.startswith("/var/data"),
+        db_engine=("postgres" if USE_PG else "sqlite"),
+        db_path=("(postgres)" if USE_PG else DB_PATH),
+        db_persistent=bool(USE_PG or DB_PATH.startswith("/var/data")),
         admin_account_set=bool(ADMIN_ACCOUNT),
         admin_account=(ADMIN_ACCOUNT[:3] + "***" + ADMIN_ACCOUNT[-2:]) if len(ADMIN_ACCOUNT) > 5 else ("set" if ADMIN_ACCOUNT else ""),
         admin_password_set=bool(ADMIN_PASSWORD),
@@ -536,6 +674,33 @@ def register():
                     ok = ("Diiwaangelintu way guulaysatay. Admin-ku waa inuu ku ansixiyaa "
                           "ka hor inta aadan gali karin.")
     return render_template_string(T_REGISTER, err=err, ok=ok)
+
+
+@app.route("/password", methods=["GET", "POST"])
+@login_required
+def change_password():
+    """Qofku password-kiisa isagu ha beddesho. pw_self=1 -> EXTRA_USERS ma tirtirayo."""
+    u = request.user
+    err = ok = None
+    if request.method == "POST":
+        cur  = request.form.get("current", "")
+        new1 = request.form.get("password", "")
+        new2 = request.form.get("password2", "")
+        if not check_password_hash(u["pw"], cur):
+            err = "Password-kaaga hadda waa khaldan yahay."
+        elif len(new1) < 8:
+            err = "Password-ka cusub waa inuu ugu yaraan 8 xaraf ahaadaa."
+        elif new1 != new2:
+            err = "Labada password ma is le'ekaan."
+        elif new1 == cur:
+            err = "Password-ka cusub waa inuu ka duwanaadaa kii hore."
+        else:
+            with db() as con:
+                con.execute("UPDATE users SET pw=?, pw_self=1 WHERE account=?",
+                            (generate_password_hash(new1), u["account"]))
+            log.info("Password la beddelay: %s", u["account"])
+            ok = "Password-ka waa la beddelay. Mar dambe kan cusub isticmaal."
+    return render_template_string(T_PASSWORD, err=err, ok=ok, acc=u["account"])
 
 
 @app.get("/logout")
@@ -769,6 +934,7 @@ def admin():
             account=u["account"], name=u["name"], role=u["role"],
             approved=bool(u["approved"]), can_control=bool(u["can_control"]),
             created_at=u["created_at"], last_login=u["last_login"] or "-",
+            pw_self=bool(_col(u, "pw_self", 0)),
             online=(up is not None and now - up < STALE_SECONDS),
             has_data=(up is not None),
         ))
@@ -808,8 +974,12 @@ def admin_user():
         elif action == "reset_pw":
             newpw = request.form.get("newpw", "")
             if len(newpw) >= 8:
-                con.execute("UPDATE users SET pw=? WHERE account=?",
+                # pw_self=1 -> EXTRA_USERS boot-ka xiga ma tirtirayo.
+                con.execute("UPDATE users SET pw=?, pw_self=1 WHERE account=?",
                             (generate_password_hash(newpw), acc))
+        elif action == "pw_env":
+            # Dib ugu celi password-ka Render (EXTRA_USERS) - boot-ka xiga.
+            con.execute("UPDATE users SET pw_self=0 WHERE account=?", (acc,))
     return redirect(url_for("admin"))
 
 
@@ -994,6 +1164,28 @@ T_REGISTER = """<!doctype html><html lang="so"><head><meta charset="utf-8">
   <p class="foot"><a href="/login">Dib ugu noqo galitaanka</a></p>
 </div></div></body></html>"""
 
+T_PASSWORD = """<!doctype html><html lang="so"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MOHA PRO \u2014 Beddel password</title><style>""" + CSS + """</style></head><body>
+<div class="center"><div class="card auth">
+  <h1>Beddel password-ka</h1>
+  <p class="sub">Account: <b>{{ acc }}</b></p>
+  <form method="post" autocomplete="off">
+    <label for="c">Password-kaaga hadda</label>
+    <input id="c" name="current" type="password" required autocomplete="current-password">
+    <label for="p">Password cusub (ugu yaraan 8 xaraf)</label>
+    <input id="p" name="password" type="password" minlength="8" required
+           autocomplete="new-password">
+    <label for="p2">Ku celi password-ka cusub</label>
+    <input id="p2" name="password2" type="password" minlength="8" required
+           autocomplete="new-password">
+    {% if err %}<div class="msg err">{{ err }}</div>{% endif %}
+    {% if ok %}<div class="msg ok">{{ ok }}</div>{% endif %}
+    <button class="btn-pri" type="submit">KAYDI</button>
+  </form>
+  <p class="foot"><a href="/dashboard">Dib ugu noqo dashboard-ka</a></p>
+</div></div></body></html>"""
+
 T_DASH = """<!doctype html><html lang="so"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>MOHA PRO</title><style>""" + CSS + """
@@ -1130,6 +1322,7 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
   <span class="spacer"></span>
   <span class="pill">{{ name }}</span>
   {% if is_admin %}<a class="btn" href="/admin">Maamul</a>{% endif %}
+  <a class="btn" href="/password">Password</a>
   <a class="btn" href="/logout">Bax</a>
 </div>
 
@@ -1665,7 +1858,7 @@ T_ADMIN = """<!doctype html><html lang="so"><head><meta charset="utf-8">
     <h2>Isticmaalayaasha</h2>
     <div class="scroll xscroll"><table>
       <thead><tr><th>Account</th><th>Magac</th><th>Xaalad</th><th>Doorka</th>
-        <th>Xog</th><th>Galitaankii u dambeeyay</th><th>Ficil</th></tr></thead>
+        <th>Password</th><th>Xog</th><th>Galitaankii u dambeeyay</th><th>Ficil</th></tr></thead>
       <tbody>
       {% for r in rows %}
         <tr>
@@ -1674,6 +1867,8 @@ T_ADMIN = """<!doctype html><html lang="so"><head><meta charset="utf-8">
           <td>{% if r.approved %}<span class="tag buy">LA ANSIXIYAY</span>
               {% else %}<span class="tag sell">SUGAYA</span>{% endif %}</td>
           <td>{{ r.role }}{% if not r.can_control %} · akhris{% endif %}</td>
+          <td>{% if r.pw_self %}<span class="tag buy">gaar ah</span>
+              {% else %}<span class="tag">Render</span>{% endif %}</td>
           <td>{% if r.online %}<span class="tag buy">ONLINE</span>
               {% elif r.has_data %}<span class="tag">offline</span>
               {% else %}<span class="tag">—</span>{% endif %}</td>
@@ -1689,6 +1884,7 @@ T_ADMIN = """<!doctype html><html lang="so"><head><meta charset="utf-8">
               {% else %}
                 <button name="action" value="approve" class="b-go">Ansixi</button>
               {% endif %}
+              {% if r.pw_self %}<button name="action" value="pw_env">Password dib u celi</button>{% endif %}
               <button name="action" value="delete" class="b-stop">Tirtir</button>
             </form>
             {% else %}<span class="tag">adiga</span>{% endif %}
@@ -1711,6 +1907,10 @@ T_ADMIN = """<!doctype html><html lang="so"><head><meta charset="utf-8">
       <div><button class="btn-pri" style="margin:0" type="submit">KU DAR</button></div>
     </form>
     <p class="note">Isticmaalaha sidan loo abuuray si toos ah ayaa loo ansixiyaa.</p>
+    <p class="note"><b>Tiirka Password:</b> <i>Render</i> = password-ku wuxuu ka yimaadaa
+    <code>EXTRA_USERS</code>, boot kasta waa dib loo dhisayaa.
+    <i>gaar ah</i> = qofku isagu wuu beddelay — mar dambe lama tirtirayo.
+    "Password dib u celi" = dib ugu noqo kii Render (boot-ka xiga).</p>
   </div>
 
   {% if orphans %}
