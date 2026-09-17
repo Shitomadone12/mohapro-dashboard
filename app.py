@@ -191,24 +191,38 @@ def _db_error_types():
 DB_ERRORS = _db_error_types()
 
 
-def _pg_connect():
-    """Xidhiidh Postgres — darawalka la helay."""
+PG_CONNECT_TIMEOUT = int(os.environ.get("PG_CONNECT_TIMEOUT", "15"))
+PG_CONNECT_TRIES   = int(os.environ.get("PG_CONNECT_TRIES", "3"))
+
+
+def _pg_connect_once():
     if PG_DRIVER == "psycopg2":
-        return psycopg2.connect(DATABASE_URL, connect_timeout=10)
+        return psycopg2.connect(DATABASE_URL, connect_timeout=PG_CONNECT_TIMEOUT)
     # pg8000 DSN ma aqbalo -> URL-ka waa la kala jarayaa.
     import ssl as _ssl
     from urllib.parse import urlparse, unquote
     u = urlparse(DATABASE_URL)
-    ctx = _ssl.create_default_context()          # Neon SSL waa waajib (SNI la socda)
+    host = u.hostname or "localhost"
+    ctx = None
+    if host not in ("localhost", "127.0.0.1"):
+        ctx = _ssl.create_default_context()      # Neon: SSL waajib, SNI la socda
     return pg8000.connect(
         user=unquote(u.username or ""),
         password=unquote(u.password or ""),
-        host=u.hostname or "localhost",
+        host=host,
         port=int(u.port or 5432),
         database=(u.path or "/postgres").lstrip("/") or "postgres",
-        ssl_context=(ctx if (u.hostname or "") not in ("localhost", "127.0.0.1") else None),
-        timeout=10,
+        ssl_context=ctx,
+        timeout=PG_CONNECT_TIMEOUT,
+        tcp_keepalive=True,
     )
+
+
+def _pg_connect():
+    """Codsi caadi ah: HAL isku day oo keliya.
+    (gunicorn --timeout 60 -> isku dayo badan oo hurdaa worker-ka ayay disayaan.)
+    Isku daygga badan wuxuu ku jira ensure_db() oo keliya."""
+    return _pg_connect_once()
 
 
 class _DictCursor:
@@ -436,7 +450,49 @@ def _save_closed(con, acc, rows):
 def _now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
-init_db()
+
+# --------------------------------------------------------------------------
+# v3.1: KACITAAN AMMAAN AH
+# Hore: init_db() halkan ayaa la wacayay. Haddii database-ku diido
+# (Neon hurday, internet gaabis), app-ku GEBI AHAAN wuu dhintay ->
+# "ERR_CONNECTION_ABORTED".  Hadda: isku day, haddii diido sii
+# wad, oo codsiga xiga dib isku day.
+# --------------------------------------------------------------------------
+_DB_READY = False
+_DB_LAST_ERR = ""
+_DB_TRIES = 0
+
+
+def ensure_db():
+    """init_db() hal mar oo guulaysta. Weligiis ma tuurayo."""
+    global _DB_READY, _DB_LAST_ERR, _DB_TRIES
+    if _DB_READY:
+        return True
+    tries = max(1, PG_CONNECT_TRIES) if USE_PG else 1
+    for i in range(tries):
+        _DB_TRIES += 1
+        try:
+            init_db()
+            _DB_READY = True
+            _DB_LAST_ERR = ""
+            log.info("Database diyaar (%s) - isku day #%d",
+                     PG_DRIVER or "sqlite3", _DB_TRIES)
+            return True
+        except Exception as e:                               # noqa: BLE001
+            _DB_LAST_ERR = "%s: %s" % (type(e).__name__, str(e)[:240])
+            log.error("init_db fashilmay (isku day #%d): %s", _DB_TRIES, _DB_LAST_ERR)
+            if i + 1 < tries:
+                time.sleep(2)
+    return False
+
+
+@app.before_request
+def _db_gate():
+    if not _DB_READY:
+        ensure_db()
+
+
+ensure_db()   # isku day marka la kacayo - laakiin ma dilayo app-ka
 
 # --------------------------------------------------------------------------
 # Auth helpers
@@ -642,6 +698,8 @@ def healthz():
         problems.append("SECRET_KEY lama dejin -> galitaanku wuu ba'ayaa restart kasta.")
     if not db_ok:
         problems.append("Database qalad: " + str(db_err))
+    if not _DB_READY:
+        problems.append("Database weli lama dhisin: " + (_DB_LAST_ERR or "?"))
     if ADMIN_ACCOUNT and nusers == 0:
         problems.append("Isticmaale lama abuurin. Dib u deploy gareey.")
     if not (USE_PG or DB_PATH.startswith("/var/data")):
@@ -653,6 +711,9 @@ def healthz():
 
     return jsonify(
         ok=(not problems),
+        db_ready=_DB_READY,
+        db_error=(_DB_LAST_ERR or None),
+        db_init_tries=_DB_TRIES,
         db_engine=("postgres" if USE_PG else "sqlite"),
         db_driver=(PG_DRIVER if USE_PG else "sqlite3"),
         db_path=("(postgres)" if USE_PG else DB_PATH),
