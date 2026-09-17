@@ -319,6 +319,28 @@ class _Conn:
         tail = " ON CONFLICT %s DO NOTHING" % conflict if conflict else " ON CONFLICT DO NOTHING"
         return self.execute(sql + tail, params)
 
+    def insert_many_ignore(self, table, cols, rows, conflict="", chunk=100):
+        """HAL statement oo saf badan leh — ma aha INSERT kasta safar u gooni.
+
+        120 trade: hore 120 safar oo Ohio ah (~10 ilbiriqsi).
+        Hadda 2 statement (~0.2 ilbiriqsi). Taasi waa 50 jeer ka degdeg badan.
+        """
+        if not rows:
+            return 0
+        ncol = len(cols)
+        tail = (" ON CONFLICT %s DO NOTHING" % conflict) if conflict else " ON CONFLICT DO NOTHING"
+        head = "INSERT INTO %s(%s) VALUES " % (table, ",".join(cols))
+        done = 0
+        for i in range(0, len(rows), chunk):
+            part = rows[i:i + chunk]
+            ph = ",".join(["(" + ",".join(["?"] * ncol) + ")"] * len(part))
+            flat = []
+            for r in part:
+                flat.extend(r)
+            self.execute(head + ph + tail, flat)
+            done += len(part)
+        return done
+
     def commit(self):
         self.raw.commit()
 
@@ -547,34 +569,43 @@ def _num(v, d=0.0):
         return d
 
 
+CTRADE_COLS = ("account", "ticket", "sym", "type", "strat",
+               "lot", "points", "profit", "ot", "ct")
+
+
 def _save_closed(con, acc, rows):
-    """Trade xidhan kasta hal mar ayaa la kaydiyaa (ticket = fure)."""
-    n = 0
+    """Trade xidhan kasta hal mar ayaa la kaydiyaa (ticket = fure).
+
+    v3.3: DHAMMAAN safafka HAL statement — ma aha mid mid.
+    EA-du ilaa 120 trade ayuu soo diraa /update kasta; mid mid oo Postgres
+    fog loo diraa = ~10 ilbiriqsi codsi kasta -> worker wuu buuxsamayaa.
+    """
+    batch = []
+    seen = set()
     for t in rows or []:
         if not isinstance(t, dict):
             continue
         if str(t.get("st", "OPEN")).upper() == "OPEN":
             continue
         tk = str(t.get("tk") or t.get("ticket") or "")
-        if not tk:
+        if not tk or tk in seen:
             continue
         ct = int(_num(t.get("ct") or t.get("ot")))
         if ct <= 0:
             continue
-        con.insert_ignore(
-            "INSERT INTO ctrades"
-            "(account,ticket,sym,type,strat,lot,points,profit,ot,ct)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?)",
-            (acc, tk,
-             str(t.get("sym") or t.get("symbol") or "")[:20],
-             str(t.get("type") or "")[:8].upper(),
-             str(t.get("strat") or t.get("strategy") or "")[:16],
-             _num(t.get("lot") or t.get("lots")),
-             _num(t.get("points")), _num(t.get("profit")),
-             int(_num(t.get("ot"))), ct),
-            conflict="(account, ticket)")
-        n += 1
-    return n
+        seen.add(tk)
+        batch.append((
+            acc, tk,
+            str(t.get("sym") or t.get("symbol") or "")[:20],
+            str(t.get("type") or "")[:8].upper(),
+            str(t.get("strat") or t.get("strategy") or "")[:16],
+            _num(t.get("lot") or t.get("lots")),
+            _num(t.get("points")), _num(t.get("profit")),
+            int(_num(t.get("ot"))), ct))
+    if not batch:
+        return 0
+    return con.insert_many_ignore("ctrades", CTRADE_COLS, batch,
+                                  conflict="(account, ticket)")
 
 
 def _now_iso():
@@ -773,20 +804,21 @@ def ea_trades():
     now = time.time()
     with db() as con:
         _save_closed(con, acc, rows)
+        batch = []
+        seen = set()
         for t in rows[:200]:
             if not isinstance(t, dict):
                 continue
             tk = str(t.get("ticket") or t.get("id") or "")
-            if not tk:
+            if not tk or tk in seen:
                 continue
-            try:
-                con.insert_ignore("INSERT INTO closed_trades(account,ticket,data,ts)"
-                                  " VALUES(?,?,?,?)",
-                                  (acc, tk, json.dumps(t, ensure_ascii=False), now),
-                                  conflict="(account, ticket)")
-                n += 1
-            except DB_ERRORS:
-                pass
+            seen.add(tk)
+            batch.append((acc, tk, json.dumps(t, ensure_ascii=False), now))
+        if batch:
+            # HAL statement, ma aha mid mid (eeg insert_many_ignore)
+            n = con.insert_many_ignore("closed_trades",
+                                       ("account", "ticket", "data", "ts"),
+                                       batch, conflict="(account, ticket)")
         con.execute(
             "DELETE FROM closed_trades WHERE account=? AND id NOT IN"
             " (SELECT id FROM closed_trades WHERE account=? ORDER BY ts DESC LIMIT 500)",
