@@ -1500,44 +1500,45 @@ T_DASH = """<!doctype html><html lang="so"><head><meta charset="utf-8">
 body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 
 /* ---------- HERO ---------- */
-.hero{position:relative;min-height:300px;display:flex;flex-direction:column;
-  align-items:center;justify-content:flex-end;text-align:center;
-  padding:60px 20px 22px;background:#0f0f0e;overflow:hidden;
+/* v4: sawirka waa HERO-ga - qoraalku dusha ayuu ka muuqdaa */
+.hero{position:relative;min-height:420px;display:flex;flex-direction:column;
+  align-items:flex-start;justify-content:flex-end;text-align:left;
+  padding:60px 18px 20px;background:#0f0f0e;overflow:hidden;
   border-bottom:1px solid var(--line)}
+.hero-photo{position:absolute;inset:0;background-size:cover;background-position:center;
+  background-repeat:no-repeat;opacity:0;transition:opacity .3s}
+.hero-photo.on{opacity:1}
+.hero-top{position:absolute;top:12px;left:14px;right:14px;z-index:3;
+  display:flex;align-items:center;justify-content:space-between;gap:8px}
+.hero-top .chip{background:rgba(10,10,10,.62)}
+.hero-btns{display:flex;gap:8px;align-items:center}
 .hero-ph{position:absolute;inset:0;background:
   radial-gradient(900px 340px at 50% -8%,rgba(57,135,229,.34),transparent 64%),
   linear-gradient(160deg,#1a2331 0%,#131312 70%)}
-.hero-bg{position:absolute;inset:-34px;background-size:cover;background-position:center;
-  filter:blur(30px) saturate(1.2) brightness(.42);transform:scale(1.14);
-  transition:opacity .3s;opacity:0}
-.hero-bg.on{opacity:1}
 .hero-fade{position:absolute;inset:0;pointer-events:none;background:
-  linear-gradient(180deg,rgba(13,13,13,.5) 0%,rgba(13,13,13,0) 34%,rgba(13,13,13,.9) 100%)}
-.hero-in{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center}
+  linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(13,13,13,0) 26%,
+                  rgba(13,13,13,.22) 56%,rgba(13,13,13,.93) 100%)}
+.hero-in{position:relative;z-index:2;display:flex;flex-direction:column;align-items:flex-start;width:100%}
 
-.logo-wrap{position:relative;margin-bottom:14px}
-.logo{width:134px;height:134px;border-radius:30px;
-  background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.16);
-  background-size:contain;background-position:center;background-repeat:no-repeat;
-  box-shadow:0 10px 34px rgba(0,0,0,.5)}
-.logo.empty{display:grid;place-items:center}
-.logo.empty::after{content:"MP";font-size:38px;font-weight:800;color:rgba(255,255,255,.34);
-  letter-spacing:.04em}
-.edit{position:absolute;right:-6px;bottom:-6px;width:38px;height:38px;border-radius:50%;
-  display:grid;place-items:center;padding:0;background:var(--s1);border:2px solid #0f0f0e;
-  color:#fff;box-shadow:0 4px 14px rgba(0,0,0,.5)}
-.edit:hover{background:var(--s1);filter:brightness(1.12)}
-.edit svg{width:17px;height:17px}
-.rm{position:absolute;left:-6px;bottom:-6px;width:38px;height:38px;border-radius:50%;
-  display:none;place-items:center;padding:0;background:#2b2b29;
-  border:2px solid #0f0f0e;color:#f0a0a0;box-shadow:0 4px 14px rgba(0,0,0,.5)}
-.rm:hover{background:#3a2626}
-.rm.on{display:grid}
+/* v4: badhamada sawirka - kore midig */
+.edit{display:inline-flex;align-items:center;gap:7px;padding:8px 13px;border-radius:999px;
+  background:rgba(10,10,10,.66);border:1px solid rgba(255,255,255,.2);color:#eceae2;
+  font-size:12.5px;font-weight:600;backdrop-filter:blur(8px);
+  box-shadow:0 4px 14px rgba(0,0,0,.4)}
+.edit:hover{filter:brightness(1.15)}
+.edit svg,.rm svg{stroke:currentColor;fill:none;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round}
+.edit svg{width:15px;height:15px}
+.rm{display:none;align-items:center;justify-content:center;width:36px;height:36px;
+  border-radius:50%;padding:0;background:rgba(43,30,30,.8);
+  border:1px solid rgba(255,255,255,.2);color:#f0a0a0;backdrop-filter:blur(8px)}
+.rm:hover{background:rgba(58,38,38,.9)}
+.rm.on{display:inline-flex}
 .rm svg{width:16px;height:16px}
 
-.hero h1{font-size:30px;margin:0;letter-spacing:-.01em;text-shadow:0 2px 16px rgba(0,0,0,.7)}
+.hero h1{font-size:32px;margin:0;letter-spacing:-.01em;text-shadow:0 2px 18px rgba(0,0,0,.8)}
 .hero h1 b{color:var(--s1);font-weight:800}
-.chips{display:flex;gap:7px;flex-wrap:wrap;justify-content:center;margin-top:11px}
+.chips{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-start;margin-top:11px}
 .chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:6px 11px;
   border-radius:999px;background:rgba(18,18,17,.74);border:1px solid rgba(255,255,255,.14);
   color:#d8d7cf;backdrop-filter:blur(8px)}
@@ -1598,18 +1599,21 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 
 <div class="hero">
   <div class="hero-ph"></div>
-  <div class="hero-bg" id="heroBg"></div>
+  <div class="hero-photo" id="heroPhoto"></div>
   <div class="hero-fade"></div>
-  <div class="hero-in">
-    <div class="logo-wrap">
-      <div class="logo empty" id="logo"></div>
-      <button class="edit" id="btnPic" title="Beddel sawirka" aria-label="Beddel sawirka">
-        <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-      </button>
-      <button class="rm" id="btnPicDel" title="Ka saar" aria-label="Ka saar">
+  <div class="hero-top">
+    <span class="chip"><span class="dot" id="dot2"></span><span id="st2">…</span></span>
+    <span class="hero-btns">
+      <button class="rm" id="btnPicDel" title="Ka saar sawirka" aria-label="Ka saar sawirka">
         <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
       </button>
-    </div>
+      <button class="edit" id="btnPic" title="Beddel sawirka" aria-label="Beddel sawirka">
+        <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        <span>Beddel sawirka</span>
+      </button>
+    </span>
+  </div>
+  <div class="hero-in">
     <h1>MOHA PRO <b>v59</b></h1>
     <div class="chips">
       <span class="chip"><span class="dot" id="dot"></span><span id="st">Xiriirinaya…</span></span>
@@ -1797,6 +1801,8 @@ const cls=v=>v>0?"pos":(v<0?"neg":"neu");
 function paint(d){
   const x=d.data||{};
   $("#dot").className="dot "+(d.online?"on":"off");
+  $("#dot2").className="dot "+(d.online?"on":"off");          // v4: badge-ka kore
+  $("#st2").textContent=d.online?"ONLINE":"OFFLINE";
   $("#heroAcc").textContent="#"+d.account;
   setBrand(d.brand||"");
   $("#st").textContent=d.online?("ONLINE · "+(d.age||0)+"s ka hor")
@@ -1957,15 +1963,13 @@ let BRAND="";
 function setBrand(src){
   if(src===BRAND) return;
   BRAND=src;
-  const el=$("#logo"), bg=$("#heroBg");
+  const ph=$("#heroPhoto");            // v4: hal sawir - HERO buuxa
   if(src){
-    const u="url('"+src.replace(/'/g,"%27")+"')";
-    el.style.backgroundImage=u; bg.style.backgroundImage=u;
-    el.classList.remove("empty"); bg.classList.add("on");
+    ph.style.backgroundImage="url('"+src.replace(/'/g,"%27")+"')";
+    ph.classList.add("on");
     $("#btnPicDel").classList.add("on");
   }else{
-    el.style.backgroundImage=""; bg.style.backgroundImage="";
-    el.classList.add("empty"); bg.classList.remove("on");
+    ph.style.backgroundImage=""; ph.classList.remove("on");
     $("#btnPicDel").classList.remove("on");
   }
 }
@@ -2032,6 +2036,7 @@ async function tick(){
     if(d.ok)paint(d);
   }catch(e){
     $("#dot").className="dot off"; $("#st").textContent="Xiriir la'aan";
+    $("#dot2").className="dot off"; $("#st2").textContent="OFFLINE";
   }
 }
 document.querySelectorAll("[data-cmd]").forEach(b=>{
