@@ -795,6 +795,39 @@ def _should_prune(key):
         return False
 
 
+# v5.4 BANDWIDTH: jawaabaha JSON/HTML gzip ku cadaadi. JSON-ku 80-90% buu yaraadaa.
+import gzip as _gzip, io as _io
+
+@app.after_request
+def _compress(resp):
+    try:
+        if resp.direct_passthrough or resp.status_code >= 300:
+            return resp
+        if "gzip" not in (request.headers.get("Accept-Encoding") or "").lower():
+            return resp
+        if resp.headers.get("Content-Encoding"):
+            return resp
+        ctype = (resp.headers.get("Content-Type") or "")
+        if not any(t in ctype for t in ("json", "html", "text", "javascript", "xml", "css")):
+            return resp
+        data = resp.get_data()
+        if len(data) < 1024:            # yar - faa'iido ma leh
+            return resp
+        buf = _io.BytesIO()
+        with _gzip.GzipFile(fileobj=buf, mode="wb", compresslevel=6) as f:
+            f.write(data)
+        packed = buf.getvalue()
+        if len(packed) >= len(data):
+            return resp
+        resp.set_data(packed)
+        resp.headers["Content-Encoding"] = "gzip"
+        resp.headers["Content-Length"] = str(len(packed))
+        resp.headers.add("Vary", "Accept-Encoding")
+    except Exception:
+        pass
+    return resp
+
+
 def clean_account(v):
     return re.sub(r"\D", "", str(v or ""))[:20]
 
@@ -2359,8 +2392,17 @@ document.querySelectorAll(".appbar button").forEach(b=>{
 try{ const t=localStorage.getItem("mp_tab"); if(t && $("#p"+t)) tab(t); }catch(e){}
 
 if(accSel)accSel.addEventListener("change",()=>{tick(); if(jLoaded)loadJournal();});
-tick(); setInterval(tick,5000);
-setInterval(()=>{ if(jLoaded && $("#pJournal").classList.contains("on")) loadJournal(); },30000);
+/* v5.4 BANDWIDTH: 5s -> 12s, oo marka bogga la qariyo GEBI AHAAN wuu joogsanayaa.
+   Taleefanka oo furan maalin dhan: ~3 MB halkii 30 MB. */
+const POLL_MS=12000;
+let pollT=null;
+function pollStart(){ if(pollT) return; pollT=setInterval(tick,POLL_MS); }
+function pollStop(){ if(pollT){ clearInterval(pollT); pollT=null; } }
+document.addEventListener("visibilitychange",()=>{
+  if(document.hidden) pollStop(); else { tick(); pollStart(); }
+});
+tick(); pollStart();
+setInterval(()=>{ if(!document.hidden && jLoaded && $("#pJournal").classList.contains("on")) loadJournal(); },60000);
 </script></body></html>"""
 
 T_ADMIN = """<!doctype html><html lang="so"><head><meta charset="utf-8">
