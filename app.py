@@ -1526,15 +1526,11 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
   font-size:12.5px;font-weight:600;backdrop-filter:blur(8px);
   box-shadow:0 4px 14px rgba(0,0,0,.4)}
 .edit:hover{filter:brightness(1.15)}
-.edit svg,.rm svg{stroke:currentColor;fill:none;stroke-width:2;
+.edit svg{stroke:currentColor;fill:none;stroke-width:2;
   stroke-linecap:round;stroke-linejoin:round}
 .edit svg{width:15px;height:15px}
-.rm{display:none;align-items:center;justify-content:center;width:36px;height:36px;
-  border-radius:50%;padding:0;background:rgba(43,30,30,.8);
-  border:1px solid rgba(255,255,255,.2);color:#f0a0a0;backdrop-filter:blur(8px)}
-.rm:hover{background:rgba(58,38,38,.9)}
-.rm.on{display:inline-flex}
-.rm svg{width:16px;height:16px}
+/* v4.2: badhankii ✕ waa la qariyay - sawirka waxaa lagu saaraa
+   adigoo "Beddel sawirka" SI DHEER u haysta (1 ilbiriqsi) */
 
 .hero h1{font-size:32px;margin:0;letter-spacing:-.01em;text-shadow:0 2px 18px rgba(0,0,0,.8)}
 .hero h1 b{color:var(--s1);font-weight:800}
@@ -1604,9 +1600,6 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
   <div class="hero-top">
     <span class="chip"><span class="dot" id="dot2"></span><span id="st2">…</span></span>
     <span class="hero-btns">
-      <button class="rm" id="btnPicDel" title="Ka saar sawirka" aria-label="Ka saar sawirka">
-        <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
-      </button>
       <button class="edit" id="btnPic" title="Beddel sawirka" aria-label="Beddel sawirka">
         <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
         <span>Beddel sawirka</span>
@@ -1975,10 +1968,8 @@ function setBrand(src,force){
   if(src){
     ph.style.backgroundImage="url('"+src.replace(/'/g,"%27")+"')";
     ph.classList.add("on");
-    $("#btnPicDel").classList.add("on");
   }else{
     ph.style.backgroundImage=""; ph.classList.remove("on");
-    $("#btnPicDel").classList.remove("on");
   }
 }
 
@@ -1989,7 +1980,7 @@ function loadBrandCache(){
 }
 loadBrandCache();
 
-$("#btnPic").addEventListener("click",()=>$("#pick").click());
+$("#btnPic").addEventListener("click",()=>{ if(window.__longPressActive && window.__longPressActive()) return; $("#pick").click(); });
 
 $("#pick").addEventListener("change",async ev=>{
   const f=ev.target.files && ev.target.files[0];
@@ -2010,13 +2001,29 @@ $("#pick").addEventListener("change",async ev=>{
   btn.disabled=false; btn.textContent=old;
 });
 
-$("#btnPicDel").addEventListener("click",async ()=>{
+/* v4.2: sawirka ka saarid - "Beddel sawirka" si dheer u hay (1 ilbiriqsi) */
+async function delBrand(){
+  if(!BRAND) return;
+  if(!confirm("Sawirka ma ka saaraa?")) return;
   const body={img:""};
   if(accSel)body.account=accSel.value;
   await fetch("/api/branding",{method:"POST",
     headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-  setBrand("",true);   // v4.1: tirtirid CAD - halkan oo keliya ayuu sawirku ka bexeyaa
-});
+  setBrand("",true);   // tirtirid CAD - halkan oo keliya ayuu sawirku ka bexeyaa
+}
+(function(){
+  const b=$("#btnPic"); let t=null, long=false;
+  const start=()=>{ long=false; t=setTimeout(()=>{ long=true; delBrand(); },1000); };
+  const stop =()=>{ if(t){ clearTimeout(t); t=null; } };
+  b.addEventListener("touchstart",start,{passive:true});
+  b.addEventListener("touchend",stop);
+  b.addEventListener("touchcancel",stop);
+  b.addEventListener("mousedown",start);
+  b.addEventListener("mouseup",stop);
+  b.addEventListener("mouseleave",stop);
+  b.addEventListener("contextmenu",e=>e.preventDefault());
+  window.__longPressActive=()=>long;
+})();
 
 function shrink(file,maxW,q){
   return new Promise((res,rej)=>{
