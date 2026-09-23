@@ -102,7 +102,40 @@ VALID_COMMANDS = [
     "START", "STOP", "CLOSE_ALL", "CLOSE_PROFIT",
     "STRATEGY:SR", "STRATEGY:BB", "STRATEGY:EMA",
     "STRATEGY:SMC", "STRATEGY:VSA", "STRATEGY:POC",
+    "SET:RESET",
 ]
+
+# v5: sitinka App-ka (SET:KEY=VALUE). xad kasta waa la hubinayaa - qiime khaldan lama dirayo.
+SET_LIMITS = {          # key: (min, max, noocaa)
+    "SL":        (0, 5000, "int"),
+    "TP":        (0, 5000, "int"),
+    "LOT":       (0, 100,  "float"),
+    "STEP":      (1, 5000, "int"),
+    "STEPSTART": (1, 5000, "int"),
+    "STEPON":    (0, 1,    "int"),
+    "BE":        (0, 1,    "int"),
+}
+
+def valid_command(cmd):
+    """True + amarka nadiifsan, ama False + sabab."""
+    if cmd in VALID_COMMANDS:
+        return True, cmd
+    m = re.match(r"^SET:([A-Z]+)=([0-9]+(?:\.[0-9]+)?)$", cmd)
+    if not m:
+        return False, None
+    key, raw = m.group(1), m.group(2)
+    lim = SET_LIMITS.get(key)
+    if not lim:
+        return False, None
+    lo, hi, kind = lim
+    try:
+        v = float(raw)
+    except ValueError:
+        return False, None
+    if v < lo or v > hi:
+        return False, None
+    val = str(int(v)) if kind == "int" else ("%.2f" % v)
+    return True, "SET:%s=%s" % (key, val)
 
 # --------------------------------------------------------------------------
 # DB
@@ -1093,14 +1126,15 @@ def api_command():
         return jsonify(ok=False, error="Amar diritaanka lagaama ogola."), 403
     body = request.get_json(silent=True) or {}
     cmd = str(body.get("cmd", "")).strip().upper()
-    if cmd not in VALID_COMMANDS:
-        return jsonify(ok=False, error="Amar aan la aqoon."), 400
+    ok_cmd, cmd = valid_command(cmd)
+    if not ok_cmd:
+        return jsonify(ok=False, error="Amar aan la aqoon ama qiime xad-dhaaf ah."), 400
     acc = clean_account(body.get("account")) if u["role"] == "admin" else u["account"]
     acc = acc or u["account"]
     with db() as con:
         n = con.execute("SELECT COUNT(*) c FROM commands WHERE account=? AND taken_at IS NULL",
                         (acc,)).fetchone()["c"]
-        if n >= 10:
+        if n >= 24:   # v5: sitinka hal mar 7 amar ayuu noqon karaa
             return jsonify(ok=False, error="Amaro badan ayaa safka ku jira."), 429
         con.execute("INSERT INTO commands(account,cmd,by_account,created_at) VALUES(?,?,?,?)",
                     (acc, cmd, u["account"], time.time()))
@@ -1512,9 +1546,11 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
   display:flex;align-items:center;justify-content:space-between;gap:8px}
 .hero-top .chip{background:rgba(10,10,10,.62)}
 .hero-btns{display:flex;gap:8px;align-items:center}
+/* v4.3: astaanta MOHA PRO - marka sawir gaar ah la gelin */
 .hero-ph{position:absolute;inset:0;background:
-  radial-gradient(900px 340px at 50% -8%,rgba(57,135,229,.34),transparent 64%),
-  linear-gradient(160deg,#1a2331 0%,#131312 70%)}
+  url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20512%20512%22%20width%3D%22512%22%20height%3D%22512%22%20role%3D%22img%22%20aria-label%3D%22MOHA%20PRO%20BOT%20v56%20MT5%22%3E%20%3Cdefs%3E%20%3ClinearGradient%20id%3D%22gold%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%20%3Cstop%20offset%3D%220%22%20%20%20stop-color%3D%22%23FCECBA%22%2F%3E%20%3Cstop%20offset%3D%220.45%22%20stop-color%3D%22%23D6AA50%22%2F%3E%20%3Cstop%20offset%3D%221%22%20%20%20stop-color%3D%22%238C6422%22%2F%3E%20%3C%2FlinearGradient%3E%20%3ClinearGradient%20id%3D%22inner%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23141E30%22%2F%3E%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%230A0E18%22%2F%3E%20%3C%2FlinearGradient%3E%20%3Cfilter%20id%3D%22glow%22%20x%3D%22-30%25%22%20y%3D%22-30%25%22%20width%3D%22160%25%22%20height%3D%22160%25%22%3E%20%3CfeGaussianBlur%20stdDeviation%3D%226%22%20result%3D%22b%22%2F%3E%20%3CfeMerge%3E%3CfeMergeNode%20in%3D%22b%22%2F%3E%3CfeMergeNode%20in%3D%22SourceGraphic%22%2F%3E%3C%2FfeMerge%3E%20%3C%2Ffilter%3E%20%3CclipPath%20id%3D%22hexclip%22%3E%20%3Cpolygon%20points%3D%22256%2C23%20458%2C139.5%20458%2C372.5%20256%2C489%2054%2C372.5%2054%2C139.5%22%2F%3E%20%3C%2FclipPath%3E%20%3C%2Fdefs%3E%20%20%3Cpolygon%20points%3D%22256%2C23%20458%2C139.5%20458%2C372.5%20256%2C489%2054%2C372.5%2054%2C139.5%22%20fill%3D%22url%28%23inner%29%22%2F%3E%20%3Cg%20clip-path%3D%22url%28%23hexclip%29%22%20opacity%3D%220.5%22%3E%20%3Cg%20stroke%3D%22%231E2C40%22%20stroke-width%3D%221.6%22%3E%20%3Cline%20x1%3D%22106%22%20y1%3D%22180%22%20x2%3D%22406%22%20y2%3D%22180%22%2F%3E%20%3Cline%20x1%3D%22106%22%20y1%3D%22220%22%20x2%3D%22406%22%20y2%3D%22220%22%2F%3E%20%3Cline%20x1%3D%22106%22%20y1%3D%22260%22%20x2%3D%22406%22%20y2%3D%22260%22%2F%3E%20%3Cline%20x1%3D%22106%22%20y1%3D%22300%22%20x2%3D%22406%22%20y2%3D%22300%22%2F%3E%20%3C%2Fg%3E%20%3C%2Fg%3E%20%20%3Cg%20opacity%3D%220.85%22%3E%20%3Cg%20fill%3D%22%232E966C%22%20stroke%3D%22%232E966C%22%20stroke-width%3D%224%22%3E%20%3Cline%20x1%3D%22150%22%20y1%3D%22180%22%20x2%3D%22150%22%20y2%3D%22300%22%2F%3E%3Crect%20x%3D%22141%22%20y%3D%22198%22%20width%3D%2218%22%20height%3D%2284%22%20rx%3D%223%22%20stroke%3D%22none%22%2F%3E%20%3Cline%20x1%3D%22194%22%20y1%3D%22212%22%20x2%3D%22194%22%20y2%3D%22318%22%2F%3E%3Crect%20x%3D%22185%22%20y%3D%22226%22%20width%3D%2218%22%20height%3D%2276%22%20rx%3D%223%22%20stroke%3D%22none%22%2F%3E%20%3C%2Fg%3E%20%3Cg%20fill%3D%22%23B0404A%22%20stroke%3D%22%23B0404A%22%20stroke-width%3D%224%22%3E%20%3Cline%20x1%3D%22318%22%20y1%3D%22196%22%20x2%3D%22318%22%20y2%3D%22320%22%2F%3E%3Crect%20x%3D%22309%22%20y%3D%22210%22%20width%3D%2218%22%20height%3D%2286%22%20rx%3D%223%22%20stroke%3D%22none%22%2F%3E%20%3Cline%20x1%3D%22362%22%20y1%3D%22176%22%20x2%3D%22362%22%20y2%3D%22308%22%2F%3E%3Crect%20x%3D%22353%22%20y%3D%22190%22%20width%3D%2218%22%20height%3D%2290%22%20rx%3D%223%22%20stroke%3D%22none%22%2F%3E%20%3C%2Fg%3E%20%3C%2Fg%3E%20%20%3Cpolyline%20points%3D%22146%2C300%20200%2C166%20256%2C222%20312%2C166%20366%2C300%22%20fill%3D%22none%22%20stroke%3D%22url%28%23gold%29%22%20stroke-width%3D%2224%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20filter%3D%22url%28%23glow%29%22%2F%3E%20%3Ccircle%20cx%3D%22378%22%20cy%3D%22148%22%20r%3D%2217%22%20fill%3D%22url%28%23gold%29%22%2F%3E%20%20%3Ctext%20x%3D%22256%22%20y%3D%22392%22%20text-anchor%3D%22middle%22%20fill%3D%22url%28%23gold%29%22%20font-family%3D%22Helvetica%20Neue%2C%20Helvetica%2C%20Arial%2C%20sans-serif%22%20font-weight%3D%22700%22%20font-size%3D%2252%22%3EMOHA%20PRO%3C%2Ftext%3E%20%3Ctext%20x%3D%22256%22%20y%3D%22424%22%20text-anchor%3D%22middle%22%20fill%3D%22%23B2BED0%22%20letter-spacing%3D%223%22%20font-family%3D%22Helvetica%20Neue%2C%20Helvetica%2C%20Arial%2C%20sans-serif%22%20font-weight%3D%22700%22%20font-size%3D%2219%22%3EBOT%20%20v56%20%20%C2%B7%20%20MT5%3C%2Ftext%3E%20%20%3Cpolygon%20points%3D%22256%2C23%20458%2C139.5%20458%2C372.5%20256%2C489%2054%2C372.5%2054%2C139.5%22%20fill%3D%22none%22%20stroke%3D%22url%28%23gold%29%22%20stroke-width%3D%227%22%2F%3E%20%3C%2Fsvg%3E") no-repeat center 42%/auto 46%,
+  radial-gradient(900px 340px at 50% -8%,rgba(57,135,229,.30),transparent 64%),
+  linear-gradient(160deg,#151d2b 0%,#101010 70%)}
 .hero-fade{position:absolute;inset:0;pointer-events:none;background:
   linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(13,13,13,0) 26%,
                   rgba(13,13,13,.22) 56%,rgba(13,13,13,.93) 100%)}
@@ -1539,6 +1575,21 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
   border-radius:999px;background:rgba(18,18,17,.74);border:1px solid rgba(255,255,255,.14);
   color:#d8d7cf;backdrop-filter:blur(8px)}
 #pick{display:none}
+
+/* v5: foomka maamulka */
+.frow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0}
+.frow>span:first-child{font-size:13.5px;color:var(--ink)}
+.frow small{color:var(--ink3);font-size:11px}
+.frow i{font-style:normal;color:var(--ink3);font-size:12px;margin-left:6px}
+.frow input{width:110px;text-align:center;padding:9px 8px;font-size:14px;font-weight:700;
+  border-radius:10px;background:#0f1013;border:1px solid var(--line);color:var(--ink)}
+.hr{height:1px;background:var(--line);margin:10px 0}
+.sw{width:62px;height:30px;border-radius:999px;background:#3a3c44;border:none;padding:0;
+  position:relative;cursor:pointer;transition:background .15s}
+.sw i{position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;
+  background:#f2f2f0;transition:left .15s}
+.sw.on{background:#26aa6e}
+.sw.on i{left:35px}
 
 /* ---------- ACTIONS ---------- */
 .sec-t{font-size:13px;color:var(--ink2);font-weight:600;text-transform:uppercase;
@@ -1661,6 +1712,35 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
         <option value="STRATEGY:POC">POC</option>
       </select>
       <div class="note" id="cmdNote">Amarku wuxuu gaadhayaa EA-da 3–5 ilbiriqsi gudahood.</div>
+    </div>
+
+    <!-- v5: MAAMULKA (SL / TP / LOT / STEP-LOCK) -->
+    <div class="card" style="margin-bottom:16px">
+      <p class="sec-t">Maamulka bot-ka</p>
+      <div class="frow"><span>Stop Loss</span><span><input id="mSL" type="number" min="0" max="5000" step="1"> <i>pip</i></span></div>
+      <div class="frow"><span>Take Profit</span><span><input id="mTP" type="number" min="0" max="5000" step="1"> <i>pip</i></span></div>
+      <div class="frow"><span>Lot <small>(0 = auto risk)</small></span><span><input id="mLOT" type="number" min="0" max="100" step="0.01"> <i>lot</i></span></div>
+      <div class="hr"></div>
+      <div class="frow"><span>Step-Lock</span><span><button class="sw" id="mSTEPON" type="button"><i></i></button></span></div>
+      <div class="frow"><span>Break-even</span><span><button class="sw" id="mBE" type="button"><i></i></button></span></div>
+      <div class="frow"><span>Tallaabo kasta</span><span><input id="mSTEP" type="number" min="1" max="5000" step="1"> <i>pip</i></span></div>
+      <div class="frow"><span>Bilowga</span><span><input id="mSTEPSTART" type="number" min="1" max="5000" step="1"> <i>pip</i></span></div>
+      <div class="acts" style="margin-top:14px;grid-template-columns:2fr 1fr">
+        <button class="act go" id="mSend" style="flex-direction:row;gap:9px;padding:14px">DIR BOT-KA</button>
+        <button class="act" id="mReset" style="flex-direction:row;gap:8px;padding:14px;border-color:var(--line);color:var(--ink2)">CELI</button>
+      </div>
+      <div class="note" id="mNote">Bot-ku wuxuu hadda isticmaalayaa: —</div>
+    </div>
+
+    <!-- v5: xidhitaanka faa'iidada -->
+    <div class="card" style="margin-bottom:16px">
+      <h2>Faa'iidada la xidhay <span class="cnt" id="cLock"></span></h2>
+      <div class="scroll"><table id="tl">
+        <thead><tr><th>Waqti</th><th>Symbol</th><th style="text-align:right">Faa'iido</th>
+          <th style="text-align:right">Xidhay</th></tr></thead>
+        <tbody><tr><td colspan="4" class="empty">Weli wax lama xidhin.</td></tr></tbody>
+      </table></div>
+      <div class="note" id="lockSum" style="margin-top:10px">—</div>
     </div>
     {% endif %}
 
@@ -1799,6 +1879,7 @@ function paint(d){
   $("#st2").textContent=d.online?"ONLINE":"OFFLINE";
   $("#heroAcc").textContent="#"+d.account;
   setBrand(d.brand||"");   // v4.1: madhan -> kii hore ayaa la sii hayaa
+  paintSettings(x.settings); paintLocks(x.locks);   // v5
   $("#st").textContent=d.online?("ONLINE · "+(d.age||0)+"s ka hor")
     :(d.age==null?"Xog lama helin":"OFFLINE · "+d.age+"s ka hor");
   $("#bal").textContent=money(x.balance);
@@ -2061,6 +2142,76 @@ async function tick(){
     $("#dot2").className="dot off"; $("#st2").textContent="OFFLINE";
   }
 }
+/* ---- v5: MAAMULKA ---- */
+const MF=["SL","TP","LOT","STEP","STEPSTART"];
+let mTouched=false, mSeeded=false;
+function swSet(id,on){ const e=$("#"+id); if(e) e.classList.toggle("on",!!on); }
+function swGet(id){ const e=$("#"+id); return e && e.classList.contains("on"); }
+["mSTEPON","mBE"].forEach(id=>{ const e=$("#"+id); if(e) e.addEventListener("click",()=>{ e.classList.toggle("on"); mTouched=true; }); });
+MF.forEach(k=>{ const e=$("#m"+k); if(e) e.addEventListener("input",()=>{ mTouched=true; }); });
+
+function paintSettings(st){
+  if(!st) return;
+  const note=$("#mNote");
+  if(note) note.textContent="Bot-ku wuxuu hadda isticmaalayaa:  SL "+(st.sl||0)+"p  ·  TP "+(st.tp||0)+"p  ·  Lot "
+    +(st.auto_lot?"auto":(st.lot||0))+"  ·  Step-Lock "+(st.steplock?("ON "+(st.step||0)+"p"):"OFF")
+    +"  ·  BE "+(st.be?"ON":"OFF");
+  if(mTouched && mSeeded) return;          // qofku wuu wax qorayaa - ha ka qaadin gacanta
+  const set=(id,v)=>{ const e=$("#"+id); if(e && v!==undefined && v!==null) e.value=v; };
+  set("mSL",st.sl); set("mTP",st.tp); set("mLOT",st.auto_lot?0:st.lot);
+  set("mSTEP",st.step); set("mSTEPSTART",st.stepstart);
+  swSet("mSTEPON",st.steplock); swSet("mBE",st.be);
+  mSeeded=true;
+}
+function paintLocks(rows){
+  const tb=$("#tl") && $("#tl").querySelector("tbody"); if(!tb) return;
+  rows=rows||[];
+  $("#cLock").textContent=rows.length?rows.length:"";
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="4" class="empty">Weli wax lama xidhin.</td></tr>'; $("#lockSum").textContent="—"; return; }
+  let sum=0;
+  tb.innerHTML=rows.map(r=>{
+    sum+=Number(r.lock||0);
+    const t=new Date((r.t||0)*1000).toLocaleTimeString();
+    return "<tr><td>"+t+"</td><td>"+(r.sym||"")+"</td><td style='text-align:right' class='pos'>+"
+      +Number(r.prof||0).toFixed(1)+"p</td><td style='text-align:right'><b>"
+      +(Number(r.lock||0)>0?("+"+Number(r.lock).toFixed(0)+"p"):"0 (BE)")+"</b></td></tr>";
+  }).join("");
+  $("#lockSum").textContent="Xidhitaan "+rows.length+" jeer  ·  faa'iido la ilaaliyay "+sum.toFixed(0)+" pip";
+}
+async function sendSettings(){
+  const btn=$("#mSend"); const old=btn.textContent;
+  const num=id=>{ const e=$("#"+id); return e&&e.value!==""?e.value:null; };
+  const cmds=[];
+  const sl=num("mSL"), tp=num("mTP"), lot=num("mLOT"), stp=num("mSTEP"), sst=num("mSTEPSTART");
+  if(sl!==null)  cmds.push("SET:SL="+sl);
+  if(tp!==null)  cmds.push("SET:TP="+tp);
+  if(lot!==null) cmds.push("SET:LOT="+lot);
+  if(stp!==null) cmds.push("SET:STEP="+stp);
+  if(sst!==null) cmds.push("SET:STEPSTART="+sst);
+  cmds.push("SET:STEPON="+(swGet("mSTEPON")?1:0));
+  cmds.push("SET:BE="+(swGet("mBE")?1:0));
+  btn.disabled=true; btn.textContent="Diraya…";
+  let bad=0;
+  for(const c of cmds){
+    const body={cmd:c}; if(accSel)body.account=accSel.value;
+    try{
+      const r=await fetch("/api/command",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+      const d=await r.json(); if(!d.ok) bad++;
+    }catch(e){ bad++; }
+  }
+  btn.disabled=false; btn.textContent=old;
+  mTouched=false;
+  $("#mNote").textContent = bad ? (bad+" amar lama dirin - qiime xad-dhaaf ah.")
+                                : "La diray. EA-du 3-5 ilbiriqsi gudahood ayuu qaadanayaa.";
+}
+if($("#mSend"))  $("#mSend").addEventListener("click",sendSettings);
+if($("#mReset")) $("#mReset").addEventListener("click",async ()=>{
+  const body={cmd:"SET:RESET"}; if(accSel)body.account=accSel.value;
+  await fetch("/api/command",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  mTouched=false; mSeeded=false;
+  $("#mNote").textContent="Celis la diray - bot-ku wuxuu ku noqonayaa sitinkii .set-ka.";
+});
+
 document.querySelectorAll("[data-cmd]").forEach(b=>{
   b.addEventListener("click",()=>send(b.dataset.cmd,b));
 });
