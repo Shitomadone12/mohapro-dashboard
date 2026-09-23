@@ -114,6 +114,8 @@ SET_LIMITS = {          # key: (min, max, noocaa)
     "STEPSTART": (1, 5000, "int"),
     "STEPON":    (0, 1,    "int"),
     "BE":        (0, 1,    "int"),
+    "LOCKMODE":  (0, 1,    "int"),   # v5.1: 0 = STEP, 1 = BE-ONLY
+    "ADAPT":     (0, 1,    "int"),   # v5.2: ATR adaptive SL/TP
 }
 
 def valid_command(cmd):
@@ -776,6 +778,23 @@ def token_ok():
         return True
     return False
 
+# v5.3: nadiifinta safafka duugga ah - 30 codsi mar, ee ma aha codsi kasta
+_PRUNE_EVERY = int(os.environ.get("PRUNE_EVERY", "30"))
+_prune_n = {}
+_prune_lock = threading.Lock()
+
+def _should_prune(key):
+    if _PRUNE_EVERY <= 1:
+        return True
+    with _prune_lock:
+        c = _prune_n.get(key, 0) + 1
+        if c >= _PRUNE_EVERY:
+            _prune_n[key] = 0
+            return True
+        _prune_n[key] = c
+        return False
+
+
 def clean_account(v):
     return re.sub(r"\D", "", str(v or ""))[:20]
 
@@ -817,10 +836,11 @@ def ea_update():
             if bal or eq:
                 con.execute("INSERT INTO history(account,ts,balance,equity) VALUES(?,?,?,?)",
                             (acc, now, bal, eq))
-                con.execute(
-                    "DELETE FROM history WHERE account=? AND id NOT IN"
-                    " (SELECT id FROM history WHERE account=? ORDER BY ts DESC LIMIT ?)",
-                    (acc, acc, HISTORY_CAP))
+                if _should_prune("hist:" + acc):      # v5.3: ma aha codsi kasta
+                    con.execute(
+                        "DELETE FROM history WHERE account=? AND id NOT IN"
+                        " (SELECT id FROM history WHERE account=? ORDER BY ts DESC LIMIT ?)",
+                        (acc, acc, HISTORY_CAP))
     return jsonify(ok=True, account=acc)
 
 
@@ -852,10 +872,14 @@ def ea_trades():
             n = con.insert_many_ignore("closed_trades",
                                        ("account", "ticket", "data", "ts"),
                                        batch, conflict="(account, ticket)")
-        con.execute(
-            "DELETE FROM closed_trades WHERE account=? AND id NOT IN"
-            " (SELECT id FROM closed_trades WHERE account=? ORDER BY ts DESC LIMIT 500)",
-            (acc, acc))
+        # v5.3 DHAKHSO: nadiifintu waa culus tahay (sub-SELECT + ORDER BY safka oo dhan).
+        # Hore codsi KASTA ayay ku socotay -> EA-du 20s+ ayuu sugayay (err 5203).
+        # Hadda: 30 codsi mar (ama marka safku aad u buuxo).
+        if _should_prune("ct:" + acc):
+            con.execute(
+                "DELETE FROM closed_trades WHERE account=? AND id NOT IN"
+                " (SELECT id FROM closed_trades WHERE account=? ORDER BY ts DESC LIMIT 500)",
+                (acc, acc))
     return jsonify(ok=True, saved=n)
 
 
@@ -1722,6 +1746,8 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
       <div class="frow"><span>Lot <small>(0 = auto risk)</small></span><span><input id="mLOT" type="number" min="0" max="100" step="0.01"> <i>lot</i></span></div>
       <div class="hr"></div>
       <div class="frow"><span>Step-Lock</span><span><button class="sw" id="mSTEPON" type="button"><i></i></button></span></div>
+      <div class="frow"><span>ATR maamulo SL/TP <small>(suuqa ayuu la socdaa)</small></span><span><button class="sw" id="mADAPT" type="button"><i></i></button></span></div>
+      <div class="frow"><span>SL ha joogo break-even <small>(dami = SL kor buu u socdaa)</small></span><span><button class="sw" id="mLOCKMODE" type="button"><i></i></button></span></div>
       <div class="frow"><span>Break-even</span><span><button class="sw" id="mBE" type="button"><i></i></button></span></div>
       <div class="frow"><span>Tallaabo kasta</span><span><input id="mSTEP" type="number" min="1" max="5000" step="1"> <i>pip</i></span></div>
       <div class="frow"><span>Bilowga</span><span><input id="mSTEPSTART" type="number" min="1" max="5000" step="1"> <i>pip</i></span></div>
@@ -2147,7 +2173,7 @@ const MF=["SL","TP","LOT","STEP","STEPSTART"];
 let mTouched=false, mSeeded=false;
 function swSet(id,on){ const e=$("#"+id); if(e) e.classList.toggle("on",!!on); }
 function swGet(id){ const e=$("#"+id); return e && e.classList.contains("on"); }
-["mSTEPON","mBE"].forEach(id=>{ const e=$("#"+id); if(e) e.addEventListener("click",()=>{ e.classList.toggle("on"); mTouched=true; }); });
+["mSTEPON","mBE","mLOCKMODE","mADAPT"].forEach(id=>{ const e=$("#"+id); if(e) e.addEventListener("click",()=>{ e.classList.toggle("on"); mTouched=true; }); });
 MF.forEach(k=>{ const e=$("#m"+k); if(e) e.addEventListener("input",()=>{ mTouched=true; }); });
 
 function paintSettings(st){
@@ -2155,12 +2181,15 @@ function paintSettings(st){
   const note=$("#mNote");
   if(note) note.textContent="Bot-ku wuxuu hadda isticmaalayaa:  SL "+(st.sl||0)+"p  ·  TP "+(st.tp||0)+"p  ·  Lot "
     +(st.auto_lot?"auto":(st.lot||0))+"  ·  Step-Lock "+(st.steplock?("ON "+(st.step||0)+"p"):"OFF")
-    +"  ·  BE "+(st.be?"ON":"OFF");
+    +"  ·  BE "+(st.be?"ON":"OFF")
+    +"  ·  "+(Number(st.lockmode)===1?"SL break-even":"SL tallaabo")
+    +(st.adaptive?"  ·  ATR maamulaya":"");
   if(mTouched && mSeeded) return;          // qofku wuu wax qorayaa - ha ka qaadin gacanta
   const set=(id,v)=>{ const e=$("#"+id); if(e && v!==undefined && v!==null) e.value=v; };
   set("mSL",st.sl); set("mTP",st.tp); set("mLOT",st.auto_lot?0:st.lot);
   set("mSTEP",st.step); set("mSTEPSTART",st.stepstart);
   swSet("mSTEPON",st.steplock); swSet("mBE",st.be);
+  swSet("mLOCKMODE",Number(st.lockmode)===1); swSet("mADAPT",!!st.adaptive);
   mSeeded=true;
 }
 function paintLocks(rows){
@@ -2190,6 +2219,8 @@ async function sendSettings(){
   if(sst!==null) cmds.push("SET:STEPSTART="+sst);
   cmds.push("SET:STEPON="+(swGet("mSTEPON")?1:0));
   cmds.push("SET:BE="+(swGet("mBE")?1:0));
+  cmds.push("SET:LOCKMODE="+(swGet("mLOCKMODE")?1:0));
+  cmds.push("SET:ADAPT="+(swGet("mADAPT")?1:0));
   btn.disabled=true; btn.textContent="Diraya…";
   let bad=0;
   for(const c of cmds){
