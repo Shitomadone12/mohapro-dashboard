@@ -1800,11 +1800,12 @@ const cls=v=>v>0?"pos":(v<0?"neg":"neu");
 
 function paint(d){
   const x=d.data||{};
+  if(d.account && d.account!==ACC){ ACC=d.account; loadBrandCache(); }   // v4.1
   $("#dot").className="dot "+(d.online?"on":"off");
   $("#dot2").className="dot "+(d.online?"on":"off");          // v4: badge-ka kore
   $("#st2").textContent=d.online?"ONLINE":"OFFLINE";
   $("#heroAcc").textContent="#"+d.account;
-  setBrand(d.brand||"");
+  setBrand(d.brand||"");   // v4.1: madhan -> kii hore ayaa la sii hayaa
   $("#st").textContent=d.online?("ONLINE · "+(d.age||0)+"s ka hor")
     :(d.age==null?"Xog lama helin":"OFFLINE · "+d.age+"s ka hor");
   $("#bal").textContent=money(x.balance);
@@ -1959,10 +1960,17 @@ function drawChart(){
 addEventListener("resize",drawChart);
 
 /* ---- Sawirka hero-ka ---- */
+/* v4.1: sawirku MA BAABA'AYO. Kaliya marka aad adigu tirtirto (badhanka X) ayuu ka bexeyaa.
+   Server-ku haddii uu soo celiyo madhan (xiriir go'ay / account beddelmay / DB gaabis),
+   kii hore ayaa la sii hayaa. Sidoo kale localStorage ayuu ku kaydsan yahay - marka bogga
+   la furo isla markiiba wuu soo baxayaa, ka hor inta aan server-ku jawaabin. */
 let BRAND="";
-function setBrand(src){
+function brandKey(){ return "mohapro_brand_"+(ACC||"me"); }
+function setBrand(src,force){
+  if(!src && !force) return;               // madhan + ma aha tirtirid -> HA SAARIN
   if(src===BRAND) return;
   BRAND=src;
+  try{ if(src) localStorage.setItem(brandKey(),src); else localStorage.removeItem(brandKey()); }catch(e){}
   const ph=$("#heroPhoto");            // v4: hal sawir - HERO buuxa
   if(src){
     ph.style.backgroundImage="url('"+src.replace(/'/g,"%27")+"')";
@@ -1973,6 +1981,13 @@ function setBrand(src){
     $("#btnPicDel").classList.remove("on");
   }
 }
+
+/* v4.1: sawirkii ugu dambeeyay - isla markiiba soo bandhig */
+let ACC="";
+function loadBrandCache(){
+  try{ const c=localStorage.getItem(brandKey()); if(c) setBrand(c,true); }catch(e){}
+}
+loadBrandCache();
 
 $("#btnPic").addEventListener("click",()=>$("#pick").click());
 
@@ -2000,7 +2015,7 @@ $("#btnPicDel").addEventListener("click",async ()=>{
   if(accSel)body.account=accSel.value;
   await fetch("/api/branding",{method:"POST",
     headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-  setBrand("");
+  setBrand("",true);   // v4.1: tirtirid CAD - halkan oo keliya ayuu sawirku ka bexeyaa
 });
 
 function shrink(file,maxW,q){
