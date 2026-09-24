@@ -2342,8 +2342,11 @@ def dashboard():
         with db() as con:
             accounts = [r["account"] for r in con.execute(
                 "SELECT account FROM snapshots ORDER BY updated_at DESC").fetchall()]
+    # v8.1: admin-ka account-kiisa xog ma laha (EA-du account kale ayay u dirtaa) ->
+    # default-ku waa account-ka xogta ugu dambaysay leh, maaha "Xog lama helin".
+    sel = u["account"] if (u["account"] in accounts or not accounts) else accounts[0]
     return render_template_string(
-        T_DASH, me=u["account"], name=u["name"] or u["account"],
+        T_DASH, me=u["account"], sel=sel, name=u["name"] or u["account"],
         is_admin=(u["role"] == "admin"),
         can_control=bool(u["can_control"]), accounts=accounts)
 
@@ -3130,9 +3133,9 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 
 <div class="top">
   {% if is_admin %}
-  <select id="accSel" style="width:auto;padding:7px 10px;font-size:13px">
-    {% for a in accounts %}<option value="{{ a }}" {% if a==me %}selected{% endif %}>{{ a }}</option>{% endfor %}
-    {% if me not in accounts %}<option value="{{ me }}" selected>{{ me }}</option>{% endif %}
+  <select id="accSel" autocomplete="off" style="width:auto;padding:7px 10px;font-size:13px">
+    {% for a in accounts %}<option value="{{ a }}" {% if a==sel %}selected{% endif %}>{{ a }}</option>{% endfor %}
+    {% if me not in accounts %}<option value="{{ me }}" {% if me==sel %}selected{% endif %}>{{ me }}</option>{% endif %}
   </select>
   {% else %}<span class="pill">Account: {{ me }}</span>{% endif %}
   <span class="spacer"></span>
@@ -3374,6 +3377,13 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 <script>
 const $=s=>document.querySelector(s);
 const accSel=$("#accSel");
+/* v8.1: account-ka la doortay xasuuso - app-ka marka la furo isla kii ayaa soo baxa */
+(function(){
+  if(!accSel) return;
+  let want=null; try{ want=localStorage.getItem("mohapro_acc"); }catch(e){}
+  if(want && [...accSel.options].some(o=>o.value===want)) accSel.value=want;
+  accSel.addEventListener("change",function(){ try{ localStorage.setItem("mohapro_acc",accSel.value); }catch(e){} });
+})();
 let HIST=[];
 
 const money=v=>(v==null||isNaN(v))?"—":Number(v).toLocaleString("en-US",
