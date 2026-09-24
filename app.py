@@ -208,6 +208,15 @@ CREATE TABLE IF NOT EXISTS branding(
   img        TEXT NOT NULL,
   updated_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS analysis(
+  account TEXT NOT NULL,
+  sym     TEXT NOT NULL,
+  data    TEXT NOT NULL,
+  news    TEXT NOT NULL DEFAULT '[]',
+  ts      REAL NOT NULL,
+  UNIQUE(account, sym)
+);
+CREATE INDEX IF NOT EXISTS ix_an ON analysis(account, ts);
 """
 
 # --------------------------------------------------------------------------
@@ -834,6 +843,36 @@ def clean_account(v):
 # --------------------------------------------------------------------------
 # EA endpoints
 # --------------------------------------------------------------------------
+ANALYSIS_TTL = int(os.environ.get("ANALYSIS_TTL", "900"))   # 15 daq -> saf duug ah waa la iska dhaafaa
+
+
+def _save_analysis(con, acc, d):
+    """v7: EA-du chart kasta wuxuu soo diraa analiiskiisa. Saf kasta = hal symbol."""
+    a = d.get("analysis")
+    if not isinstance(a, dict):
+        return
+    sym = str(a.get("sym") or d.get("symbol") or "")[:16]
+    if not sym:
+        return
+    news = d.get("news")
+    if not isinstance(news, list):
+        news = []
+    now = time.time()
+    try:
+        js = json.dumps(a, ensure_ascii=False)[:4000]
+        nj = json.dumps(news[:8], ensure_ascii=False)[:3000]
+    except (TypeError, ValueError):
+        return
+    con.execute(
+        "INSERT INTO analysis(account,sym,data,news,ts) VALUES(?,?,?,?,?)"
+        " ON CONFLICT(account, sym) DO UPDATE SET data=excluded.data,"
+        " news=excluded.news, ts=excluded.ts",
+        (acc, sym, js, nj, now))
+    if _should_prune("an:" + acc):
+        con.execute("DELETE FROM analysis WHERE account=? AND ts < ?",
+                    (acc, now - 6 * 3600))
+
+
 @app.post("/update")
 def ea_update():
     if not token_ok():
@@ -857,6 +896,7 @@ def ea_update():
             (acc, bot, json.dumps(d, ensure_ascii=False), now))
 
         _save_closed(con, acc, d.get("trades"))
+        _save_analysis(con, acc, d)          # v7: analiiska live (chart kasta = saf)
 
         last = con.execute("SELECT ts FROM history WHERE account=? ORDER BY ts DESC LIMIT 1",
                            (acc,)).fetchone()
@@ -1124,6 +1164,17 @@ def dashboard():
         can_control=bool(u["can_control"]), accounts=accounts)
 
 
+_AN_ORDER = {"SIGNAL": 0, "IN": 1, "NEAR": 2, "NEWS": 3, "WAIT": 4, "NONE": 5}
+
+
+def _an_dist(z):
+    try:
+        v = float(z.get("dist"))
+        return v if v >= 0 else 1e9
+    except (TypeError, ValueError):
+        return 1e9
+
+
 def _visible_account(u):
     """Admin: waxa uu dooran karo. User: kaliya account-kiisa."""
     if u["role"] == "admin":
@@ -1150,6 +1201,9 @@ def api_state():
             "SELECT cmd FROM commands WHERE account=? AND taken_at IS NULL ORDER BY id",
             (acc,)).fetchall()
         br = con.execute("SELECT img FROM branding WHERE account=?", (acc,)).fetchone()
+        anr = con.execute(
+            "SELECT sym,data,news,ts FROM analysis WHERE account=? AND ts>? ORDER BY sym",
+            (acc, now - ANALYSIS_TTL)).fetchall()
 
     data = json.loads(snap["data"]) if snap else {}
     age = (now - snap["updated_at"]) if snap else None
@@ -1162,6 +1216,19 @@ def api_state():
         except ValueError:
             pass
 
+    # v7: analiiska live - symbol kasta + wararkiisa
+    ana = []
+    for r in anr:
+        try:
+            row = json.loads(r["data"])
+            row["_news"] = json.loads(r["news"] or "[]")
+            row["_age"] = int(now - r["ts"])
+            ana.append(row)
+        except ValueError:
+            pass
+    ana.sort(key=lambda z: (_AN_ORDER.get(str(z.get("st", "")), 9),
+                            _an_dist(z), str(z.get("sym", ""))))
+
     return jsonify(
         ok=True, account=acc, online=online,
         age=None if age is None else int(age),
@@ -1172,6 +1239,7 @@ def api_state():
         can_control=bool(u["can_control"]),
         is_admin=(u["role"] == "admin"),
         brand=(br["img"] if br else BRAND_IMAGE_URL),
+        analysis=ana,
     )
 
 
@@ -1759,6 +1827,39 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
   .bar .sb{display:none} }
 .pane{display:none}
 .pane.on{display:block}
+
+/* ---------- v7: ANALIIS ---------- */
+.zc{border:1px solid var(--line);border-radius:14px;padding:13px 14px;margin-bottom:11px;
+  background:#17181c}
+.zc.in{border-color:rgba(38,170,110,.55);background:rgba(38,170,110,.07)}
+.zc.near{border-color:rgba(57,135,229,.5);background:rgba(57,135,229,.06)}
+.zc.signal{border-color:rgba(38,170,110,.9);background:rgba(38,170,110,.13)}
+.zc.news{border-color:rgba(208,59,59,.55);background:rgba(208,59,59,.07)}
+.zc .zh{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.zc .zs{font-size:17px;font-weight:700;letter-spacing:.02em}
+.zbadge{font-size:10.5px;font-weight:700;letter-spacing:.06em;padding:5px 10px;
+  border-radius:999px;white-space:nowrap;background:#2a2c33;color:var(--ink2)}
+.zbadge.in,.zbadge.signal{background:rgba(38,170,110,.22);color:#7fe0ab}
+.zbadge.near{background:rgba(57,135,229,.22);color:#9cc8fb}
+.zbadge.none{background:rgba(236,131,90,.2);color:#f0b08f}
+.zbadge.news{background:rgba(208,59,59,.22);color:#f2a3a3}
+.zc .zl{font-size:13px;color:var(--ink2);margin:7px 0 10px;font-variant-numeric:tabular-nums}
+.ztr{height:8px;border-radius:5px;background:#26272c;overflow:hidden}
+.ztr i{display:block;height:100%;border-radius:5px;background:var(--s1)}
+.ztr i.in{background:#26aa6e} .ztr i.far{background:#4b4d55}
+.zft{display:flex;justify-content:space-between;gap:10px;margin-top:6px;
+  font-size:11.5px;color:var(--ink3);font-variant-numeric:tabular-nums}
+.zwhy{margin-top:10px;padding-top:9px;border-top:1px solid #26272c;
+  font-size:12.5px;color:#e0a86a;font-weight:600;line-height:1.45}
+.zc.signal .zwhy{color:#7fe0ab}
+.nv{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  border:1px solid var(--line);border-radius:12px;padding:11px 13px;margin-bottom:9px}
+.nv .nt{font-size:13.5px;font-weight:600}
+.nv .nm{font-size:12px;color:var(--ink3);margin-top:3px;letter-spacing:.04em}
+.nv .nc{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.nv .nc.soon{color:#e8756f}
+.nwarn{border:1px solid rgba(208,59,59,.5);background:rgba(208,59,59,.1);color:#f2a3a3;
+  border-radius:12px;padding:11px 13px;font-size:12.5px;line-height:1.45}
 @media(min-width:900px){.cols.two{grid-template-columns:1fr}}
 </style></head><body>
 
@@ -1776,7 +1877,7 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
     </span>
   </div>
   <div class="hero-in">
-    <h1>MOHA PRO <b>v59</b></h1>
+    <h1>MOHA PRO <b>v66.9</b></h1>
     <div class="chips">
       <span class="chip"><span class="dot" id="dot"></span><span id="st">Xiriirinaya…</span></span>
       <span class="chip">MT5</span>
@@ -1901,6 +2002,24 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
     </div>
   </section>
 
+  <!-- ============ ANALIIS (v7) ============ -->
+  <section class="pane" id="pAnaliis">
+    <div class="card" style="margin-bottom:16px">
+      <div class="zh" style="margin-bottom:12px">
+        <p class="sec-t" style="margin:0">Analiiska bot-ka</p>
+        <span class="note" id="anAge">—</span>
+      </div>
+      <div id="anList"></div>
+      <div class="note" id="anNote" style="margin-top:4px"></div>
+    </div>
+
+    <div class="card">
+      <p class="sec-t">Wararka (news)</p>
+      <div id="nwList"></div>
+      <div class="note" id="nwNote"></div>
+    </div>
+  </section>
+
   <!-- ============ CHART ============ -->
   <section class="pane" id="pChart">
     <div class="card">
@@ -1993,6 +2112,8 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
     <svg viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1Z"/></svg>Guud</button>
   <button data-tab="Trade">
     <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg>Trade</button>
+  <button data-tab="Analiis">
+    <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5M11 8v3l2 2"/></svg>Analiis</button>
   <button data-tab="Chart">
     <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-6"/></svg>Chart</button>
   <button data-tab="Journal">
@@ -2018,6 +2139,7 @@ function paint(d){
   setBrand(d.brand||"");   // v4.1: madhan -> kii hore ayaa la sii hayaa
   paintSettings(x.settings); paintLocks(x.locks);   // v5
   paintRaw(x, d);                                   // v6
+  paintAnalysis(d.analysis);                        // v7
   $("#st").textContent=d.online?("ONLINE · "+(d.age||0)+"s ka hor")
     :(d.age==null?"Xog lama helin":"OFFLINE · "+d.age+"s ka hor");
   $("#bal").textContent=money(x.balance);
@@ -2280,6 +2402,89 @@ async function tick(){
     $("#dot2").className="dot off"; $("#st2").textContent="OFFLINE";
   }
 }
+/* ---- v7: ANALIISKA LIVE ---- */
+const AN_LBL={SIGNAL:"SIGNAL DIYAAR",IN:"ZONE GUDIHIISA",NEAR:"U DHOW",
+              WAIT:"SUGAYA",NONE:"ZONE MA JIRTO",NEWS:"NEWS — JOOJIN"};
+const AN_CLS={SIGNAL:"signal",IN:"in",NEAR:"near",WAIT:"",NONE:"none",NEWS:"news"};
+function anNum(v,dg){ const n=Number(v); return (v==null||isNaN(n))?"—":n.toFixed(dg==null?5:dg); }
+function anMins(m){
+  m=Number(m);
+  if(isNaN(m)) return "—";
+  if(m<0) return Math.abs(m)+" daq ka hor";
+  if(m<60) return m+" daqiiqo";
+  const h=Math.floor(m/60), r=m%60;
+  return h+" saac"+(r?(" "+r+"d"):"");
+}
+function paintAnalysis(rows){
+  const box=$("#anList"); if(!box) return;
+  rows=rows||[];
+  const nb=$("#anBadge"); if(nb) nb.textContent=rows.length?rows.length:"";
+  if(!rows.length){
+    box.innerHTML='<div class="empty" style="padding:22px 0">Weli analiis lama helin.<br>'
+      +'Chart kasta EnableCloudDashboard = true ka dhig.</div>';
+    $("#anAge").textContent="—"; $("#anNote").textContent="";
+    paintNews([]); return;
+  }
+  let minAge=1e9;
+  box.innerHTML=rows.map(r=>{
+    const st=String(r.st||"WAIT");
+    const k=AN_CLS[st]||"", lb=AN_LBL[st]||st;
+    if(Number(r._age)<minAge) minAge=Number(r._age);
+    let dg=Number(r.dg);
+    if(isNaN(dg)||dg<0||dg>8){ const q=Number(r.px)||0;
+      dg=(q>=500)?2:((q>=20)?3:5); }
+    const d=Number(r.dist);
+    const hasZ=(Number(r.lo)>0&&Number(r.hi)>0);
+    // 0 pip = buuxa, 60 pip+ = madhan
+    let pct=0, fcl="";
+    if(!hasZ){ pct=2; fcl="far"; }
+    else if(!(d>=0)){ pct=2; fcl="far"; }
+    else if(d<=0){ pct=100; fcl="in"; }
+    else { pct=Math.max(3,Math.round((1-Math.min(d,60)/60)*100)); fcl=(d<=25?"":"far"); }
+    const zline=hasZ
+      ? ((r.side||"")+"  "+anNum(r.lo,dg)+" – "+anNum(r.hi,dg)+"  ·  "+(r.tf||""))
+      : ("zone lama helin  ·  "+(r.zones||0)+" zone nool");
+    const right=hasZ?((d>0)?(d.toFixed(1)+" pip u jira"):"zone gudihiisa"):"0 zone";
+    const why=r.why?('<div class="zwhy">'+esc(r.why)+'</div>')
+                   :(st==="SIGNAL"?'<div class="zwhy">Shuruudihii waa buuxsameen.</div>':"");
+    const nx=(st==="NEWS"&&r.news)?('<div class="zwhy">📰 '+esc(r.news)+'</div>'):"";
+    return '<div class="zc '+k+'">'
+      +'<div class="zh"><span class="zs">'+esc(r.sym||"")+'</span>'
+      +'<span class="zbadge '+k+'">'+lb+'</span></div>'
+      +'<div class="zl">'+esc(zline)+'</div>'
+      +'<div class="ztr"><i class="'+fcl+'" style="width:'+pct+'%"></i></div>'
+      +'<div class="zft"><span>sicir '+anNum(r.px,dg)+'</span><span>'+esc(right)+'</span></div>'
+      +why+nx+'</div>';
+  }).join("");
+  $("#anAge").textContent=(minAge<1e9)?(minAge+"s ka hor"):"—";
+  $("#anNote").textContent="Chart "+rows.length+"  ·  cusboonaysii 12 ilbiriqsi kasta  ·  chart kastaa gooni";
+  // wararka: mid kasta hal mar (symbol-yada oo dhan la isku daray)
+  const seen={}, nw=[];
+  rows.forEach(r=>(r._news||[]).forEach(n=>{
+    const key=(n.ti||"")+"|"+(n.cc||"")+"|"+(n.m||0);
+    if(seen[key]) return; seen[key]=1; nw.push(n);
+  }));
+  nw.sort((a,b)=>Number(a.m)-Number(b.m));
+  paintNews(nw);
+}
+function paintNews(rows){
+  const box=$("#nwList"); if(!box) return;
+  rows=(rows||[]).filter(n=>Number(n.m)>=-30).slice(0,8);
+  if(!rows.length){
+    box.innerHTML='<div class="empty" style="padding:16px 0">War soo socda lama hayo.</div>';
+    $("#nwNote").textContent=""; return;
+  }
+  const IMP={High:"XOOG BADAN",Medium:"DHEXDHEXAAD",Low:"YAR"};
+  box.innerHTML=rows.map(n=>{
+    const m=Number(n.m), soon=(m<=30&&m>=-30);
+    return '<div class="nv"><div><div class="nt">'+esc(n.ti||"")+'</div>'
+      +'<div class="nm">'+esc(n.cc||"")+'  ·  '+esc(IMP[n.im]||n.im||"")+'</div></div>'
+      +'<div class="nc'+(soon?" soon":"")+'">'+esc(anMins(m))+'</div></div>';
+  }).join("");
+  $("#nwNote").innerHTML='<div class="nwarn">Bot-ku wuu joojinayaa ganacsiga waqtiga warka '
+    +'(ka hor iyo ka dib), haddii News Filter uu ON yahay.</div>';
+}
+
 /* ---- v6: xogta EA-du dirayso ---- */
 function paintRaw(x, d){
   const box=$("#rawBox"); if(!box) return;
