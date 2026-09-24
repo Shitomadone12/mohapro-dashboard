@@ -3051,6 +3051,27 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 .pane{display:none}
 .pane.on{display:block}
 
+/* ---------- v8.2: rakibidda app-ka (sheet) ---------- */
+.edit.inst{border-color:rgba(217,174,85,.7);color:#f0cf86;background:rgba(217,174,85,.14)}
+.isheet{position:fixed;inset:0;z-index:90;display:flex;align-items:flex-end;justify-content:center;
+  background:rgba(0,0,0,.62)}
+.isheet[hidden]{display:none}
+.isheet .box{width:100%;max-width:520px;background:#16181e;border:1px solid #2b2f3a;border-bottom:none;
+  border-radius:20px 20px 0 0;padding:20px 18px calc(20px + env(safe-area-inset-bottom));
+  max-height:88vh;overflow:auto}
+.isheet h3{margin:0 0 4px;font-size:19px}
+.isheet .lead{color:var(--ink2);font-size:13.5px;margin:0 0 14px;line-height:1.5}
+.isheet ol{margin:0;padding-left:0;list-style:none;display:flex;flex-direction:column;gap:10px;counter-reset:st}
+.isheet li{counter-increment:st;display:flex;gap:12px;align-items:flex-start;font-size:15px;line-height:1.45}
+.isheet li::before{content:counter(st);flex:0 0 26px;height:26px;border-radius:50%;background:rgba(217,174,85,.18);
+  color:#f0cf86;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;margin-top:1px}
+.isheet .k{display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:24px;padding:0 6px;
+  border:1px solid #3a3f4c;border-radius:7px;background:#20232b;color:#f0cf86;font-weight:700;font-size:14px;vertical-align:-3px}
+.isheet .diag{margin-top:16px;padding-top:12px;border-top:1px solid #2b2f3a;font:12px/1.6 ui-monospace,Menlo,Consolas,monospace;color:var(--ink3)}
+.isheet .diag b{font-weight:600}
+.isheet .diag .y{color:#6fd49c}.isheet .diag .n{color:#ef8a82}
+.isheet .close{margin-top:16px;width:100%;padding:13px;border-radius:12px;font-weight:700}
+
 /* ---------- v7.2: CAAFIMAADKA BOT-KA ---------- */
 .hc{display:flex;gap:11px;align-items:flex-start;padding:11px 12px;border-radius:12px;
   margin-bottom:9px;border:1px solid var(--line);background:#17181c}
@@ -3110,7 +3131,7 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
   <div class="hero-top">
     <span class="chip"><span class="dot" id="dot2"></span><span id="st2">…</span></span>
     <span class="hero-btns">
-      <button class="edit" id="btnInst" type="button" style="display:none" title="Ku rakib app-ka" aria-label="Ku rakib app-ka">
+      <button class="edit inst" id="btnInst" type="button" title="Ku rakib app-ka" aria-label="Ku rakib app-ka">
         <svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
         <span>Install</span>
       </button>
@@ -3374,6 +3395,15 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
     <svg viewBox="0 0 24 24"><path d="M5 3h11l4 4v14H5Z"/><path d="M9 9h7M9 13h7M9 17h4"/></svg>Journal<span class="tbadge" id="hcBadge" style="display:none"></span></button>
 </nav>
 <div class="tip" id="tip"></div>
+<div class="isheet" id="iSheet" hidden>
+  <div class="box" role="dialog" aria-modal="true" aria-labelledby="iTitle">
+    <h3 id="iTitle">Ku rakib MOHA PRO</h3>
+    <p class="lead" id="iLead"></p>
+    <ol id="iSteps"></ol>
+    <div class="diag" id="iDiag"></div>
+    <button class="close" id="iClose" type="button">Xidh</button>
+  </div>
+</div>
 <script>
 const $=s=>document.querySelector(s);
 const accSel=$("#accSel");
@@ -3666,21 +3696,73 @@ async function tick(){
 }
 /* ---- v8: PWA - badhanka "Install" (Android + PC Chrome/Edge) ---- */
 let _instEvt=null;
-addEventListener("beforeinstallprompt",function(e){
-  e.preventDefault(); _instEvt=e;
-  const b=$("#btnInst"); if(b) b.style.display="";
-});
+/* v8.2: badhanku MAR WALBA wuu muuqdaa (browser-ka). Chrome-ku haddii uu diyaar u yahay -> daaqadda
+   rakibidda ayaa si toos ah u furmaysa. Haddii kale (Chrome ma diyaarin, Samsung, iPhone) -> tilmaamo. */
+const IS_APP = (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone===true;
+function uaKind(){
+  const u=navigator.userAgent||"";
+  if(/iPhone|iPad|iPod/i.test(u)) return /CriOS|FxiOS|EdgiOS/i.test(u)?"ios-other":"ios";
+  if(/SamsungBrowser/i.test(u)) return "samsung";
+  if(/Android/i.test(u)) return /Chrome[/]/i.test(u)?"android":"android-other";
+  if(/Edg[/]/i.test(u)) return "edge";
+  if(/Chrome[/]/i.test(u)) return "desktop";
+  return "other";
+}
+addEventListener("beforeinstallprompt",function(e){ e.preventDefault(); _instEvt=e; });
 addEventListener("appinstalled",function(){
-  _instEvt=null; const b=$("#btnInst"); if(b) b.style.display="none";
+  _instEvt=null; const b=$("#btnInst"); if(b) b.style.display="none"; closeSheet();
 });
+function closeSheet(){ const s=$("#iSheet"); if(s) s.hidden=true; }
+async function openSheet(){
+  const k=uaKind(), K=t=>'<span class="k">'+t+'</span>';
+  let lead="", st=[];
+  if(k==="android"){
+    lead="Chrome: saddex taabasho. Kadib icon-ka MOHA PRO ayaa home screen-ka ka soo baxaya.";
+    st=["Riix "+K("⋮")+" — saddexda dhibcood (URL bar-ka agtiisa).",
+        "Dooro <b>Add to Home screen</b> ama <b>Install app</b>.",
+        "Riix <b>Install</b> (ama <b>Add</b>).",
+        "Chrome-ka xidh. Ka fur icon-ka <b>MOHA PRO</b> ee home screen-ka."];
+  }else if(k==="samsung"){
+    lead="Samsung Internet:";
+    st=["Riix "+K("≡")+" — menu-ga hoose.","<b>Add page to</b> → <b>Home screen</b>.","Riix <b>Add</b>.","Ka fur icon-ka <b>MOHA PRO</b>."];
+  }else if(k==="ios"){
+    lead="iPhone — Safari keliya ayaa rakibi kara:";
+    st=["Riix "+K("⬆")+" <b>Share</b> (hoose, dhexda).","Hoos u dhaadhac → <b>Add to Home Screen</b>.","Riix <b>Add</b> (sare midig).","Ka fur icon-ka <b>MOHA PRO</b>."];
+  }else if(k==="ios-other"){
+    lead="iPhone-ka browser-kan kama rakibi karo. Fur Safari:";
+    st=["Koobi garee link-ga bogga.","<b>Safari</b> ku fur oo login samee.","Riix "+K("⬆")+" <b>Share</b> → <b>Add to Home Screen</b>."];
+  }else if(k==="desktop"||k==="edge"){
+    lead=(k==="edge"?"Edge":"Chrome")+" — PC:";
+    st=["URL bar-ka dhinaca midig, riix icon-ka <b>install</b> "+K("⊕")+".",
+        "Ama: "+K("⋮")+" → <b>Cast, save and share</b> → <b>Install page as app</b>.","Riix <b>Install</b>."];
+  }else{
+    lead="Browser-kan app kama samayn karo. Fur <b>Chrome</b> (Android/PC) ama <b>Safari</b> (iPhone).";
+  }
+  $("#iLead").innerHTML=lead;
+  $("#iSteps").innerHTML=st.map(x=>"<li><span>"+x+"</span></li>").join("");
+  // hubin - haddii aanay shaqayn, sawirkan ayaa sheegaya sababta
+  let sw=false, ctl=!!(navigator.serviceWorker&&navigator.serviceWorker.controller), man=false;
+  try{ sw=!!(navigator.serviceWorker && await navigator.serviceWorker.getRegistration("/")); }catch(e){}
+  try{ const r=await fetch("/manifest.webmanifest",{cache:"no-store"}); man=r.ok && !!(await r.json()).name; }catch(e){}
+  const Y=(ok)=>ok?'<b class="y">✓</b>':'<b class="n">✗</b>';
+  $("#iDiag").innerHTML="Hubin: manifest "+Y(man)+" · service worker "+Y(sw)+" · xakamayn "+Y(ctl)
+    +" · https "+Y(location.protocol==="https:"||location.hostname==="127.0.0.1"||location.hostname==="localhost")
+    +"<br>browser: "+k+" · Chrome diyaar: "+Y(!!_instEvt);
+  $("#iSheet").hidden=false;
+}
 (function(){
   const b=$("#btnInst"); if(!b) return;
+  if(IS_APP){ b.style.display="none"; return; }          // app-ka gudihiisa -> looma baahna
   b.addEventListener("click",async function(){
-    if(!_instEvt) return;
-    _instEvt.prompt();
-    try{ await _instEvt.userChoice; }catch(e){}
-    _instEvt=null; b.style.display="none";
+    if(_instEvt){                                          // Chrome diyaar -> daaqadda rasmiga ah
+      _instEvt.prompt();
+      try{ const c=await _instEvt.userChoice; if(c && c.outcome==="accepted"){ b.style.display="none"; } }catch(e){}
+      _instEvt=null; return;
+    }
+    openSheet();
   });
+  const c=$("#iClose"); if(c) c.addEventListener("click",closeSheet);
+  const sh=$("#iSheet"); if(sh) sh.addEventListener("click",function(e){ if(e.target===sh) closeSheet(); });
 })();
 
 /* ---- v7.2: CAAFIMAADKA BOT-KA ----
