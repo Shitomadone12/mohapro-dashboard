@@ -1203,6 +1203,62 @@ def api_command():
 RANGES = {"day": 1, "week": 7, "month": 30, "year": 365, "all": 0}
 
 
+@app.get("/api/export/trades.csv")
+@login_required
+def export_trades_csv():
+    """v6: trade-yada la xidhay -> CSV (Excel). Kaliya account-ka la arki karo."""
+    u = request.user
+    acc = _visible_account(u)
+    with db() as con:
+        rows = con.execute(
+            "SELECT sym,type,strat,lot,points,profit,ot,ct FROM ctrades"
+            " WHERE account=? ORDER BY ct DESC LIMIT 5000", (acc,)).fetchall()
+    out = ["symbol,nooc,xeelad,lot,points,profit,furitaan,xidhitaan"]
+    for r in rows:
+        def ts(v):
+            try:
+                return datetime.fromtimestamp(int(v or 0), timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            except (ValueError, OSError, OverflowError):
+                return ""
+        out.append(",".join([
+            str(_col(r, "sym") or ""), str(_col(r, "type") or ""),
+            '"%s"' % str(_col(r, "strat") or "").replace('"', "'"),
+            "%.2f" % _num(_col(r, "lot")), "%.1f" % _num(_col(r, "points")),
+            "%.2f" % _num(_col(r, "profit")), ts(_col(r, "ot")), ts(_col(r, "ct")),
+        ]))
+    body = "\r\n".join(out) + "\r\n"
+    resp = make_response(body)
+    resp.headers["Content-Type"] = "text/csv; charset=utf-8"
+    resp.headers["Content-Disposition"] = 'attachment; filename="mohapro_%s_trades.csv"' % acc
+    return resp
+
+
+@app.get("/api/export/snapshot.json")
+@login_required
+def export_snapshot_json():
+    """v6: xogtii ugu dambaysay ee EA-du soo dirtay, sidii ay ahayd."""
+    u = request.user
+    acc = _visible_account(u)
+    with db() as con:
+        snap = con.execute("SELECT data,updated_at FROM snapshots WHERE account=?", (acc,)).fetchone()
+    if not snap:
+        return jsonify(ok=False, error="Weli xog lama helin."), 404
+    try:
+        data = json.loads(_col(snap, "data") or "{}")
+    except ValueError:
+        data = {}
+    payload = {
+        "account": acc,
+        "la_helay": datetime.fromtimestamp(float(_col(snap, "updated_at") or 0),
+                                           timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "xogta_EA": data,
+    }
+    resp = make_response(json.dumps(payload, indent=2, ensure_ascii=False))
+    resp.headers["Content-Type"] = "application/json; charset=utf-8"
+    resp.headers["Content-Disposition"] = 'attachment; filename="mohapro_%s_snapshot.json"' % acc
+    return resp
+
+
 @app.get("/api/journal")
 @login_required
 def api_journal():
@@ -1648,6 +1704,11 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 .sw.on{background:#26aa6e}
 .sw.on i{left:35px}
 
+.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;color:var(--ink)}
+.rawbox{margin:10px 0 0;padding:12px;border-radius:10px;background:#0f1013;border:1px solid var(--line);
+  color:#cfd4dd;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.45;
+  max-height:340px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+
 /* ---------- ACTIONS ---------- */
 .sec-t{font-size:13px;color:var(--ink2);font-weight:600;text-transform:uppercase;
   letter-spacing:.07em;margin:0 0 11px}
@@ -1851,6 +1912,23 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 
   <!-- ============ JOURNAL ============ -->
   <section class="pane" id="pJournal">
+    <!-- v6: xogta EA-du dirayso + soo dejin -->
+    <div class="card" style="margin-bottom:16px">
+      <p class="sec-t">Xogta EA-du dirayso</p>
+      <div class="frow"><span>La helay</span><span id="rawAge" class="mono">—</span></div>
+      <div class="frow"><span>Cabbirka xogta</span><span id="rawSize" class="mono">—</span></div>
+      <div class="acts" style="margin-top:12px;grid-template-columns:1fr 1fr">
+        <a class="act" id="dlCsv" href="/api/export/trades.csv"
+           style="flex-direction:row;gap:8px;padding:13px;text-decoration:none;border-color:var(--line);color:var(--ink)">CSV · trade-yada</a>
+        <a class="act" id="dlJson" href="/api/export/snapshot.json"
+           style="flex-direction:row;gap:8px;padding:13px;text-decoration:none;border-color:var(--line);color:var(--ink)">JSON · xogta EA</a>
+      </div>
+      <details style="margin-top:12px">
+        <summary style="cursor:pointer;font-size:13px;color:var(--ink2)">Xogta oo dhan halkan ka eeg</summary>
+        <pre id="rawBox" class="rawbox">—</pre>
+      </details>
+    </div>
+
     <div class="rng" id="rng">
       <button data-r="day">Maanta</button>
       <button data-r="week">Usbuuc</button>
@@ -1939,6 +2017,7 @@ function paint(d){
   $("#heroAcc").textContent="#"+d.account;
   setBrand(d.brand||"");   // v4.1: madhan -> kii hore ayaa la sii hayaa
   paintSettings(x.settings); paintLocks(x.locks);   // v5
+  paintRaw(x, d);                                   // v6
   $("#st").textContent=d.online?("ONLINE · "+(d.age||0)+"s ka hor")
     :(d.age==null?"Xog lama helin":"OFFLINE · "+d.age+"s ka hor");
   $("#bal").textContent=money(x.balance);
@@ -2201,6 +2280,21 @@ async function tick(){
     $("#dot2").className="dot off"; $("#st2").textContent="OFFLINE";
   }
 }
+/* ---- v6: xogta EA-du dirayso ---- */
+function paintRaw(x, d){
+  const box=$("#rawBox"); if(!box) return;
+  let txt="{}";
+  try{ txt=JSON.stringify(x,null,2); }catch(e){ txt="(lama akhriyi karo)"; }
+  if(txt.length>40000) txt=txt.slice(0,40000)+"\\n… (la gooyay)";
+  box.textContent=txt;
+  const kb=(new Blob([txt]).size/1024).toFixed(1);
+  $("#rawSize").textContent=kb+" KB";
+  $("#rawAge").textContent=(d.age==null)?"—":(d.age+"s ka hor"+(d.online?"":"  ·  OFFLINE"));
+  const q=accSel?("?account="+encodeURIComponent(accSel.value)):"";
+  $("#dlCsv").href="/api/export/trades.csv"+q;
+  $("#dlJson").href="/api/export/snapshot.json"+q;
+}
+
 /* ---- v5: MAAMULKA ---- */
 const MF=["SL","TP","LOT","STEP","STEPSTART"];
 let mTouched=false, mSeeded=false;
