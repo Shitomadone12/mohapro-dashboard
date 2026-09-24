@@ -116,6 +116,7 @@ SET_LIMITS = {          # key: (min, max, noocaa)
     "BE":        (0, 1,    "int"),
     "LOCKMODE":  (0, 1,    "int"),   # v5.1: 0 = STEP, 1 = BE-ONLY
     "ADAPT":     (0, 1,    "int"),   # v5.2: ATR adaptive SL/TP
+    "MGMT":      (0, 1,    "int"),   # v7.1: 1 = maamulku wuu shaqeynayaa, 0 = damman
 }
 
 def valid_command(cmd):
@@ -1828,6 +1829,23 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 .pane{display:none}
 .pane.on{display:block}
 
+/* ---------- v7.2: CAAFIMAADKA BOT-KA ---------- */
+.hc{display:flex;gap:11px;align-items:flex-start;padding:11px 12px;border-radius:12px;
+  margin-bottom:9px;border:1px solid var(--line);background:#17181c}
+.hc i{flex:0 0 10px;height:10px;border-radius:50%;margin-top:5px;background:#6b6e78}
+.hc.red{border-color:rgba(208,59,59,.55);background:rgba(208,59,59,.09)}
+.hc.red i{background:#e5534b}
+.hc.amb{border-color:rgba(230,160,60,.5);background:rgba(230,160,60,.08)}
+.hc.amb i{background:#e0a040}
+.hc.ok{border-color:rgba(38,170,110,.45);background:rgba(38,170,110,.07)}
+.hc.ok i{background:#26aa6e}
+.hc .ht{font-size:13.5px;font-weight:650;line-height:1.35}
+.hc .hd{font-size:12.3px;color:var(--ink2);margin-top:3px;line-height:1.45}
+.tbadge{position:absolute;top:5px;margin-left:16px;min-width:17px;height:17px;padding:0 5px;
+  border-radius:999px;background:#e5534b;color:#fff;font-size:10.5px;font-weight:700;
+  line-height:17px;text-align:center}
+.appbar button{position:relative}
+
 /* ---------- v7: ANALIIS ---------- */
 .zc{border:1px solid var(--line);border-radius:14px;padding:13px 14px;margin-bottom:11px;
   background:#17181c}
@@ -1941,9 +1959,11 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
       <div class="frow"><span>Lot <small>(0 = auto risk)</small></span><span><input id="mLOT" type="number" min="0" max="100" step="0.01"> <i>lot</i></span></div>
       <div class="hr"></div>
       <div class="frow"><span>Step-Lock</span><span><button class="sw" id="mSTEPON" type="button"><i></i></button></span></div>
+      <div id="mWarn"></div>
       <div class="frow"><span>ATR maamulo SL/TP <small>(suuqa ayuu la socdaa)</small></span><span><button class="sw" id="mADAPT" type="button"><i></i></button></span></div>
       <div class="frow"><span>SL ha joogo break-even <small>(dami = SL kor buu u socdaa)</small></span><span><button class="sw" id="mLOCKMODE" type="button"><i></i></button></span></div>
       <div class="frow"><span>Break-even</span><span><button class="sw" id="mBE" type="button"><i></i></button></span></div>
+      <div class="frow"><span>Maamulka trade-ka <small>(dami = SL/TP oo keliya)</small></span><span><button class="sw" id="mMGMT" type="button"><i></i></button></span></div>
       <div class="frow"><span>Tallaabo kasta</span><span><input id="mSTEP" type="number" min="1" max="5000" step="1"> <i>pip</i></span></div>
       <div class="frow"><span>Bilowga</span><span><input id="mSTEPSTART" type="number" min="1" max="5000" step="1"> <i>pip</i></span></div>
       <div class="acts" style="margin-top:14px;grid-template-columns:2fr 1fr">
@@ -2031,6 +2051,14 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 
   <!-- ============ JOURNAL ============ -->
   <section class="pane" id="pJournal">
+    <!-- v7.2: caafimaadka bot-ka - baadhis toos ah -->
+    <div class="card" style="margin-bottom:16px">
+      <div class="zh" style="margin-bottom:12px">
+        <p class="sec-t" style="margin:0">Caafimaadka bot-ka</p>
+        <span class="note" id="hcSum">—</span>
+      </div>
+      <div id="hcList"></div>
+    </div>
     <!-- v6: xogta EA-du dirayso + soo dejin -->
     <div class="card" style="margin-bottom:16px">
       <p class="sec-t">Xogta EA-du dirayso</p>
@@ -2117,7 +2145,7 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
   <button data-tab="Chart">
     <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-6"/></svg>Chart</button>
   <button data-tab="Journal">
-    <svg viewBox="0 0 24 24"><path d="M5 3h11l4 4v14H5Z"/><path d="M9 9h7M9 13h7M9 17h4"/></svg>Journal</button>
+    <svg viewBox="0 0 24 24"><path d="M5 3h11l4 4v14H5Z"/><path d="M9 9h7M9 13h7M9 17h4"/></svg>Journal<span class="tbadge" id="hcBadge" style="display:none"></span></button>
 </nav>
 <div class="tip" id="tip"></div>
 <script>
@@ -2140,6 +2168,7 @@ function paint(d){
   paintSettings(x.settings); paintLocks(x.locks);   // v5
   paintRaw(x, d);                                   // v6
   paintAnalysis(d.analysis);                        // v7
+  paintHealth(d);                                   // v7.2
   $("#st").textContent=d.online?("ONLINE · "+(d.age||0)+"s ka hor")
     :(d.age==null?"Xog lama helin":"OFFLINE · "+d.age+"s ka hor");
   $("#bal").textContent=money(x.balance);
@@ -2402,6 +2431,69 @@ async function tick(){
     $("#dot2").className="dot off"; $("#st2").textContent="OFFLINE";
   }
 }
+/* ---- v7.2: CAAFIMAADKA BOT-KA ----
+   Xogta EA-du soo dirto ayaa la baadhaa. Wax kasta oo is-burinaya ama khatar ah -> kaadh.
+   red = khalad dhab ah · amb = digniin · ok = wax walba waa sax */
+function healthChecks(d){
+  const x=d.data||{}, st=x.settings||null, an=d.analysis||[], out=[];
+  const add=(lv,t,dd)=>out.push({lv:lv,t:t,d:dd||""});
+  // 1) xiriirka
+  if(d.age==null){ add("red","Bot-ka xog lagama helin","EA-du weli wax uma dirin server-ka. Hubi EnableCloudDashboard = true iyo URL-ka WebRequest-ka (Tools → Options → Expert Advisors)."); return out; }
+  if(!d.online){
+    const m=Math.round(d.age/60);
+    add("red","Bot-ku wuu OFFLINE yahay ("+(m>=1?(m+" daqiiqo"):(d.age+"s"))+")","MT5 ama VPS-ka waa la xidhay, internet-ku wuu go'ay, ama WebRequest-ku wuu fashilmay. Experts tab-ka ka eeg: CLOUD DASHBOARD FAILED.");
+  }
+  if(!st){ add("amb","Sitinka bot-ka lama helin","EA-gu waa nooc duug ah (ka hor v66.3). Ku shub MOHA_PRO v67.0 ama ka dambeeya."); }
+  else{
+    // 2) maamulka
+    if(st.mgmt_off){
+      let dd="Trade-ku wuxuu ku xidhmayaa SL ama TP oo keliya. Trailing, partial close, weekend close iyo emergency drawdown midna ma shaqeynayaan.";
+      if(st.be) dd+=" Break-even waa ON laakiin MA SHAQEYNAYO maamulka oo damman awgii.";
+      const still=[]; if(st.steplock) still.push("Step-Lock"); if(st.adaptive) still.push("ATR adaptive");
+      if(still.length) dd+=" ("+still.join(" iyo ")+(still.length>1?" way sii shaqeynayaan.)":" wuu sii shaqeynayaa.)");
+      add("red","Maamulka trade-ka waa DAMMAN",dd+" Shid: Guud → qabta «Maamulka trade-ka» → DIR BOT-KA.");
+    }
+    // 3) khatarta
+    const r=Number(st.risk||0);
+    if(r>2) add("red","Khatarta trade kasta waa "+r.toFixed(2)+"%","In ka badan 2% trade kasta wuxuu dhowr khasaare oo isku xiga kaga dhigayaa drawdown weyn.");
+    else if(r>1) add("amb","Khatarta trade kasta waa "+r.toFixed(2)+"%","1% ka badan. Hubi inay tahay waxaad ula jeeddo.");
+    if(!st.auto_lot && Number(st.lot)>1) add("amb","Lot go'an: "+Number(st.lot).toFixed(2),"Lot-ku ma raacayo haraaga - risk % lama isticmaalayo.");
+    // 4) step-lock
+    if(st.steplock && Number(st.stepstart)>0 && Number(st.stepstart)<8)
+      add("amb","Step-Lock wuxuu bilaabmayaa +"+Number(st.stepstart)+"p","Aad buu u dhow yahay - SL-ku wuxuu u guuri karaa break-even ka hor inta trade-ku neefsan, oo buuq yar ayaa xidhi kara.");
+    if(st.steplock && Number(st.lockmode)===0 && Number(st.step)>0 && Number(st.step)<8)
+      add("amb","Tallaabada Step-Lock waa "+Number(st.step)+"p","SL-ku aad buu ugu dhow yahay sicirka - trade-yo badan ayaa goor hore ku xidhmi doona.");
+    // 5) SL/TP go'an oo aan macquul ahayn
+    const sl=Number(st.sl||0), tp=Number(st.tp||0);
+    if(sl>0 && tp>0 && tp<sl) add("amb","TP ("+tp+"p) ayaa ka yar SL ("+sl+"p)","RR 1:"+(tp/sl).toFixed(2)+" - win-rate aad u sarreeya ayaad u baahan tahay si aad faa'iido u samayso.");
+    if(sl>0 && sl<5) add("amb","SL aad u yar: "+sl+"p","Spread-ka iyo buuqa ayaa xidhi kara ka hor inta aanu trade-ku socon.");
+  }
+  // 6) drawdown
+  const dd=Number(x.drawdown||0);
+  if(dd>=10) add("red","Drawdown: "+dd.toFixed(1)+"%","Haraaga ayaa si weyn hoos ugu dhacay. Eeg trade-yada la xidhay ka hor inta aanad sii wadin.");
+  else if(dd>=5) add("amb","Drawdown: "+dd.toFixed(1)+"%","Si dhow ula soco.");
+  // 7) analiiska chart-yada
+  if(d.online && !an.length) add("amb","Analiis lama helin","Bot-ku wuu online yahay laakiin analiis ma soo dirin. EA v66.9+ ku shub oo Enable_SD_Engine = true ka dhig.");
+  an.forEach(a=>{
+    if(d.online && Number(a._age)>300) add("amb",(a.sym||"Chart")+" — "+Math.round(a._age/60)+" daqiiqo ma dirin","Chart-kan waa la xidhay ama EA-gii waa laga saaray. Kuwa kale way socdaan.");
+  });
+  const nz=an.filter(a=>a.st==="NONE").length;
+  if(an.length>=3 && nz===an.length) add("amb","Chart kasta: zone ma jiro","Filtarrada zone-ka ayaa aad u adag suuqan hadda, ama SD_Zone_TF waa khaldan yahay.");
+  if(!out.length) add("ok","Wax walba waa sax","Bot-ku wuu online yahay, maamulku wuu shaqeynayaa, sitinkuna is ma burinayaan.");
+  return out;
+}
+function paintHealth(d){
+  const box=$("#hcList"); if(!box) return;
+  const rows=healthChecks(d);
+  const ord={red:0,amb:1,ok:2}; rows.sort((a,b)=>ord[a.lv]-ord[b.lv]);
+  box.innerHTML=rows.map(r=>'<div class="hc '+r.lv+'"><i></i><div><div class="ht">'+esc(r.t)
+    +'</div>'+(r.d?('<div class="hd">'+esc(r.d)+'</div>'):"")+'</div></div>').join("");
+  const nr=rows.filter(r=>r.lv==="red").length, na=rows.filter(r=>r.lv==="amb").length;
+  $("#hcSum").textContent=(nr||na)?((nr?nr+" khalad":"")+(nr&&na?" · ":"")+(na?na+" digniin":"")):"sax";
+  const b=$("#hcBadge");
+  if(b){ if(nr){ b.textContent=nr; b.style.display=""; } else b.style.display="none"; }
+}
+
 /* ---- v7: ANALIISKA LIVE ---- */
 const AN_LBL={SIGNAL:"SIGNAL DIYAAR",IN:"ZONE GUDIHIISA",NEAR:"U DHOW",
               WAIT:"SUGAYA",NONE:"ZONE MA JIRTO",NEWS:"NEWS — JOOJIN"};
@@ -2505,7 +2597,7 @@ const MF=["SL","TP","LOT","STEP","STEPSTART"];
 let mTouched=false, mSeeded=false;
 function swSet(id,on){ const e=$("#"+id); if(e) e.classList.toggle("on",!!on); }
 function swGet(id){ const e=$("#"+id); return e && e.classList.contains("on"); }
-["mSTEPON","mBE","mLOCKMODE","mADAPT"].forEach(id=>{ const e=$("#"+id); if(e) e.addEventListener("click",()=>{ e.classList.toggle("on"); mTouched=true; }); });
+["mSTEPON","mBE","mLOCKMODE","mADAPT","mMGMT"].forEach(id=>{ const e=$("#"+id); if(e) e.addEventListener("click",()=>{ e.classList.toggle("on"); mTouched=true; }); });
 MF.forEach(k=>{ const e=$("#m"+k); if(e) e.addEventListener("input",()=>{ mTouched=true; }); });
 
 function paintSettings(st){
@@ -2516,12 +2608,17 @@ function paintSettings(st){
     +"  ·  BE "+(st.be?"ON":"OFF")
     +"  ·  "+(Number(st.lockmode)===1?"SL break-even":"SL tallaabo")
     +(st.adaptive?"  ·  ATR maamulaya":"");
+  const w=$("#mWarn");
+  if(w) w.innerHTML=st.mgmt_off
+    ? '<div class="nwarn" style="margin-top:10px">MAAMULKU WAA DAMMAN — trade-ku wuxuu ku xidhmayaa SL ama TP oo keliya. Break-even, trailing iyo ATR midna ma shaqeynayaan.</div>'
+    : "";
   if(mTouched && mSeeded) return;          // qofku wuu wax qorayaa - ha ka qaadin gacanta
   const set=(id,v)=>{ const e=$("#"+id); if(e && v!==undefined && v!==null) e.value=v; };
   set("mSL",st.sl); set("mTP",st.tp); set("mLOT",st.auto_lot?0:st.lot);
   set("mSTEP",st.step); set("mSTEPSTART",st.stepstart);
   swSet("mSTEPON",st.steplock); swSet("mBE",st.be);
   swSet("mLOCKMODE",Number(st.lockmode)===1); swSet("mADAPT",!!st.adaptive);
+  swSet("mMGMT",!st.mgmt_off);            // v7.1: ON = maamulku wuu shaqeynayaa
   mSeeded=true;
 }
 function paintLocks(rows){
@@ -2553,6 +2650,7 @@ async function sendSettings(){
   cmds.push("SET:BE="+(swGet("mBE")?1:0));
   cmds.push("SET:LOCKMODE="+(swGet("mLOCKMODE")?1:0));
   cmds.push("SET:ADAPT="+(swGet("mADAPT")?1:0));
+  cmds.push("SET:MGMT="+(swGet("mMGMT")?1:0));
   btn.disabled=true; btn.textContent="Diraya…";
   let bad=0;
   for(const c of cmds){
