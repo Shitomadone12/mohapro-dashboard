@@ -4136,6 +4136,7 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
 .lvsrc{display:grid;grid-template-columns:1fr 1fr;gap:8px}.lvsrc div{border:1px solid var(--line);border-radius:10px;padding:9px}
 .lvsrc b{display:block;font-size:11.5px;letter-spacing:.06em;color:#f0cf86}.lvsrc span{font-size:11.5px;color:var(--ink3)}
 #lvChart svg{display:block;width:100%;height:auto}
+.mkt{color:#f0c070;font-weight:700}
 .locked{opacity:.55}.locked input,.locked button{pointer-events:none}
 .lk{display:inline-block;width:13px;height:13px;margin-left:6px;vertical-align:-2px;fill:none;stroke:#f0cf86;stroke-width:2.2}
 .act.lockd{opacity:.35;filter:grayscale(1);pointer-events:none}
@@ -4804,6 +4805,8 @@ function paint(d){
   $("#dot").className="dot "+(d.online?(RS.ok?"on":"warn"):"off");
   $("#dot2").className="dot "+(d.online?(RS.ok?"on":"warn"):"off");
   $("#st2").textContent=d.online?RS.short:"OFFLINE";
+  const MK=mktState(d);                                     // v12.4: suuqa xidhan
+  if(MK.closed){ $("#dot2").className="dot warn"; $("#st2").textContent="SUUQA XIDHAN"; }
   const vv=verOf(d); $("#heroVer").textContent=vv?("v"+vv):"";
   $("#heroAcc").textContent="#"+d.account;
   setBrand(d.brand||"");   // v4.1: madhan -> kii hore ayaa la sii hayaa
@@ -4817,6 +4820,10 @@ function paint(d){
   paintLic(d);                                      // v12
   $("#st").textContent=d.online?(RS.long+" · "+(d.age||0)+"s ka hor")
     :(d.age==null?"Xog lama helin":"OFFLINE · "+d.age+"s ka hor");
+  if(MK.closed){
+    if(!d.online && d.age!=null) $("#dot").className="dot warn";
+    $("#st").insertAdjacentHTML("beforeend",' · <b class="mkt">🌙 suuqa '+(MK.openAt?('wuxuu furmayaa '+esc(soWhen(MK.openAt))):'waa xidhan yahay')+'</b>');
+  }
   $("#bal").textContent=money(x.balance);
   $("#eq").textContent=money(x.equity);
   const p=Number(x.profit||0);
@@ -5157,6 +5164,42 @@ async function openSheet(){
   const sh=$("#iSheet"); if(sh) sh.addEventListener("click",function(e){ if(e.target===sh) closeSheet(); });
 })();
 
+/* ---- v12.4: SUUQA XIDHAN (weekend) ----
+   Forex: Jimce 17:00 New York -> Axad 17:00 New York (xagaa/jiilaal labaduba sax). EA v67.8+ wuxuu soo diraa "mkt"
+   (session-ka broker-ka) -> marka bot-ku online yahay kaas ayaa la raacaa. */
+const SO_DAY=["Axad","Isniin","Talaado","Arbaco","Khamiis","Jimce","Sabti"];
+function nyParts(ms){
+  const f=new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",hourCycle:"h23",weekday:"short",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
+  const o={}; f.formatToParts(new Date(ms)).forEach(p=>{ o[p.type]=p.value; });
+  const wd=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].indexOf(o.weekday);
+  return {y:+o.year,mo:+o.month,d:+o.day,h:(+o.hour)%24,mi:+o.minute,wd:wd};
+}
+function nyToUtc(ms,y,mo,d,h,mi){   // waqti New York -> ms (UTC)
+  const p=nyParts(ms), off=Date.UTC(p.y,p.mo-1,p.d,p.h,p.mi)-Math.floor(ms/60000)*60000;
+  return Date.UTC(y,mo-1,d,h,mi)-off;
+}
+function mktClock(ms){
+  ms=ms||Date.now(); const p=nyParts(ms), mins=p.h*60+p.mi;
+  const closed=(p.wd===6)||(p.wd===5&&mins>=17*60)||(p.wd===0&&mins<17*60);
+  let openAt=null, closedAt=null;
+  if(closed){
+    const back=(p.wd===5)?0:(p.wd===6?1:2), fwd=(p.wd===5)?2:(p.wd===6?1:0);
+    const base=Date.UTC(p.y,p.mo-1,p.d);
+    const f=new Date(base-back*86400000), o=new Date(base+fwd*86400000);
+    closedAt=nyToUtc(ms,f.getUTCFullYear(),f.getUTCMonth()+1,f.getUTCDate(),17,0);
+    openAt=nyToUtc(ms,o.getUTCFullYear(),o.getUTCMonth()+1,o.getUTCDate(),17,0);
+  }
+  return {closed:closed,openAt:openAt,closedAt:closedAt};
+}
+function mktState(d){
+  const c=mktClock(), x=(d&&d.data)||{};
+  const ea=(d&&d.online&&x.mkt!==undefined&&x.mkt!==null)?Number(x.mkt):null;
+  const closed=(ea===null)?c.closed:(ea===0);
+  return {closed:closed,openAt:c.openAt,closedAt:c.closedAt,src:(ea===null?"clock":"ea")};
+}
+function soWhen(ms){ if(!ms) return ""; const t=new Date(ms);
+  return SO_DAY[t.getDay()]+" "+String(t.getHours()).padStart(2,"0")+":"+String(t.getMinutes()).padStart(2,"0"); }
+
 /* ---- v7.2: CAAFIMAADKA BOT-KA ----
    Xogta EA-du soo dirto ayaa la baadhaa. Wax kasta oo is-burinaya ama khatar ah -> kaadh.
    red = khalad dhab ah · amb = digniin · ok = wax walba waa sax */
@@ -5165,9 +5208,21 @@ function healthChecks(d){
   const add=(lv,t,dd)=>out.push({lv:lv,t:t,d:dd||""});
   // 1) xiriirka
   if(d.age==null){ add("red","Bot-ka xog lagama helin","EA-du weli wax uma dirin server-ka. Hubi EnableCloudDashboard = true iyo URL-ka WebRequest-ka (Tools → Options → Expert Advisors)."); return out; }
+  const MK=mktState(d);                                                      // v12.4
+  if(MK.closed){
+    const hrs=MK.openAt?Math.max(0,Math.round((MK.openAt-Date.now())/3600000)):null;
+    add("amb","🌙 Suuqa waa xidhan yahay (weekend)",
+      (MK.closedAt?("Forex-ku wuxuu xidhmay "+soWhen(MK.closedAt)+" (waqtigaaga) · "):"")
+      +(MK.openAt?("wuxuu furmayaa "+soWhen(MK.openAt)+(hrs!=null?(" ("+hrs+" saac ka dib)"):"")+". "):"")
+      +"Bot-ku trade cusub ma furo — tani waa caadi. Trade-yada furan way sugayaan ilaa suuqu furmo. (Waqtiga furitaanka broker-ka ayuu ku xidhan yahay.)");
+    if(d.online) add("ok","Bot-ku wuu xidhan yahay","Xitaa weekend-ka xogta wuu soo dirayaa · amarrada wuu qaataa.");
+  }
   if(!d.online){
     const m=Math.round(d.age/60);
-    add("red","Bot-ku wuu OFFLINE yahay ("+(m>=1?(m+" daqiiqo"):(d.age+"s"))+")","MT5 ama VPS-ka waa la xidhay, internet-ku wuu go'ay, ama WebRequest-ku wuu fashilmay. Experts tab-ka ka eeg: CLOUD DASHBOARD FAILED.");
+    if(MK.closed)
+      add("amb","Bot-ku xog ma soo dirin ("+(m>=1?(m+" daqiiqo"):(d.age+"s"))+")","Weekend-ka waa caadi haddii MT5 ama PC-ga la xidhay. Haddii MT5 furan yahay, bot-ka v67.8 ku cusboonaysii — noocyadii hore weekend-ka xog ma dirin.");
+    else
+      add("red","Bot-ku wuu OFFLINE yahay ("+(m>=1?(m+" daqiiqo"):(d.age+"s"))+")","MT5 ama VPS-ka waa la xidhay, internet-ku wuu go'ay, ama WebRequest-ku wuu fashilmay. Experts tab-ka ka eeg: CLOUD DASHBOARD FAILED.");
   }
   if(!st){ add("amb","Sitinka bot-ka lama helin","EA-gu waa nooc duug ah (ka hor v66.3). Ku shub MOHA_PRO v67.0 ama ka dambeeya."); }
   else{
@@ -5177,7 +5232,7 @@ function healthChecks(d){
       if(st.be) dd+=" Break-even waa ON laakiin MA SHAQEYNAYO maamulka oo damman awgii.";
       const still=[]; if(st.steplock) still.push("Step-Lock"); if(st.adaptive) still.push("ATR adaptive");
       if(still.length) dd+=" ("+still.join(" iyo ")+(still.length>1?" way sii shaqeynayaan.)":" wuu sii shaqeynayaa.)");
-      add("red","Maamulka trade-ka waa DAMMAN",dd+" Shid: Guud → qabta «Maamulka trade-ka» → DIR BOT-KA.");
+      add("red","Maamulka trade-ka waa DAMMAN",dd+" Shid: Maamul → «Maamulka trade-ka» → KAYDI & DIR.");
     }
     // 3) khatarta
     const r=Number(st.risk||0);
