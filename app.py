@@ -219,6 +219,33 @@ CREATE TABLE IF NOT EXISTS analysis(
   UNIQUE(account, sym)
 );
 CREATE INDEX IF NOT EXISTS ix_an ON analysis(account, ts);
+CREATE TABLE IF NOT EXISTS cmd_seen(
+  cmd_id  INTEGER NOT NULL,
+  account TEXT NOT NULL,
+  chart   TEXT NOT NULL,
+  ts      REAL NOT NULL,
+  UNIQUE(cmd_id, chart)
+);
+CREATE INDEX IF NOT EXISTS ix_cs ON cmd_seen(account, chart);
+CREATE TABLE IF NOT EXISTS messages(
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  thread     TEXT NOT NULL,
+  sender     TEXT NOT NULL,
+  from_admin INTEGER NOT NULL DEFAULT 0,
+  body       TEXT NOT NULL DEFAULT '',
+  img_id     INTEGER,
+  created_at REAL NOT NULL,
+  read_at    REAL
+);
+CREATE INDEX IF NOT EXISTS ix_msg ON messages(thread, id);
+CREATE INDEX IF NOT EXISTS ix_msg_unread ON messages(from_admin, read_at);
+CREATE TABLE IF NOT EXISTS chat_images(
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  thread     TEXT NOT NULL,
+  mime       TEXT NOT NULL,
+  data       TEXT NOT NULL,
+  created_at REAL NOT NULL
+);
 """
 
 # --------------------------------------------------------------------------
@@ -2140,6 +2167,29 @@ def ea_trades():
     return jsonify(ok=True, saved=n)
 
 
+CMD_TTL       = int(os.environ.get("CMD_TTL", "600"))        # START/STOP/SET: 10 daqiiqo
+CMD_TTL_CLOSE = int(os.environ.get("CMD_TTL_CLOSE", "120"))  # CLOSE_*: 2 daqiiqo oo keliya
+
+
+def _collapse_cmds(cmds):
+    """v8.3: EA-du amarrada si go'an ayay u akhridaa (START ka hor STOP; SET-ka kii UGU HORREEYA).
+    Haddii hal jawaab ku jiraan STOP kadib START, ama SET:SL=30 kadib SET:SL=50, kan DAMBE ha guulaysto:
+    fure kasta kan ugu dambeeya oo keliya ayaa la diraa."""
+    last = {}
+    for i, c in enumerate(cmds):
+        c = str(c)
+        if c in ("START", "STOP"):
+            key = "RUN"
+        elif c.startswith("SET:") and "=" in c:
+            key = c.split("=", 1)[0]
+        elif c.startswith("STRATEGY:"):
+            key = "STRATEGY"
+        else:
+            key = "%s#%d" % (c, i)
+        last[key] = (i, c)
+    return [c for _, c in sorted(last.values())]
+
+
 @app.get("/api/commands")
 def ea_commands():
     """EA-du waxay soo qaadataa amarrada sugaya. Mid kasta hal mar oo keliya."""
@@ -2150,16 +2200,39 @@ def ea_commands():
     if not acc:
         acc = "bot-" + re.sub(r"[^A-Za-z0-9]", "", bot)[:16] or "bot-unknown"
     now = time.time()
+    chart = re.sub(r"[^A-Za-z0-9_.#-]", "", request.args.get("chart", ""))[:40]
     with db() as con:
-        rows = con.execute(
-            "SELECT id,cmd FROM commands WHERE account=? AND taken_at IS NULL"
-            " ORDER BY id ASC LIMIT 10", (acc,)).fetchall()
-        if rows:
-            con.execute("UPDATE commands SET taken_at=? WHERE id IN (%s)"
-                        % ",".join("?" * len(rows)),
-                        [now] + [r["id"] for r in rows])
+        if chart:
+            # v8.3: CHART KASTA amarka wuu helayaa (hore kii ugu horreeyay ee weydiiya ayaa
+            # "cunay" -> STOP/SET waxay gaadhi jireen hal chart oo keliya, 9-ka kale ma aysan maqlin).
+            rows = con.execute(
+                "SELECT id,cmd,created_at FROM commands WHERE account=? AND created_at>?"
+                " AND id NOT IN (SELECT cmd_id FROM cmd_seen WHERE account=? AND chart=?)"
+                " ORDER BY id ASC LIMIT 20",
+                (acc, now - CMD_TTL, acc, chart)).fetchall()
+            # CLOSE_* waa khatar in chart dib u kacay uu fuliyo -> daaqad gaaban
+            rows = [r for r in rows if not (str(r["cmd"]).startswith("CLOSE_")
+                                             and now - float(r["created_at"]) > CMD_TTL_CLOSE)]
+            if rows:
+                ids = [r["id"] for r in rows]
+                con.insert_many_ignore("cmd_seen", ("cmd_id", "account", "chart", "ts"),
+                                       [(i, acc, chart, now) for i in ids],
+                                       conflict="(cmd_id, chart)")
+                con.execute("UPDATE commands SET taken_at=? WHERE taken_at IS NULL AND id IN (%s)"
+                            % ",".join("?" * len(ids)), [now] + ids)
+            if _should_prune("cs:" + acc):
+                con.execute("DELETE FROM cmd_seen WHERE account=? AND ts<?", (acc, now - 86400))
+        else:
+            # EA hore (v67.0 iyo ka hor): sidii hore - hal mar oo keliya
+            rows = con.execute(
+                "SELECT id,cmd FROM commands WHERE account=? AND taken_at IS NULL"
+                " ORDER BY id ASC LIMIT 10", (acc,)).fetchall()
+            if rows:
+                con.execute("UPDATE commands SET taken_at=? WHERE id IN (%s)"
+                            % ",".join("?" * len(rows)),
+                            [now] + [r["id"] for r in rows])
     payload = {"token": CLOUD_TOKEN, "account": acc,
-               "commands": [r["cmd"] for r in rows], "ts": int(now)}
+               "commands": _collapse_cmds([r["cmd"] for r in rows]), "ts": int(now)}
     resp = make_response(json.dumps(payload, separators=(",", ":"), ensure_ascii=False))
     resp.headers["Content-Type"] = "application/json"
     resp.headers["Cache-Control"] = "no-store"
@@ -2391,6 +2464,7 @@ def api_state():
         anr = con.execute(
             "SELECT sym,data,news,ts FROM analysis WHERE account=? AND ts>? ORDER BY sym",
             (acc, now - ANALYSIS_TTL)).fetchall()
+        chat_unread = _chat_unread(con, u)     # v9
 
     data = json.loads(snap["data"]) if snap else {}
     age = (now - snap["updated_at"]) if snap else None
@@ -2427,6 +2501,7 @@ def api_state():
         is_admin=(u["role"] == "admin"),
         brand=(br["img"] if br else BRAND_IMAGE_URL),
         analysis=ana,
+        chat_unread=chat_unread,
     )
 
 
@@ -2513,6 +2588,173 @@ def export_snapshot_json():
     resp.headers["Content-Disposition"] = 'attachment; filename="mohapro_%s_snapshot.json"' % acc
     return resp
 
+
+# --------------------------------------------------------------------------
+# v9: WADA-SHEEKAYSI — isticmaalaha <-> admin (qoraal + sawir)
+#  Isticmaale kasta hal wada-sheekaysi ("thread" = account-kiisa) ayuu la leeyahay admin-ka.
+#  Isticmaaluhu kaliya kiisa ayuu arkaa; admin-ku dhammaan.
+#  Sawirrada: JPEG/PNG/WEBP oo keliya (SVG maya), <= 700 KB, 30 maalmood kadib waa la tirtiraa.
+# --------------------------------------------------------------------------
+CHAT_IMG_MAX  = int(os.environ.get("CHAT_IMG_MAX_KB", "700")) * 1024
+CHAT_IMG_DAYS = int(os.environ.get("CHAT_IMG_DAYS", "30"))
+CHAT_TEXT_MAX = 2000
+CHAT_RATE     = 40          # fariin 10 daqiiqo gudahood, qof kasta
+
+
+def _img_kind(raw):
+    if raw[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if raw[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def _chat_thread(u, want):
+    if u["role"] == "admin":
+        return clean_account(want) or None
+    return u["account"]
+
+
+def _chat_unread(con, u):
+    if u["role"] == "admin":
+        r = con.execute("SELECT COUNT(*) c FROM messages WHERE from_admin=0 AND read_at IS NULL").fetchone()
+    else:
+        r = con.execute("SELECT COUNT(*) c FROM messages WHERE thread=? AND from_admin=1 AND read_at IS NULL",
+                        (u["account"],)).fetchone()
+    return int(r["c"] or 0)
+
+
+def _msg_row(r):
+    return {"id": int(r["id"]), "from_admin": bool(r["from_admin"]), "body": r["body"] or "",
+            "img_id": (None if r["img_id"] is None else int(r["img_id"])),
+            "ts": float(r["created_at"])}
+
+
+@app.get("/api/chat")
+@login_required
+def api_chat():
+    u = request.user
+    t = _chat_thread(u, request.args.get("thread"))
+    if not t:
+        return jsonify(ok=False, error="Dooro qof."), 400
+    try:
+        after = max(0, int(request.args.get("after") or 0))
+    except ValueError:
+        after = 0
+    now = time.time()
+    is_admin = (u["role"] == "admin")
+    with db() as con:
+        rows = con.execute(
+            "SELECT id,from_admin,body,img_id,created_at FROM messages WHERE thread=? AND id>?"
+            " ORDER BY id DESC LIMIT 120", (t, after)).fetchall()
+        # dhinaca kale fariimihiisa -> "la akhriyay"
+        con.execute("UPDATE messages SET read_at=? WHERE thread=? AND from_admin=? AND read_at IS NULL",
+                    (now, t, 0 if is_admin else 1))
+        seen = con.execute("SELECT MAX(id) m FROM messages WHERE thread=? AND from_admin=? AND read_at IS NOT NULL",
+                           (t, 1 if is_admin else 0)).fetchone()
+        peer = None
+        if is_admin:
+            pr = con.execute("SELECT name FROM users WHERE account=?", (t,)).fetchone()
+            peer = (pr["name"] if pr else "") or t
+    return jsonify(ok=True, thread=t, peer=peer or "MOHA PRO",
+                   messages=[_msg_row(r) for r in reversed(rows)],
+                   seen_upto=int((seen["m"] if seen else 0) or 0))
+
+
+@app.post("/api/chat")
+@login_required
+def api_chat_send():
+    u = request.user
+    body = request.get_json(silent=True) or {}
+    t = _chat_thread(u, body.get("thread"))
+    if not t:
+        return jsonify(ok=False, error="Dooro qof."), 400
+    text = str(body.get("text") or "").replace("\r", "").strip()[:CHAT_TEXT_MAX]
+    img = body.get("img") or ""
+    if not text and not img:
+        return jsonify(ok=False, error="Fariin madhan."), 400
+    raw = mime = None
+    if img:
+        if not isinstance(img, str) or not img.startswith("data:image/") or ";base64," not in img[:40]:
+            return jsonify(ok=False, error="Sawir aan la aqoon."), 400
+        b64 = img.split(",", 1)[1]
+        if len(b64) > CHAT_IMG_MAX * 4 // 3 + 16:
+            return jsonify(ok=False, error="Sawirku aad buu u weyn yahay."), 413
+        try:
+            raw = _b64.b64decode(b64, validate=True)
+        except (ValueError, TypeError):
+            return jsonify(ok=False, error="Sawirku waa khaldan yahay."), 400
+        mime = _img_kind(raw)
+        if not mime or len(raw) > CHAT_IMG_MAX:
+            return jsonify(ok=False, error="JPEG, PNG ama WEBP oo keliya (<= %d KB)." % (CHAT_IMG_MAX // 1024)), 400
+    now = time.time()
+    is_admin = (u["role"] == "admin")
+    with db() as con:
+        if is_admin and not con.execute("SELECT 1 FROM users WHERE account=?", (t,)).fetchone():
+            return jsonify(ok=False, error="Isticmaalahan lama helin."), 404
+        n = con.execute("SELECT COUNT(*) c FROM messages WHERE sender=? AND created_at>?",
+                        (u["account"], now - 600)).fetchone()["c"]
+        if int(n or 0) >= CHAT_RATE:
+            return jsonify(ok=False, error="Fariimo badan. Daqiiqado sug."), 429
+        img_id = None
+        if raw is not None:
+            img_id = con.execute(
+                "INSERT INTO chat_images(thread,mime,data,created_at) VALUES(?,?,?,?) RETURNING id",
+                (t, mime, _b64.b64encode(raw).decode("ascii"), now)).fetchone()["id"]
+        mid = con.execute(
+            "INSERT INTO messages(thread,sender,from_admin,body,img_id,created_at) VALUES(?,?,?,?,?,?) RETURNING id",
+            (t, u["account"], 1 if is_admin else 0, text, img_id, now)).fetchone()["id"]
+        if _should_prune("chat"):
+            cut = now - CHAT_IMG_DAYS * 86400
+            con.execute("DELETE FROM chat_images WHERE created_at<?", (cut,))
+            con.execute("UPDATE messages SET img_id=-1 WHERE img_id>0 AND created_at<?", (cut,))
+    return jsonify(ok=True, message={"id": int(mid), "from_admin": is_admin, "body": text,
+                                      "img_id": (int(img_id) if img_id is not None else None), "ts": now})
+
+
+@app.get("/api/chat/img/<int:iid>")
+@login_required
+def api_chat_img(iid):
+    u = request.user
+    with db() as con:
+        r = con.execute("SELECT thread,mime,data FROM chat_images WHERE id=?", (iid,)).fetchone()
+    if not r or (u["role"] != "admin" and r["thread"] != u["account"]):
+        return Response("not found", status=404, mimetype="text/plain")
+    return Response(_b64.b64decode(r["data"]), mimetype=r["mime"],
+                    headers={"Cache-Control": "private, max-age=2592000, immutable",
+                             "X-Content-Type-Options": "nosniff"})
+
+
+@app.get("/api/chat/threads")
+@login_required
+def api_chat_threads():
+    u = request.user
+    if u["role"] != "admin":
+        return jsonify(ok=False, error="admin"), 403
+    with db() as con:
+        us = con.execute("SELECT account,name FROM users WHERE role<>'admin' AND approved=1").fetchall()
+        agg = con.execute(
+            "SELECT thread, MAX(id) last_id,"
+            " SUM(CASE WHEN from_admin=0 AND read_at IS NULL THEN 1 ELSE 0 END) unread"
+            " FROM messages GROUP BY thread").fetchall()
+        a = {r["thread"]: r for r in agg}
+        ids = [int(r["last_id"]) for r in agg if r["last_id"]]
+        last = {}
+        if ids:
+            for r in con.execute("SELECT id,thread,from_admin,body,img_id,created_at FROM messages WHERE id IN (%s)"
+                                 % ",".join("?" * len(ids)), ids).fetchall():
+                last[r["thread"]] = r
+    out = []
+    for x in us:
+        t = x["account"]; l = last.get(t)
+        out.append({"thread": t, "name": x["name"] or t,
+                    "unread": int((a[t]["unread"] if t in a else 0) or 0),
+                    "last": (None if not l else {"body": l["body"] or "", "img": l["img_id"] is not None,
+                                                 "from_admin": bool(l["from_admin"]), "ts": float(l["created_at"])})})
+    out.sort(key=lambda z: (-(z["last"]["ts"] if z["last"] else 0), z["name"].lower()))
+    return jsonify(ok=True, threads=out)
 
 @app.get("/api/journal")
 @login_required
@@ -2789,7 +3031,7 @@ button:hover,.btn:hover{background:#2e2e2c}
 .pill{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--ink2);
   background:#121211;border:1px solid var(--line);padding:6px 11px;border-radius:999px}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--ink3)}
-.dot.on{background:var(--good)} .dot.off{background:var(--crit)}
+.dot.on{background:var(--good)} .dot.off{background:var(--crit)} .dot.warn{background:#e0a040}
 .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));margin-bottom:16px}
 .tile{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px}
 .tile .k{font-size:12px;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em}
@@ -3051,6 +3293,70 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 .pane{display:none}
 .pane.on{display:block}
 
+/* ---------- v9: WADA-SHEEKAYSI ---------- */
+.cfab{position:fixed;right:16px;bottom:calc(76px + env(safe-area-inset-bottom));z-index:45;width:56px;height:56px;
+  border-radius:50%;border:1px solid rgba(217,174,85,.75);background:#1d1a12;color:#f0cf86;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;box-shadow:0 6px 22px rgba(0,0,0,.5);padding:0}
+.cfab svg{width:26px;height:26px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.cfab:focus-visible{outline:2px solid #f0cf86;outline-offset:3px}
+.cfab .n{position:absolute;top:-3px;right:-3px;min-width:21px;height:21px;padding:0 6px;border-radius:999px;
+  background:#e5534b;color:#fff;font:700 11.5px/21px system-ui,sans-serif;text-align:center}
+.chat{position:fixed;inset:0;z-index:85;background:var(--plane);display:flex;flex-direction:column}
+.chat[hidden],.chat [hidden]{display:none!important}
+.chat .ch{display:flex;align-items:center;gap:10px;padding:calc(10px + env(safe-area-inset-top)) 12px 10px;
+  border-bottom:1px solid var(--line);background:#141413}
+.chat .ch button{background:none;border:none;color:var(--ink);padding:8px;border-radius:10px;cursor:pointer;display:flex}
+.chat .ch svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.chat .ch .tt{flex:1;min-width:0}
+.chat .ch .t1{font-weight:700;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat .ch .t2{font-size:12px;color:var(--ink3)}
+.clist{flex:1;overflow-y:auto}
+.cth{display:flex;align-items:center;gap:12px;padding:13px 16px;border-bottom:1px solid #232322;cursor:pointer;background:none;border-radius:0;
+  border-left:none;border-right:none;border-top:none;width:100%;text-align:left;color:var(--ink);font:inherit}
+.cth:hover{background:#171716}
+.cth .av{flex:0 0 42px;height:42px;border-radius:50%;background:#2a2620;color:#f0cf86;display:flex;align-items:center;
+  justify-content:center;font-weight:700;font-size:16px}
+.cth .mid{flex:1;min-width:0}
+.cth .nm{font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cth .lm{font-size:13px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cth .rt{text-align:right;font-size:11.5px;color:var(--ink3);display:flex;flex-direction:column;gap:5px;align-items:flex-end}
+.cth .un{min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:#e5534b;color:#fff;font-weight:700;
+  font-size:11px;line-height:20px;text-align:center}
+.cmsgs{flex:1;overflow-y:auto;padding:14px 12px 8px;display:flex;flex-direction:column;gap:6px}
+.cday{align-self:center;font-size:11.5px;color:var(--ink3);background:#1a1a19;border:1px solid var(--line);
+  padding:3px 10px;border-radius:999px;margin:8px 0 4px}
+.cm{display:flex}
+.cm.me{justify-content:flex-end}
+.cb{max-width:80%;border-radius:16px;padding:8px 11px 5px;background:#1f1f1e;border:1px solid #2c2c2a}
+.cm.me .cb{background:#2a2414;border-color:#4a3e1e;border-bottom-right-radius:5px}
+.cm.them .cb{border-bottom-left-radius:5px}
+.ctext{white-space:pre-wrap;word-break:break-word;font-size:15px;line-height:1.42}
+.cimg{display:block;max-width:100%;width:240px;max-height:320px;object-fit:cover;border-radius:11px;margin:2px 0 4px;
+  cursor:zoom-in;background:#111}
+.cgone{font-size:12.5px;color:var(--ink3);font-style:italic;margin:2px 0 4px}
+.ctm{font-size:10.5px;color:var(--ink3);text-align:right;margin-top:2px;font-variant-numeric:tabular-nums}
+.ctm .ck{margin-left:4px;letter-spacing:-2px}
+.ctm .ck.rd{color:#5fb0ff}
+.cempty{margin:auto;text-align:center;color:var(--ink3);font-size:14px;line-height:1.55;max-width:300px;padding:20px}
+.cprev{display:flex;align-items:center;gap:10px;padding:8px 12px 0}
+.cprev[hidden]{display:none}
+.cprev img{width:64px;height:64px;object-fit:cover;border-radius:10px;border:1px solid var(--line)}
+.cprev button{background:#2a2a28;border:1px solid var(--line);color:var(--ink);border-radius:999px;padding:6px 12px;cursor:pointer}
+.ccomp{display:flex;align-items:flex-end;gap:8px;padding:10px 10px calc(10px + env(safe-area-inset-bottom));
+  border-top:1px solid var(--line);background:#141413}
+.ccomp textarea{flex:1;resize:none;min-height:42px;max-height:120px;border-radius:21px;border:1px solid var(--line);
+  background:#1c1c1b;color:var(--ink);padding:10px 14px;font:15px/1.4 inherit;font-family:inherit}
+.ccomp .ib{flex:0 0 42px;height:42px;border-radius:50%;border:1px solid var(--line);background:#1c1c1b;color:var(--ink2);
+  display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
+.ccomp .ib.send{background:#d9ae55;border-color:#d9ae55;color:#1a1408}
+.ccomp .ib:disabled{opacity:.45}
+.ccomp svg{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.cerr{padding:6px 14px 0;color:#f2a3a3;font-size:12.5px}
+.cerr:empty{display:none}
+.iview{position:fixed;inset:0;z-index:95;background:rgba(0,0,0,.94);display:flex;align-items:center;justify-content:center;padding:16px}
+.iview[hidden]{display:none}
+.iview img{max-width:100%;max-height:100%;object-fit:contain;border-radius:6px}
+
 /* ---------- v8.2: rakibidda app-ka (sheet) ---------- */
 .edit.inst{border-color:rgba(217,174,85,.7);color:#f0cf86;background:rgba(217,174,85,.14)}
 .isheet{position:fixed;inset:0;z-index:90;display:flex;align-items:flex-end;justify-content:center;
@@ -3113,6 +3419,9 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 .zwhy{margin-top:10px;padding-top:9px;border-top:1px solid #26272c;
   font-size:12.5px;color:#e0a86a;font-weight:600;line-height:1.45}
 .zc.signal .zwhy{color:#7fe0ab}
+.tsub{font-size:11px;color:var(--ink3);margin-top:3px;line-height:1.45;font-variant-numeric:tabular-nums;min-width:118px}
+.tsub span{white-space:nowrap}
+.zmeta{margin-top:6px;font-size:11.8px;color:var(--ink3);line-height:1.45}
 .nv{display:flex;align-items:center;justify-content:space-between;gap:10px;
   border:1px solid var(--line);border-radius:12px;padding:11px 13px;margin-bottom:9px}
 .nv .nt{font-size:13.5px;font-weight:600}
@@ -3142,7 +3451,7 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
     </span>
   </div>
   <div class="hero-in">
-    <h1>MOHA PRO <b>v66.9</b></h1>
+    <h1>MOHA PRO <b id="heroVer"></b></h1>
     <div class="chips">
       <span class="chip"><span class="dot" id="dot"></span><span id="st">Xiriirinaya…</span></span>
       <span class="chip">MT5</span>
@@ -3218,6 +3527,7 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
         <button class="act" id="mReset" style="flex-direction:row;gap:8px;padding:14px;border-color:var(--line);color:var(--ink2)">CELI</button>
       </div>
       <div class="note" id="mNote">Bot-ku wuxuu hadda isticmaalayaa: —</div>
+      <div class="note" style="margin-top:6px">Amarku <b>chart kasta</b> wuu gaadhayaa (EA v67.1+). Sitinka chart kasta: tab-ka <b>Analiis</b>.</div>
     </div>
 
     <!-- v5: xidhitaanka faa'iidada -->
@@ -3395,6 +3705,30 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
     <svg viewBox="0 0 24 24"><path d="M5 3h11l4 4v14H5Z"/><path d="M9 9h7M9 13h7M9 17h4"/></svg>Journal<span class="tbadge" id="hcBadge" style="display:none"></span></button>
 </nav>
 <div class="tip" id="tip"></div>
+<!-- v9: wada-sheekaysi -->
+<button class="cfab" id="chatFab" type="button" aria-label="Fariimaha">
+  <svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.9A8 8 0 1 1 21 12Z"/><path d="M8.5 11h.01M12 11h.01M15.5 11h.01"/></svg>
+  <span class="n" id="chatBadge" hidden></span>
+</button>
+<div class="chat" id="chatPanel" hidden role="dialog" aria-modal="true" aria-labelledby="chatT1">
+  <div class="ch">
+    <button type="button" id="chatBack" aria-label="Dib u noqo"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button>
+    <div class="tt"><div class="t1" id="chatT1">Fariimaha</div><div class="t2" id="chatT2"></div></div>
+  </div>
+  <div class="clist" id="chatThreads" hidden></div>
+  <div class="cmsgs" id="chatMsgs" hidden></div>
+  <div class="cerr" id="chatErr" role="alert"></div>
+  <div class="cprev" id="chatPrev" hidden><img id="chatPrevImg" alt="Sawirka la dirayo"><button type="button" id="chatPrevX">Ka saar</button></div>
+  <div class="ccomp" id="chatComp" hidden>
+    <input type="file" id="chatFile" accept="image/*" hidden>
+    <button class="ib" type="button" id="chatAttach" aria-label="Ku dar sawir">
+      <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="m21 16-5-5-7 7"/></svg></button>
+    <textarea id="chatText" rows="1" placeholder="Qor fariin…" maxlength="2000" aria-label="Fariin"></textarea>
+    <button class="ib send" type="button" id="chatSend" aria-label="Dir">
+      <svg viewBox="0 0 24 24"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4Z"/></svg></button>
+  </div>
+</div>
+<div class="iview" id="imgView" hidden><img id="imgViewImg" alt="Sawir"></div>
 <div class="isheet" id="iSheet" hidden>
   <div class="box" role="dialog" aria-modal="true" aria-labelledby="iTitle">
     <h3 id="iTitle">Ku rakib MOHA PRO</h3>
@@ -3423,16 +3757,19 @@ const cls=v=>v>0?"pos":(v<0?"neg":"neu");
 function paint(d){
   const x=d.data||{};
   if(d.account && d.account!==ACC){ ACC=d.account; loadBrandCache(); }   // v4.1
-  $("#dot").className="dot "+(d.online?"on":"off");
-  $("#dot2").className="dot "+(d.online?"on":"off");          // v4: badge-ka kore
-  $("#st2").textContent=d.online?"ONLINE":"OFFLINE";
+  const RS=runState(d);                                     // v8.3: xaaladda DHABTA ah
+  $("#dot").className="dot "+(d.online?(RS.ok?"on":"warn"):"off");
+  $("#dot2").className="dot "+(d.online?(RS.ok?"on":"warn"):"off");
+  $("#st2").textContent=d.online?RS.short:"OFFLINE";
+  const vv=verOf(d); $("#heroVer").textContent=vv?("v"+vv):"";
   $("#heroAcc").textContent="#"+d.account;
   setBrand(d.brand||"");   // v4.1: madhan -> kii hore ayaa la sii hayaa
   paintSettings(x.settings); paintLocks(x.locks);   // v5
   paintRaw(x, d);                                   // v6
   paintAnalysis(d.analysis);                        // v7
   paintHealth(d);                                   // v7.2
-  $("#st").textContent=d.online?("ONLINE · "+(d.age||0)+"s ka hor")
+  paintChatBadge(d.chat_unread);                    // v9
+  $("#st").textContent=d.online?(RS.long+" · "+(d.age||0)+"s ka hor")
     :(d.age==null?"Xog lama helin":"OFFLINE · "+d.age+"s ka hor");
   $("#bal").textContent=money(x.balance);
   $("#eq").textContent=money(x.equity);
@@ -3467,7 +3804,16 @@ function paint(d){
     for(const t of open){
       const pl=Number(t.profit||0);
       const tr=document.createElement("tr");
-      tr.innerHTML='<td>'+esc(t.sym||t.symbol||"")+'</td>'+tag(t)+
+      // v8.3: entry · SL · TP (SL-ka faa'iido ku xidhan -> cagaar)
+      let sub="";
+      if(t.entry!=null){
+        const dg=Number(t.dg)>=0&&Number(t.dg)<=8?Number(t.dg):5, f=v=>Number(v)>0?Number(v).toFixed(dg):"—";
+        const buy=String(t.type||"").toUpperCase()==="BUY", e=Number(t.entry), sl=Number(t.sl||0);
+        const locked=sl>0&&(buy?sl>=e:sl<=e);
+        sub='<div class="tsub"><span>E '+f(t.entry)+'</span> · <span class="'+(locked?"pos":"")+'">SL '+f(t.sl)+(locked?" ✓":"")
+           +'</span> · <span>TP '+f(t.tp)+'</span></div>';
+      }
+      tr.innerHTML='<td>'+esc(t.sym||t.symbol||"")+sub+'</td>'+tag(t)+
         '<td>'+esc(t.strat||t.strategy||"")+'</td>'+
         '<td>'+esc(lots(t))+'</td>'+
         '<td style="text-align:right" class="'+cls(pl)+'">'+sign(pl)+'</td>';
@@ -3802,6 +4148,24 @@ function healthChecks(d){
     if(sl>0 && tp>0 && tp<sl) add("amb","TP ("+tp+"p) ayaa ka yar SL ("+sl+"p)","RR 1:"+(tp/sl).toFixed(2)+" - win-rate aad u sarreeya ayaad u baahan tahay si aad faa'iido u samayso.");
     if(sl>0 && sl<5) add("amb","SL aad u yar: "+sl+"p","Spread-ka iyo buuqa ayaa xidhi kara ka hor inta aanu trade-ku socon.");
   }
+  // 5b) v8.3: xaaladda chart-yada
+  const cr=chartRows(d);
+  if(d.online && cr.length){
+    const by=k=>cr.filter(a=>a.status===k).map(a=>a.sym);
+    if(by("EMERGENCY").length) add("red","EMERGENCY STOP — drawdown","Bot-ku wuu joojiyay trade-yada cusub oo kuwa furan ayuu xidhay: "+by("EMERGENCY").join(", ")+". Eeg Max_Total_Drawdown_Pct.");
+    if(by("ALGO_OFF").length) add("red","Algo Trading waa DAMMAN","MT5-ka badhanka 'Algo Trading' shid (sare, toolbar-ka). Chart: "+by("ALGO_OFF").join(", ")+".");
+    const stp=by("STOPPED");
+    if(stp.length===cr.length) add("amb","Bot-ka waa LA DAMIYAY","Trade cusub ma furmo. Kuwa furan waa la sii maamulayaa. Shid: Guud → SHID.");
+    else if(stp.length) add("amb",stp.length+" chart ayaa la damiyay",stp.join(", ")+" — trade cusub kama furmo. Kuwa kale way shaqeynayaan.");
+    const vs=[...new Set(cr.map(a=>a.ver).filter(Boolean))];
+    if(vs.length>1) add("amb","Chart-yadu version kala duwan ayay wataan",cr.map(a=>a.sym+" v"+(a.ver||"?")).join(" · ")+". EA-ga cusub chart kasta ku dhaji.");
+    const sk=a=>{const c=a.settings||{};return [c.risk,c.mgmt_off,c.sniper,c.sl,c.tp,c.steplock,c.lockmode,c.adaptive].join("|");};
+    const sset=[...new Set(cr.filter(a=>a.settings).map(sk))];
+    if(sset.length>1){
+      const g={}; cr.filter(a=>a.settings).forEach(a=>{const c=a.settings;const k="risk "+c.risk+"% · maamul "+(c.mgmt_off?"OFF":"ON")+(c.sniper?" · sniper":"");(g[k]=g[k]||[]).push(a.sym);});
+      add("amb","Chart-yadu sitin kala duwan ayay leeyihiin",Object.keys(g).map(k=>k+": "+g[k].join(", ")).join(" | ")+". Isla .set-ka chart kasta ku shub, ama app-ka sitinka mar kale dir.");
+    }
+  }
   // 6) drawdown
   const dd=Number(x.drawdown||0);
   if(dd>=10) add("red","Drawdown: "+dd.toFixed(1)+"%","Haraaga ayaa si weyn hoos ugu dhacay. Eeg trade-yada la xidhay ka hor inta aanad sii wadin.");
@@ -3827,6 +4191,189 @@ function paintHealth(d){
   const b=$("#hcBadge");
   if(b){ if(nr){ b.textContent=nr; b.style.display=""; } else b.style.display="none"; }
 }
+
+/* ---- v9: WADA-SHEEKAYSI (isticmaale <-> admin) ---- */
+const IS_ADMIN = {{ 'true' if is_admin else 'false' }};
+const CH={open:false,thread:null,last:0,seen:0,timer:null,img:null,busy:false,lastDay:""};
+function chFmtTime(ts){ const d=new Date(ts*1000); return d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}); }
+function chDay(ts){
+  const d=new Date(ts*1000), t=new Date(); const y=new Date(); y.setDate(t.getDate()-1);
+  if(d.toDateString()===t.toDateString()) return "Maanta";
+  if(d.toDateString()===y.toDateString()) return "Shalay";
+  return d.toLocaleDateString();
+}
+function chMsgHTML(m){
+  const mine = IS_ADMIN ? m.from_admin : !m.from_admin;
+  let h="";
+  const day=chDay(m.ts); if(day!==CH.lastDay){ CH.lastDay=day; h+='<div class="cday">'+esc(day)+'</div>'; }
+  let inner="";
+  if(m.img_id>0) inner+='<img class="cimg" loading="lazy" src="/api/chat/img/'+m.img_id+'" alt="Sawir">';
+  else if(m.img_id===-1) inner+='<div class="cgone">Sawirka waa la tirtiray (30 maalmood kadib)</div>';
+  if(m.body) inner+='<div class="ctext">'+esc(m.body)+'</div>';
+  inner+='<div class="ctm">'+chFmtTime(m.ts)+(mine?'<span class="ck" data-id="'+m.id+'">✓</span>':'')+'</div>';
+  return h+'<div class="cm '+(mine?'me':'them')+'"><div class="cb">'+inner+'</div></div>';
+}
+function chTicks(){
+  document.querySelectorAll("#chatMsgs .ck").forEach(e=>{
+    const rd=Number(e.dataset.id)<=CH.seen; e.textContent=rd?"✓✓":"✓"; e.classList.toggle("rd",rd);
+  });
+}
+function chErr(t){ $("#chatErr").textContent=t||""; }
+function chScroll(){ const b=$("#chatMsgs"); b.scrollTop=b.scrollHeight; }
+async function chPoll(){
+  if(!CH.open || !CH.thread || document.hidden) return;
+  try{
+    const r=await fetch("/api/chat?thread="+encodeURIComponent(CH.thread)+"&after="+CH.last,{headers:{"Accept":"application/json"}});
+    if(r.status===401){ location.href="/login"; return; }
+    const d=await r.json(); if(!d.ok) return;
+    const box=$("#chatMsgs"), first=(CH.last===0);
+    if(first){
+      box.innerHTML=d.messages.length?"":'<div class="cempty">'+(IS_ADMIN
+        ?"Weli fariin lama isweydaarsan. Qor fariin ama dir sawir."
+        :"Su'aal ma qabtaa? Halkan qor, ama soo dir sawir (tusaale: screenshot-ka MT5). Admin-ka ayaa kuu jawaabaya.")+'</div>';
+    }
+    if(d.messages.length){
+      const e=box.querySelector(".cempty"); if(e) e.remove();
+      const near=(box.scrollHeight-box.scrollTop-box.clientHeight)<120;
+      box.insertAdjacentHTML("beforeend",d.messages.map(chMsgHTML).join(""));
+      CH.last=d.messages[d.messages.length-1].id;
+      if(near||first) chScroll();
+    }
+    CH.seen=d.seen_upto||0; chTicks();
+    if(IS_ADMIN && d.peer){ $("#chatT1").textContent=d.peer; }
+  }catch(e){}
+}
+async function chThreads(){
+  if(!IS_ADMIN || !CH.open || CH.thread) return;
+  try{
+    const r=await fetch("/api/chat/threads"); const d=await r.json(); if(!d.ok) return;
+    const box=$("#chatThreads");
+    if(!d.threads.length){ box.innerHTML='<div class="cempty">Weli isticmaale la ansixiyay ma jiro.</div>'; return; }
+    box.innerHTML=d.threads.map(t=>{
+      const l=t.last, prev=l?((l.from_admin?"Adiga: ":"")+(l.img&&!l.body?"📷 Sawir":(l.body||""))):"Weli fariin ma jirto";
+      return '<button class="cth" type="button" data-t="'+esc(t.thread)+'" data-n="'+esc(t.name)+'">'
+        +'<span class="av">'+esc((t.name||"?").trim().charAt(0).toUpperCase())+'</span>'
+        +'<span class="mid"><div class="nm">'+esc(t.name)+' <span style="color:var(--ink3);font-weight:400">#'+esc(t.thread)+'</span></div>'
+        +'<div class="lm">'+esc(prev)+'</div></span>'
+        +'<span class="rt">'+(l?esc(chDay(l.ts)==="Maanta"?chFmtTime(l.ts):chDay(l.ts)):"")
+        +(t.unread?('<span class="un">'+t.unread+'</span>'):"")+'</span></button>';
+    }).join("");
+    box.querySelectorAll(".cth").forEach(b=>b.addEventListener("click",()=>chOpenThread(b.dataset.t,b.dataset.n)));
+  }catch(e){}
+}
+function chShowList(){
+  CH.thread=null; CH.last=0; CH.lastDay="";
+  $("#chatT1").textContent="Fariimaha"; $("#chatT2").textContent="Isticmaalayaasha";
+  $("#chatThreads").hidden=false; $("#chatMsgs").hidden=true; $("#chatComp").hidden=true; $("#chatPrev").hidden=true; chErr("");
+  $("#chatThreads").innerHTML='<div class="cempty">Soo raraya…</div>';
+  chThreads();
+}
+function chOpenThread(t,name){
+  CH.thread=t; CH.last=0; CH.seen=0; CH.lastDay="";
+  $("#chatT1").textContent=IS_ADMIN?(name||t):"MOHA PRO · Taageero";
+  $("#chatT2").textContent=IS_ADMIN?("#"+t):"Admin-ka ayaa kuu jawaabaya";
+  $("#chatThreads").hidden=true; $("#chatMsgs").hidden=false; $("#chatComp").hidden=false;
+  $("#chatMsgs").innerHTML='<div class="cempty">Soo raraya…</div>'; chErr("");
+  chPoll();
+}
+function openChat(){
+  if(CH.open) return;
+  CH.open=true; $("#chatPanel").hidden=false; document.body.style.overflow="hidden";
+  try{ history.pushState({mohaChat:1},""); }catch(e){}
+  if(IS_ADMIN) chShowList(); else chOpenThread("me","");
+  clearInterval(CH.timer); CH.timer=setInterval(()=>{ if(CH.thread) chPoll(); else chThreads(); },4000);
+}
+function closeChat(fromPop){
+  if(!CH.open) return;
+  CH.open=false; clearInterval(CH.timer); $("#chatPanel").hidden=true; document.body.style.overflow="";
+  chClearImg(); CH.thread=null;
+  if(!fromPop){ try{ if(history.state&&history.state.mohaChat) history.back(); }catch(e){} }
+  tick();
+}
+let chSkipPop=false;
+addEventListener("popstate",()=>{
+  if(chSkipPop){ chSkipPop=false; return; }
+  if(!$("#imgView").hidden){ $("#imgView").hidden=true; return; }
+  if(CH.open){
+    if(IS_ADMIN && CH.thread){ chShowList(); try{ history.pushState({mohaChat:1},""); }catch(e){} }
+    else closeChat(true);
+  }
+});
+$("#chatFab").addEventListener("click",openChat);
+$("#chatBack").addEventListener("click",()=>{ if(IS_ADMIN && CH.thread) chShowList(); else closeChat(false); });
+function chClearImg(){ CH.img=null; $("#chatPrev").hidden=true; $("#chatPrevImg").removeAttribute("src"); $("#chatFile").value=""; }
+function chCompress(file){
+  return new Promise((res,rej)=>{
+    const url=URL.createObjectURL(file), im=new Image();
+    im.onload=()=>{
+      const M=1280, s=Math.min(1,M/Math.max(im.naturalWidth,im.naturalHeight));
+      const cv=document.createElement("canvas"); cv.width=Math.max(1,Math.round(im.naturalWidth*s)); cv.height=Math.max(1,Math.round(im.naturalHeight*s));
+      const g=cv.getContext("2d"); g.fillStyle="#fff"; g.fillRect(0,0,cv.width,cv.height); g.drawImage(im,0,0,cv.width,cv.height);
+      URL.revokeObjectURL(url);
+      let q=0.82, out=cv.toDataURL("image/jpeg",q);
+      while(out.length>880000 && q>0.35){ q-=0.12; out=cv.toDataURL("image/jpeg",q); }
+      out.length>900000 ? rej(new Error("big")) : res(out);
+    };
+    im.onerror=()=>{ URL.revokeObjectURL(url); rej(new Error("bad")); };
+    im.src=url;
+  });
+}
+$("#chatAttach").addEventListener("click",()=>$("#chatFile").click());
+$("#chatFile").addEventListener("change",async e=>{
+  const f=e.target.files&&e.target.files[0]; if(!f) return;
+  chErr("");
+  try{ CH.img=await chCompress(f); $("#chatPrevImg").src=CH.img; $("#chatPrev").hidden=false; }
+  catch(err){ chClearImg(); chErr("Sawirkan lama furi karo. Isku day JPEG ama PNG."); }
+});
+$("#chatPrevX").addEventListener("click",chClearImg);
+const chTa=$("#chatText");
+chTa.addEventListener("input",()=>{ chTa.style.height="auto"; chTa.style.height=Math.min(120,chTa.scrollHeight)+"px"; });
+chTa.addEventListener("keydown",e=>{ if(e.key==="Enter" && !e.shiftKey && matchMedia("(pointer:fine)").matches){ e.preventDefault(); chSend(); } });
+async function chSend(){
+  if(CH.busy || !CH.thread) return;
+  const text=chTa.value.trim(); if(!text && !CH.img) return;
+  CH.busy=true; $("#chatSend").disabled=true; chErr("");
+  try{
+    const body={text:text,img:CH.img||""}; if(IS_ADMIN) body.thread=CH.thread;
+    const r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const d=await r.json().catch(()=>({ok:false,error:"Server-ka jawaab lama helin."}));
+    if(!d.ok){ chErr(d.error||"Lama dirin."); return; }
+    chTa.value=""; chTa.style.height="auto"; chClearImg();
+    await chPoll(); chScroll();
+  }catch(e){ chErr("Internet ma jiro — lama dirin."); }
+  finally{ CH.busy=false; $("#chatSend").disabled=false; }
+}
+$("#chatSend").addEventListener("click",chSend);
+$("#chatMsgs").addEventListener("click",e=>{
+  const im=e.target.closest(".cimg"); if(!im) return;
+  $("#imgViewImg").src=im.src; $("#imgView").hidden=false;
+  try{ history.pushState({mohaChat:1,img:1},""); }catch(err){}
+});
+$("#imgView").addEventListener("click",()=>{ $("#imgView").hidden=true; chSkipPop=true; try{ history.back(); }catch(e){ chSkipPop=false; } });
+function paintChatBadge(n){
+  const b=$("#chatBadge"); n=Number(n||0);
+  if(n>0){ b.textContent=n>99?"99+":n; b.hidden=false; } else b.hidden=true;
+}
+
+/* ---- v8.3: xaaladda bot-ka (chart kasta) ---- */
+const ST_TXT={RUNNING:"SHAQEYNAYA",STOPPED:"LA DAMIYAY",EMERGENCY:"EMERGENCY STOP",ALGO_OFF:"ALGO TRADING DAMMAN"};
+function chartRows(d){ return (d.analysis||[]).filter(a=>a && a.status && Number(a._age)<=300); }
+function runState(d){
+  const x=d.data||{}, rows=chartRows(d);
+  let sts=rows.map(a=>String(a.status));
+  if(!sts.length) sts=[String(x.status||"RUNNING")];
+  const n=sts.length, c=k=>sts.filter(s=>s===k).length;
+  if(c("EMERGENCY")) return {ok:false,short:"EMERGENCY",long:"EMERGENCY STOP (drawdown)"};
+  if(c("ALGO_OFF"))  return {ok:false,short:"ALGO OFF",long:"ALGO TRADING DAMMAN ("+c("ALGO_OFF")+"/"+n+" chart)"};
+  if(c("STOPPED")===n) return {ok:false,short:"LA DAMIYAY",long:"LA DAMIYAY — trade cusub ma furmo"};
+  if(c("STOPPED")) return {ok:false,short:"QAYB DAMMAN",long:(n-c("STOPPED"))+"/"+n+" chart ayaa shaqeynaya"};
+  return {ok:true,short:"ONLINE",long:"SHAQEYNAYA"+(n>1?(" · "+n+" chart"):"")};
+}
+function verOf(d){
+  const vs=chartRows(d).map(a=>a.ver).filter(Boolean);
+  return vs.length?vs.sort().slice(-1)[0]:((d.data||{}).ver||"");
+}
+const FR_NM=["News","Session","Regime/ADX","MTF","EMA200","Correlation","Hal trade/H1","Spread/trade furan","ATR yar","RR yar","SL/TP"];
 
 /* ---- v7: ANALIISKA LIVE ---- */
 const AN_LBL={SIGNAL:"SIGNAL DIYAAR",IN:"ZONE GUDIHIISA",NEAR:"U DHOW",
@@ -3874,13 +4421,32 @@ function paintAnalysis(rows){
     const why=r.why?('<div class="zwhy">'+esc(r.why)+'</div>')
                    :(st==="SIGNAL"?'<div class="zwhy">Shuruudihii waa buuxsameen.</div>':"");
     const nx=(st==="NEWS"&&r.news)?('<div class="zwhy">📰 '+esc(r.news)+'</div>'):"";
+    // v8.3: chart-kan xaaladdiisa, sitinkiisa iyo sababaha diidmada
+    let cx="";
+    if(r.status && r.status!=="RUNNING")
+      cx+='<div class="zwhy" style="color:#f2a3a3">'+esc(ST_TXT[r.status]||r.status)+'</div>';
+    const cs=r.settings||null;
+    if(cs){
+      const bits=[];
+      bits.push("risk "+Number(cs.risk||0)+"%");
+      if(Number(cs.sl)>0||Number(cs.tp)>0) bits.push("SL "+Number(cs.sl||0)+" / TP "+Number(cs.tp||0));
+      bits.push(cs.mgmt_off?"maamul DAMMAN":"maamul ON");
+      if(cs.sniper) bits.push("sniper");
+      if(cs.adaptive) bits.push("ATR");
+      cx+='<div class="zmeta">'+esc(bits.join(" · "))+(r.ver?(' · v'+esc(r.ver)):"")+'</div>';
+    }
+    if(Array.isArray(r.fr)){
+      const top=r.fr.map((v,i)=>[Number(v)||0,i]).filter(z=>z[0]>0).sort((a,b)=>b[0]-a[0]).slice(0,3);
+      if(top.length) cx+='<div class="zmeta">Diidmo: '+esc(top.map(z=>FR_NM[z[1]]+" "+z[0]).join(" · "))
+        +(r.opened!=null?(' · la furay '+Number(r.opened)):"")+'</div>';
+    }
     return '<div class="zc '+k+'">'
       +'<div class="zh"><span class="zs">'+esc(r.sym||"")+'</span>'
       +'<span class="zbadge '+k+'">'+lb+'</span></div>'
       +'<div class="zl">'+esc(zline)+'</div>'
       +'<div class="ztr"><i class="'+fcl+'" style="width:'+pct+'%"></i></div>'
       +'<div class="zft"><span>sicir '+anNum(r.px,dg)+'</span><span>'+esc(right)+'</span></div>'
-      +why+nx+'</div>';
+      +why+nx+cx+'</div>';
   }).join("");
   $("#anAge").textContent=(minAge<1e9)?(minAge+"s ka hor"):"—";
   $("#anNote").textContent="Chart "+rows.length+"  ·  cusboonaysii 12 ilbiriqsi kasta  ·  chart kastaa gooni";
