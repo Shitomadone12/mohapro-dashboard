@@ -3976,6 +3976,26 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 .licpill.ok{background:rgba(38,170,110,.2);color:#7fe0ab}.licpill.bad{background:rgba(208,59,59,.2);color:#f2a3a3}.licpill.warn{background:rgba(230,160,60,.2);color:#f0c070}
 .lockband{display:flex;gap:9px;align-items:center;background:rgba(217,174,85,.08);border:1px dashed rgba(217,174,85,.45);border-radius:10px;padding:9px 11px;color:#f0cf86;font-size:12.5px;margin:10px 0 4px}
 .lockband svg{width:16px;height:16px;flex:0 0 16px;fill:none;stroke:currentColor;stroke-width:2}
+/* v12.1: COLOUR MATRIX */
+@property --mxc{syntax:'<color>';inherits:true;initial-value:#f0cf86}
+@property --mxa{syntax:'<number>';inherits:true;initial-value:0}
+body.mx{animation:mxHue 9s linear infinite,mxPulse 2.4s ease-in-out infinite}
+@keyframes mxHue{0%,100%{--mxc:#f0cf86}25%{--mxc:#38d4ff}50%{--mxc:#c77dff}75%{--mxc:#3fe0a0}}
+@keyframes mxPulse{0%,100%{--mxa:.08}50%{--mxa:1}}
+body.mx .hero-photo{filter:brightness(calc(1 + .16*var(--mxa))) saturate(calc(1 + .4*var(--mxa)))}
+body.mx .hero::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;border-radius:inherit;
+  box-shadow:inset 0 0 calc(70px*var(--mxa)) color-mix(in srgb,var(--mxc) calc(75%*var(--mxa)),transparent),
+             inset 0 0 0 calc(2px*var(--mxa)) color-mix(in srgb,var(--mxc) calc(90%*var(--mxa)),transparent)}
+body.mx .hero h1{text-shadow:0 0 calc(14px*var(--mxa)) color-mix(in srgb,var(--mxc) calc(100%*var(--mxa)),transparent),
+  0 0 calc(36px*var(--mxa)) color-mix(in srgb,var(--mxc) calc(85%*var(--mxa)),transparent),0 2px 18px rgba(0,0,0,.8)}
+body.mx .hero h1 b{color:var(--mxc)}
+body.mx .act,body.mx .hero .edit,body.mx .top .btn,body.mx .top .pill{
+  box-shadow:0 0 calc(18px*var(--mxa)) color-mix(in srgb,var(--mxc) calc(75%*var(--mxa)),transparent);
+  border-color:color-mix(in srgb,var(--mxc) calc(85%*var(--mxa)),var(--line))}
+.mxcard{display:flex;align-items:center;gap:14px}
+.mxic{font-size:28px;width:40px;text-align:center;flex:0 0 40px}
+.mxt{flex:1;min-width:0}.mxt b{display:block;font-size:17px}.mxt small{display:block;color:var(--ink3);font-size:13px;line-height:1.35;margin-top:2px}
+@media (prefers-reduced-motion:reduce){body.mx{animation:none;--mxa:.6;--mxc:#f0cf86}}
 .locked{opacity:.55}.locked input,.locked button{pointer-events:none}
 .lk{display:inline-block;width:13px;height:13px;margin-left:6px;vertical-align:-2px;fill:none;stroke:#f0cf86;stroke-width:2.2}
 .act.lockd{opacity:.35;filter:grayscale(1);pointer-events:none}
@@ -4321,6 +4341,12 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
     .ksteps code{font:600 12.5px ui-monospace,Menlo,monospace;background:#20232b;border:1px solid #3a3f4c;border-radius:6px;padding:1px 6px;color:#f0cf86}
     </style>
     {% endif %}
+    <!-- v12.1: Colour Matrix (telefoon kasta gooni) -->
+    <div class="card" id="mxCard" style="margin-top:16px"><p class="sec-t">Muuqaalka</p>
+      <div class="mxcard"><span class="mxic" aria-hidden="true">🎨</span>
+        <div class="mxt"><b>Colour Matrix</b><small>Sawirka, badhamada iyo magaca way iftiimayaan — shid / dami</small></div>
+        <button class="sw" id="mxSw" type="button" role="switch" aria-checked="false" aria-label="Colour Matrix"><i></i></button></div>
+    </div>
   </section>
 
 
@@ -5492,6 +5518,16 @@ function swSet(id,on){ const e=$("#"+id); if(e) e.classList.toggle("on",!!on); }
 function swGet(id){ const e=$("#"+id); return e && e.classList.contains("on"); }
 ["mSTEPON","mBE","mLOCKMODE","mADAPT","mMGMT","mSNIPER","mNEWS"].forEach(id=>{ const e=$("#"+id); if(e) e.addEventListener("click",()=>{ e.classList.toggle("on"); mTouched=true; }); });
 MF.forEach(k=>{ const e=$("#m"+k); if(e) e.addEventListener("input",()=>{ mTouched=true; }); });
+
+/* ---- v12.1: COLOUR MATRIX (localStorage - telefoon kasta gooni) ---- */
+(function(){
+  const sw=$("#mxSw"); if(!sw) return;
+  const get=()=>{ try{ return localStorage.getItem("mohaMx")==="1"; }catch(e){ return false; } };
+  const put=v=>{ try{ localStorage.setItem("mohaMx",v?"1":"0"); }catch(e){} };
+  const apply=v=>{ document.body.classList.toggle("mx",v); sw.classList.toggle("on",v); sw.setAttribute("aria-checked",v?"true":"false"); };
+  apply(get());
+  sw.addEventListener("click",()=>{ const v=!document.body.classList.contains("mx"); apply(v); put(v); });
+})();
 
 /* ---- v12: laysinka + oggolaanshaha macmiilka ---- */
 const PERMS={{ perms_json|safe }};
