@@ -257,6 +257,18 @@ CREATE TABLE IF NOT EXISTS bot_keys(
   created_at REAL NOT NULL,
   last_seen  REAL
 );
+CREATE TABLE IF NOT EXISTS licenses(
+  account    TEXT PRIMARY KEY,
+  until      REAL NOT NULL DEFAULT 0,
+  perms      TEXT NOT NULL DEFAULT '{}',
+  follow     INTEGER NOT NULL DEFAULT 1,
+  ovr        TEXT NOT NULL DEFAULT '{}',
+  updated_at REAL NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS kv(
+  k TEXT PRIMARY KEY,
+  v TEXT NOT NULL DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS ea_config(
   account    TEXT PRIMARY KEY,
   data       TEXT NOT NULL,
@@ -2074,7 +2086,7 @@ def token_ok():
         return False
     with db() as con:
         r = con.execute("SELECT active FROM bot_keys WHERE bkey=?", (t,)).fetchone()
-    return bool(r and r["active"])
+    return r is not None               # v12: xannibaadda ea_bind ayaa sheegta (lic=BLOCKED)
 
 
 def ea_bind(acc):
@@ -2089,7 +2101,10 @@ def ea_bind(acc):
         return has is None            # account fure leh -> furaha guud lagama aqbalo
     with db() as con:
         r = con.execute("SELECT account,active,last_seen FROM bot_keys WHERE bkey=?", (t,)).fetchone()
-        if not r or not r["active"] or r["account"] != acc:
+        if not r or r["account"] != acc:
+            return False
+        if not r["active"]:
+            g._lic = "BLOCKED"          # v12: bot-ku trade cusub ma furo
             return False
         if now - float(r["last_seen"] or 0) > 30:
             con.execute("UPDATE bot_keys SET last_seen=? WHERE bkey=?", (now, t))
@@ -2107,6 +2122,148 @@ def _key_for(con, acc, create=False):
 
 BAD_KEY = ("Furaha bot-ka kuma habboona account-kan (ama waa la xannibay). "
            "App-ka ka koobi garee furaha saxda ah oo MT5 -> Inputs -> MohaPro_Key ku dheji.")
+
+
+def _bad_key():
+    lic = getattr(g, "_lic", "")
+    body = {"ok": False, "error": BAD_KEY}
+    if lic:
+        body["lic"] = lic
+    return jsonify(body), 403
+
+
+# --------------------------------------------------------------------------
+# v12: LAYSINKA MACMIILKA + OGGOLAANSHAHA
+#  licenses: account kasta oo macmiil ah (until, perms, follow, ovr)
+#  follow=1 -> sitinka MASTER-ka (account-ka admin-ka) + waxa macmiilka loo oggol yahay
+#  Nuqulka macmiilka (EA v67.6 MACMIIL): lic != OK -> trade cusub ma furo
+# --------------------------------------------------------------------------
+PERM_KEYS = ("run", "close", "risk", "lot", "sltp", "day", "prot")
+PERM_DEFAULT = {"run": 1, "close": 1, "risk": 1, "lot": 0, "sltp": 0, "day": 0, "prot": 0,
+                "lo": 0.10, "hi": 0.50}
+PERM_OF = {"RISK": "risk", "LOT": "lot",
+           "SLTP": "sltp", "SL": "sltp", "TP": "sltp", "SNIPER": "sltp", "SNRR": "sltp",
+           "SNSLMAX": "sltp", "ADAPT": "sltp",
+           "SNDAY": "day",
+           "NEWS": "prot", "STEPON": "prot", "STEP": "prot", "STEPSTART": "prot",
+           "BE": "prot", "LOCKMODE": "prot"}          # DLOSS, MAXDD, MGMT = admin oo keliya
+
+
+def _jload(v, d=None):
+    try:
+        x = json.loads(v or "")
+        return x if isinstance(x, dict) else (d if d is not None else {})
+    except (ValueError, TypeError):
+        return d if d is not None else {}
+
+
+def _perms_of(row):
+    p = dict(PERM_DEFAULT)
+    if row is not None:
+        p.update(_jload(row["perms"]))
+    for k in PERM_KEYS:
+        p[k] = 1 if int(_num(p.get(k), 0)) else 0
+    lo = max(0.01, min(10.0, _num(p.get("lo"), 0.10)))
+    hi = max(lo, min(10.0, _num(p.get("hi"), 0.50)))
+    p["lo"], p["hi"] = round(lo, 2), round(hi, 2)
+    return p
+
+
+def _lic_row(con, acc):
+    return con.execute("SELECT * FROM licenses WHERE account=?", (acc,)).fetchone()
+
+
+def _lic_info(con, acc, now=None):
+    """None = macmiil maaha (account caadi ah / admin)."""
+    now = now or time.time()
+    r = _lic_row(con, acc)
+    if r is None:
+        return None
+    k = con.execute("SELECT active FROM bot_keys WHERE account=?", (acc,)).fetchone()
+    until = float(r["until"] or 0)
+    if k is not None and not k["active"]:
+        st = "BLOCKED"
+    elif until > now:
+        st = "OK"
+    else:
+        st = "EXPIRED"
+    days = int((until - now) // 86400) if until > now else 0
+    return {"state": st, "until": int(until), "days": days,
+            "perms": _perms_of(r), "follow": bool(r["follow"])}
+
+
+def _master(con):
+    r = con.execute("SELECT v FROM kv WHERE k='master'", ()).fetchone()
+    return (r["v"] if r else "") or ""
+
+
+def _cfg_row(con, acc):
+    r = con.execute("SELECT data,rev FROM ea_config WHERE account=?", (acc,)).fetchone()
+    return (_jload(r["data"]) if r else {}), (int(r["rev"]) if r else 0)
+
+
+def _lic_effective(con, acc, row):
+    """Sitinka dhabta ah ee macmiilka: master (follow) + admin + macmiil (oggol)."""
+    p = _perms_of(row)
+    ovr = _jload(row["ovr"])
+    eff = {}
+    if row["follow"]:
+        m = _master(con)
+        if m and m != acc:
+            eff.update(_cfg_row(con, m)[0])
+    eff.update({k: v for k, v in (ovr.get("a") or {}).items() if k in CFG_KEYS})
+    for k, v in (ovr.get("c") or {}).items():
+        perm = PERM_OF.get(k)
+        if k in CFG_KEYS and perm and p.get(perm):
+            if k == "RISK":
+                v = "%.2f" % max(p["lo"], min(p["hi"], _num(v, p["lo"])))
+            eff[k] = v
+    return eff
+
+
+def _cfg_write(con, acc, eff, by, force=False):
+    """Sitinka account-ka kaydi + chart kasta u dir. Furayaal la tuuray -> SET:RESET marka hore."""
+    old, rev = _cfg_row(con, acc)
+    if eff == old and not force:
+        return rev, 0
+    rev += 1
+    now = time.time()
+    con.execute(
+        "INSERT INTO ea_config(account,data,rev,updated_at) VALUES(?,?,?,?)"
+        " ON CONFLICT(account) DO UPDATE SET data=excluded.data, rev=excluded.rev, updated_at=excluded.updated_at",
+        (acc, json.dumps(eff), rev, now))
+    cmds = (["SET:RESET"] if (set(old) - set(eff)) else []) + _cfg_cmds(eff, rev)
+    con.insert_many_ignore("commands", ("account", "cmd", "by_account", "created_at"),
+                           [(acc, c, by, now + i * 1e-6) for i, c in enumerate(cmds)])
+    return rev, len(cmds)
+
+
+def _lic_apply(con, acc, by="system", force=False):
+    row = _lic_row(con, acc)
+    if row is None:
+        return None
+    return _cfg_write(con, acc, _lic_effective(con, acc, row), by, force)
+
+
+def _propagate_master(con, by):
+    m = _master(con)
+    if not m:
+        return 0
+    n = 0
+    for r in con.execute("SELECT account FROM licenses WHERE follow=1", ()).fetchall():
+        if r["account"] != m:
+            _lic_apply(con, r["account"], by)
+            n += 1
+    return n
+
+
+def _user_lic(u, acc):
+    """Isticmaale aan admin ahayn oo account-kiisu macmiil yahay -> lic info, haddii kale None."""
+    if u["role"] == "admin":
+        return None
+    with db() as con:
+        return _lic_info(con, acc)
+
 
 # v5.3: nadiifinta safafka duugga ah - 30 codsi mar, ee ma aha codsi kasta
 _PRUNE_EVERY = int(os.environ.get("PRUNE_EVERY", "30"))
@@ -2207,7 +2364,7 @@ def ea_update():
         # EA hore (V58.x) oo aan account dirin -> magaca bot-ka ayaa fure
         acc = "bot-" + re.sub(r"[^A-Za-z0-9]", "", bot)[:16] or "bot-unknown"
     if not ea_bind(acc):                                   # v11
-        return jsonify(ok=False, error=BAD_KEY), 403
+        return _bad_key()
 
     now = time.time()
     d["_server_ts"] = now
@@ -2249,7 +2406,7 @@ def ea_trades():
     if not acc:
         acc = "bot-" + re.sub(r"[^A-Za-z0-9]", "", str(d.get("bot", "")))[:16] or "bot-unknown"
     if not ea_bind(acc):                                   # v11
-        return jsonify(ok=False, error=BAD_KEY), 403
+        return _bad_key()
     rows = d.get("trades") or []
     n = 0
     now = time.time()
@@ -2345,17 +2502,29 @@ def api_config_get():
 @login_required
 def api_config_save():
     u = request.user
-    if not u["can_control"] and u["role"] != "admin":
-        return jsonify(ok=False, error="Amar diritaanka lagaama ogola."), 403
     body = request.get_json(silent=True) or {}
     acc = clean_account(body.get("account")) if u["role"] == "admin" else u["account"]
     acc = acc or u["account"]
+    lic = _user_lic(u, acc)                                   # v12
+    if lic is None and not u["can_control"] and u["role"] != "admin":
+        return jsonify(ok=False, error="Amar diritaanka lagaama ogola."), 403
+    if lic is not None and lic["state"] != "OK":
+        return jsonify(ok=False, error="Laysinkaagu wuu dhacay - admin-ka la xiriir."), 403
     now = time.time()
     if body.get("reset"):
+        if lic is not None:
+            return jsonify(ok=False, error="Celinta sitinka admin-ka ayaa leh."), 403
         with db() as con:
+            lr = _lic_row(con, acc)
+            if lr is not None:                                # v12: macmiil -> master-ka ku celi
+                con.execute("UPDATE licenses SET ovr='{}', updated_at=? WHERE account=?", (now, acc))
+                rev, _ = _lic_apply(con, acc, u["account"], force=True)
+                return jsonify(ok=True, account=acc, rev=rev, reset=True)
             con.execute("DELETE FROM ea_config WHERE account=?", (acc,))
             con.execute("INSERT INTO commands(account,cmd,by_account,created_at) VALUES(?,?,?,?)",
                         (acc, "SET:RESET", u["account"], now))
+            if acc == _master(con):
+                _propagate_master(con, u["account"])
         return jsonify(ok=True, account=acc, rev=0, reset=True)
     raw = body.get("values") or {}
     if not isinstance(raw, dict):
@@ -2371,7 +2540,27 @@ def api_config_save():
         clean[k] = c.split("=", 1)[1]
     if bad:
         return jsonify(ok=False, error="Qiime khaldan: " + ", ".join(bad)), 400
+    if lic is not None:                                       # v12: macmiil -> waxa loo oggol yahay oo keliya
+        p = lic["perms"]
+        keep = {k: v for k, v in clean.items() if PERM_OF.get(k) and p.get(PERM_OF[k])}
+        if "RISK" in keep and not (p["lo"] - 1e-9 <= _num(keep["RISK"]) <= p["hi"] + 1e-9):
+            return jsonify(ok=False, error="Risk-ku waa inuu u dhexeeyaa %.2f – %.2f%%." % (p["lo"], p["hi"])), 400
+        if not keep:
+            return jsonify(ok=False, error="Sitinkan admin-ka ayaa maamula."), 403
+        clean = keep
     with db() as con:
+        lr = _lic_row(con, acc)
+        if lr is not None:                                    # v12: macmiil (admin ama isaga) -> ovr
+            ovr = _jload(lr["ovr"])
+            side = "c" if lic is not None else "a"
+            part = dict(ovr.get(side) or {}); part.update(clean); ovr[side] = part
+            if side == "a":                                   # admin-ku wuu ka adkaadaa macmiilka
+                ovr["c"] = {k: v for k, v in (ovr.get("c") or {}).items() if k not in clean}
+            con.execute("UPDATE licenses SET ovr=?, updated_at=? WHERE account=?", (json.dumps(ovr), now, acc))
+            rev, n = _lic_apply(con, acc, u["account"], force=True)
+            vals, _ = _cfg_row(con, acc)
+            return jsonify(ok=True, account=acc, rev=rev, values=vals, sent=n,
+                           ignored=sorted(set(raw) - set(clean)) if lic is not None else [])
         r = con.execute("SELECT data,rev FROM ea_config WHERE account=?", (acc,)).fetchone()
         merged = {}
         if r:
@@ -2388,7 +2577,17 @@ def api_config_save():
         cmds = _cfg_cmds(clean, rev)
         con.insert_many_ignore("commands", ("account", "cmd", "by_account", "created_at"),
                                [(acc, c, u["account"], now) for c in cmds])
-    return jsonify(ok=True, account=acc, rev=rev, values=merged, sent=len(cmds))
+        nf = _propagate_master(con, u["account"]) if acc == _master(con) else 0   # v12
+    return jsonify(ok=True, account=acc, rev=rev, values=merged, sent=len(cmds), followers=nf)
+
+
+def _ea_lic(acc):
+    """v12: EA-da u sheeg xaaladda laysinka. NONE = account caadi ah (macmiil maaha)."""
+    with db() as con:
+        li = _lic_info(con, acc)
+    if li is None:
+        return {"lic": "NONE", "lic_d": 0}
+    return {"lic": li["state"], "lic_d": li["days"]}
 
 
 @app.get("/api/ea_config")
@@ -2398,7 +2597,7 @@ def ea_config():
         return jsonify(ok=False, error="bad token"), 401
     acc = clean_account(request.args.get("account"))
     if not ea_bind(acc):                                   # v11
-        return jsonify(ok=False, error=BAD_KEY), 403
+        return _bad_key()
     cmds = []
     if acc:
         with db() as con:
@@ -2409,6 +2608,7 @@ def ea_config():
             except ValueError:
                 cmds = []
     payload = {"token": _presented_token(), "account": acc, "commands": cmds, "ts": int(time.time())}
+    payload.update(_ea_lic(acc))                              # v12
     resp = make_response(json.dumps(payload, separators=(",", ":"), ensure_ascii=False))
     resp.headers["Content-Type"] = "application/json"
     resp.headers["Cache-Control"] = "no-store"
@@ -2424,7 +2624,7 @@ def ea_commands():
     if not acc:
         acc = "bot-" + re.sub(r"[^A-Za-z0-9]", "", bot)[:16] or "bot-unknown"
     if not ea_bind(acc):                                   # v11
-        return jsonify(ok=False, error=BAD_KEY), 403
+        return _bad_key()
     now = time.time()
     chart = re.sub(r"[^A-Za-z0-9_.#-]", "", request.args.get("chart", ""))[:40]
     with db() as con:
@@ -2459,6 +2659,7 @@ def ea_commands():
                             [now] + [r["id"] for r in rows])
     payload = {"token": _presented_token(), "account": acc,
                "commands": _collapse_cmds([r["cmd"] for r in rows]), "ts": int(now)}
+    payload.update(_ea_lic(acc))                              # v12
     resp = make_response(json.dumps(payload, separators=(",", ":"), ensure_ascii=False))
     resp.headers["Content-Type"] = "application/json"
     resp.headers["Cache-Control"] = "no-store"
@@ -2650,10 +2851,12 @@ def dashboard():
             kr = _key_for(con, u["account"])
         if kr is not None:
             bkey = {"key": kr["bkey"], "active": bool(kr["active"])}
+    lic = _user_lic(u, u["account"])                          # v12: macmiil
     return render_template_string(
         T_DASH, me=u["account"], sel=sel, name=u["name"] or u["account"],
         is_admin=(u["role"] == "admin"),
-        can_control=bool(u["can_control"]), accounts=accounts, bkey=bkey)
+        can_control=(bool(u["can_control"]) or lic is not None), accounts=accounts, bkey=bkey,
+        lic=lic, perms_json=json.dumps(lic["perms"] if lic else None))
 
 
 _AN_ORDER = {"SIGNAL": 0, "IN": 1, "NEAR": 2, "NEWS": 3, "WAIT": 4, "NONE": 5}
@@ -2699,6 +2902,7 @@ def api_state():
         chat_unread = _chat_unread(con, u)     # v9
         cfgr = con.execute("SELECT rev,updated_at FROM ea_config WHERE account=?", (acc,)).fetchone()   # v10
         kseen = con.execute("SELECT last_seen FROM bot_keys WHERE account=?", (acc,)).fetchone()        # v11
+        lic = _lic_info(con, acc, now)                                                                     # v12
 
     data = json.loads(snap["data"]) if snap else {}
     age = (now - snap["updated_at"]) if snap else None
@@ -2739,6 +2943,7 @@ def api_state():
         cfg_rev=(int(cfgr["rev"]) if cfgr else 0),
         cfg_saved=(float(cfgr["updated_at"]) if cfgr else None),
         key_seen_age=(int(now - float(kseen["last_seen"])) if (kseen and kseen["last_seen"]) else None),
+        lic=lic,
     )
 
 
@@ -2746,8 +2951,6 @@ def api_state():
 @login_required
 def api_command():
     u = request.user
-    if not u["can_control"] and u["role"] != "admin":
-        return jsonify(ok=False, error="Amar diritaanka lagaama ogola."), 403
     body = request.get_json(silent=True) or {}
     cmd = str(body.get("cmd", "")).strip().upper()
     ok_cmd, cmd = valid_command(cmd)
@@ -2755,6 +2958,16 @@ def api_command():
         return jsonify(ok=False, error="Amar aan la aqoon ama qiime xad-dhaaf ah."), 400
     acc = clean_account(body.get("account")) if u["role"] == "admin" else u["account"]
     acc = acc or u["account"]
+    lic = _user_lic(u, acc)                                   # v12
+    if lic is None and not u["can_control"] and u["role"] != "admin":
+        return jsonify(ok=False, error="Amar diritaanka lagaama ogola."), 403
+    if lic is not None:
+        if lic["state"] != "OK":
+            return jsonify(ok=False, error="Laysinkaagu wuu dhacay - admin-ka la xiriir."), 403
+        need = ("run" if cmd in ("START", "STOP") else
+                "close" if cmd in ("CLOSE_ALL", "CLOSE_PROFIT") else "")
+        if not need or not lic["perms"].get(need):
+            return jsonify(ok=False, error="Amarkan admin-ka ayaa leh."), 403
     with db() as con:
         n = con.execute("SELECT COUNT(*) c FROM commands WHERE account=? AND taken_at IS NULL",
                         (acc,)).fetchone()["c"]
@@ -2893,7 +3106,7 @@ def ea_shots():
     if not acc:
         return jsonify(ok=False, error="account"), 400
     if not ea_bind(acc):                                   # v11
-        return jsonify(ok=False, error=BAD_KEY), 403
+        return _bad_key()
     tag = str(d.get("tag") or "").upper()[:8]
     if tag not in ("OPEN", "CLOSE"):
         return jsonify(ok=False, error="tag"), 400
@@ -3252,17 +3465,27 @@ def admin():
     # v11: furaha bot-ka - isticmaale kasta + account kasta oo xog soo diray
     with db() as con:
         kr = {r["account"]: r for r in con.execute("SELECT * FROM bot_keys").fetchall()}
+        master = _master(con)
+        lics = {a: _lic_info(con, a, now) for a in
+                [r["account"] for r in con.execute("SELECT account FROM licenses").fetchall()]}
     names = {u["account"]: (u["name"] or "") for u in users}
     keyrows = []
     for a in list(dict.fromkeys([r["account"] for r in rows if r["role"] != "admin"] + sorted(snaps) + sorted(kr))):
         k = kr.get(a)
         seen = float(k["last_seen"]) if (k and k["last_seen"]) else None
+        li = lics.get(a)
         keyrows.append(dict(account=a, name=names.get(a, ""), key=(k["bkey"] if k else ""),
                             active=bool(k["active"]) if k else False, has=k is not None,
                             seen=(None if seen is None else int(now - seen)),
-                            live=(seen is not None and now - seen < 120)))
+                            live=(seen is not None and now - seen < 120),
+                            lic=li, is_master=(a == master),
+                            until_s=(datetime.fromtimestamp(li["until"], timezone.utc).strftime("%d %b %Y")
+                                     if (li and li["until"]) else "")))
+    mopts = [a for a in list(dict.fromkeys(sorted(snaps) + ([master] if master else []))) if a not in lics]
     return render_template_string(T_ADMIN, rows=rows, me=request.user["account"],
-                                  orphans=orphans, keyrows=keyrows, legacy=LEGACY_TOKEN)
+                                  orphans=orphans, keyrows=keyrows, legacy=LEGACY_TOKEN,
+                                  master=master, mopts=mopts, perm_keys=PERM_KEYS,
+                                  perm_names=PERM_NAMES)
 
 
 @app.post("/admin/user")
@@ -3321,6 +3544,62 @@ def admin_create():
                     (acc, name, generate_password_hash(pw), _now_iso()))
                 _key_for(con, acc, create=True)            # v11
     return redirect(url_for("admin"))
+
+
+PERM_NAMES = {"run": "START / STOP", "close": "Xir dhammaan trade-yada", "risk": "Risk %",
+              "lot": "Lot gacanta", "sltp": "Habka SL/TP · Sniper · RR", "day": "Trade maalintii",
+              "prot": "Wararka · Step-Lock · BE"}
+
+
+@app.post("/admin/license")
+@admin_required
+def admin_license():
+    """v12: laysinka macmiilka + oggolaanshaha."""
+    acc = clean_account(request.form.get("account"))
+    action = request.form.get("action", "")
+    me = request.user["account"]
+    now = time.time()
+    if acc:
+        with db() as con:
+            r = _lic_row(con, acc)
+            if action in ("add30", "add365"):
+                days = 30 if action == "add30" else 365
+                if r is None:
+                    con.execute("INSERT INTO licenses(account,until,perms,follow,ovr,updated_at) VALUES(?,?,?,?,?,?)",
+                                (acc, now + days * 86400, json.dumps(PERM_DEFAULT), 1, "{}", now))
+                    _key_for(con, acc, create=True)
+                    _lic_apply(con, acc, me, force=True)          # sitinka master-ka isla markiiba
+                else:
+                    base = max(float(r["until"] or 0), now)
+                    con.execute("UPDATE licenses SET until=?, updated_at=? WHERE account=?",
+                                (base + days * 86400, now, acc))
+            elif action == "stop" and r is not None:
+                con.execute("UPDATE licenses SET until=?, updated_at=? WHERE account=?", (now - 1, now, acc))
+            elif action == "remove" and r is not None:
+                con.execute("DELETE FROM licenses WHERE account=?", (acc,))
+            elif action == "perms" and r is not None:
+                p = {k: (1 if request.form.get("p_" + k) else 0) for k in PERM_KEYS}
+                p["lo"] = _num(request.form.get("lo"), 0.10)
+                p["hi"] = _num(request.form.get("hi"), 0.50)
+                p["lo"] = round(max(0.01, min(10.0, p["lo"])), 2)
+                p["hi"] = round(max(p["lo"], min(10.0, p["hi"])), 2)
+                follow = 1 if request.form.get("follow") else 0
+                con.execute("UPDATE licenses SET perms=?, follow=?, updated_at=? WHERE account=?",
+                            (json.dumps(p), follow, now, acc))
+                _lic_apply(con, acc, me)
+    return redirect(url_for("admin") + "#k" + acc)
+
+
+@app.post("/admin/master")
+@admin_required
+def admin_master():
+    """v12: account-ka sitinkiisa macaamiisha la siinayo."""
+    acc = clean_account(request.form.get("account"))
+    with db() as con:
+        if acc and _lic_row(con, acc) is None:
+            con.execute("INSERT INTO kv(k,v) VALUES('master',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", (acc,))
+            _propagate_master(con, request.user["account"])
+    return redirect(url_for("admin") + "#keys")
 
 
 @app.post("/admin/key")
@@ -3691,6 +3970,16 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 /* ---------- v10: kaadhka maamulka (qaybo) ---------- */
 .grp{border:1px solid var(--line);border-radius:14px;padding:4px 12px 6px;margin:12px 0;background:#161615}
 .gh{font-size:11.5px;font-weight:800;letter-spacing:.1em;color:#d9ae55;padding:10px 0 4px}
+.lic .licr{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.licbig{font-size:21px;font-weight:750;margin:4px 0 2px}
+.licpill{font-size:11px;font-weight:800;letter-spacing:.04em;padding:4px 10px;border-radius:999px;white-space:nowrap;background:#2a2a28;color:var(--ink2)}
+.licpill.ok{background:rgba(38,170,110,.2);color:#7fe0ab}.licpill.bad{background:rgba(208,59,59,.2);color:#f2a3a3}.licpill.warn{background:rgba(230,160,60,.2);color:#f0c070}
+.lockband{display:flex;gap:9px;align-items:center;background:rgba(217,174,85,.08);border:1px dashed rgba(217,174,85,.45);border-radius:10px;padding:9px 11px;color:#f0cf86;font-size:12.5px;margin:10px 0 4px}
+.lockband svg{width:16px;height:16px;flex:0 0 16px;fill:none;stroke:currentColor;stroke-width:2}
+.locked{opacity:.55}.locked input,.locked button{pointer-events:none}
+.lk{display:inline-block;width:13px;height:13px;margin-left:6px;vertical-align:-2px;fill:none;stroke:#f0cf86;stroke-width:2.2}
+.act.lockd{opacity:.35;filter:grayscale(1);pointer-events:none}
+.rhint{display:block;font-size:11px;color:var(--ink3);font-weight:500}
 .savebar{font-size:12.5px;color:var(--ink2);border-radius:10px;padding:8px 11px;line-height:1.45;
   background:rgba(230,160,60,.08);border:1px solid rgba(230,160,60,.4)}
 .savebar.ok{background:rgba(38,170,110,.08);border-color:rgba(38,170,110,.4)}
@@ -3953,19 +4242,26 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
       <div class="tile"><div class="k">Trade furan</div><div class="v neu" id="ot">—</div></div>
     </div>
 
+    <!-- v12: laysinka (macmiil) -->
+    <div class="card lic" id="licCard" style="margin-bottom:16px" hidden>
+      <div class="licr"><div><p class="sec-t" style="margin:0">Laysinka</p>
+        <div class="licbig" id="licBig">—</div><div class="note" id="licSub" style="margin:0">—</div></div>
+        <span class="licpill" id="licPill">—</span></div>
+    </div>
+
     {% if can_control %}
     <div class="card" style="margin-bottom:16px">
       <p class="sec-t">Amarrada</p>
       <div class="acts">
-        <button class="act go" data-cmd="START">
+        <button class="act go" data-cmd="START" data-perm="run">
           <svg viewBox="0 0 24 24"><path d="m6 4 14 8-14 8Z"/></svg>SHID</button>
-        <button class="act stop" data-cmd="STOP">
+        <button class="act stop" data-cmd="STOP" data-perm="run">
           <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>DAMI</button>
-        <button class="act warn" data-cmd="CLOSE_ALL">
+        <button class="act warn" data-cmd="CLOSE_ALL" data-perm="close">
           <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>XIDH</button>
       </div>
       <div class="acts" style="margin-top:10px">
-        <button class="act calm" data-cmd="CLOSE_PROFIT" style="grid-column:span 3;flex-direction:row;gap:9px;padding:13px">
+        <button class="act calm" data-cmd="CLOSE_PROFIT" data-perm="close" style="grid-column:span 3;flex-direction:row;gap:9px;padding:13px">
           <svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 7-7"/><path d="M14 8h6v6"/></svg>XIDH FAA'IIDO</button>
       </div>
       <label for="stratSel" style="margin-top:16px">Beddel xeeladda</label>
@@ -4035,6 +4331,7 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
     <div class="card" id="mCard" style="margin-bottom:16px">
       <p class="sec-t">Maamulka bot-ka</p>
       <div class="savebar" id="mSave"><span class="dt"></span>—</div>
+      {% if lic %}<div class="lockband" id="mLockBand"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Waxa quful ah <b>admin-ka ayaa maamula</b> — waad arki kartaa oo keliya.</span></div>{% endif %}
 
       <div class="grp"><div class="gh">1 · KHATARTA</div>
         <div class="frow"><span>Risk trade kasta</span><span><input id="mRISK" type="number" min="0.01" max="10" step="0.05"> <i>%</i></span></div>
@@ -4074,7 +4371,7 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
       </div>
       <div class="acts" style="margin-top:14px;grid-template-columns:2fr 1fr">
         <button class="act go" id="mSend" style="flex-direction:row;gap:9px;padding:14px">KAYDI &amp; DIR</button>
-        <button class="act" id="mReset" style="flex-direction:row;gap:8px;padding:14px;border-color:var(--line);color:var(--ink2)">CELI</button>
+        {% if not lic %}<button class="act" id="mReset" style="flex-direction:row;gap:8px;padding:14px;border-color:var(--line);color:var(--ink2)">CELI</button>{% endif %}
       </div>
       <div class="note" id="mNote">Bot-ku wuxuu hadda isticmaalayaa: —</div>
       <div class="note" style="margin-top:6px">Sitinkan ayaa bot-ka u ah <b>.set</b>: server-ka ayuu ku kaydsan yahay, <b>chart kasta</b> wuu gaadhayaa, MT5 ama VPS dib u kicin → bot-ku halkan ayuu ka soo qaadanayaa (EA v67.4+).</div>
@@ -4319,6 +4616,7 @@ function paint(d){
   paintChatBadge(d.chat_unread);                    // v9
   paintSave(d);                                     // v10
   paintMyKey(d);                                    // v11
+  paintLic(d);                                      // v12
   $("#st").textContent=d.online?(RS.long+" · "+(d.age||0)+"s ka hor")
     :(d.age==null?"Xog lama helin":"OFFLINE · "+d.age+"s ka hor");
   $("#bal").textContent=money(x.balance);
@@ -4704,6 +5002,7 @@ function healthChecks(d){
     const by=k=>cr.filter(a=>a.status===k).map(a=>a.sym);
     if(by("EMERGENCY").length) add("red","EMERGENCY STOP — drawdown","Bot-ku wuu joojiyay trade-yada cusub oo kuwa furan ayuu xidhay: "+by("EMERGENCY").join(", ")+". Eeg Max_Total_Drawdown_Pct.");
     if(by("ALGO_OFF").length) add("red","Algo Trading waa DAMMAN","MT5-ka badhanka 'Algo Trading' shid (sare, toolbar-ka). Chart: "+by("ALGO_OFF").join(", ")+".");
+    if(by("LICENSE").length) add("red","Laysinka — trade cusub ma furmo","Laysinku wuu dhacay, waa la xannibay, ama bot-ku weli ma hubin (MohaPro_Key + WebRequest URL). Chart: "+by("LICENSE").join(", ")+".");
     const stp=by("STOPPED");
     if(stp.length===cr.length) add("amb","Bot-ka waa LA DAMIYAY","Trade cusub ma furmo. Kuwa furan waa la sii maamulayaa. Shid: Guud → SHID.");
     else if(stp.length) add("amb",stp.length+" chart ayaa la damiyay",stp.join(", ")+" — trade cusub kama furmo. Kuwa kale way shaqeynayaan.");
@@ -5049,7 +5348,7 @@ function paintChatBadge(n){
 }
 
 /* ---- v8.3: xaaladda bot-ka (chart kasta) ---- */
-const ST_TXT={RUNNING:"SHAQEYNAYA",STOPPED:"LA DAMIYAY",EMERGENCY:"EMERGENCY STOP",ALGO_OFF:"ALGO TRADING DAMMAN"};
+const ST_TXT={RUNNING:"SHAQEYNAYA",STOPPED:"LA DAMIYAY",EMERGENCY:"EMERGENCY STOP",ALGO_OFF:"ALGO TRADING DAMMAN",LICENSE:"LAYSIN"};
 function chartRows(d){ return (d.analysis||[]).filter(a=>a && a.status && Number(a._age)<=300); }
 function runState(d){
   const x=d.data||{}, rows=chartRows(d);
@@ -5058,6 +5357,7 @@ function runState(d){
   const n=sts.length, c=k=>sts.filter(s=>s===k).length;
   if(c("EMERGENCY")) return {ok:false,short:"EMERGENCY",long:"EMERGENCY STOP (drawdown)"};
   if(c("ALGO_OFF"))  return {ok:false,short:"ALGO OFF",long:"ALGO TRADING DAMMAN ("+c("ALGO_OFF")+"/"+n+" chart)"};
+  if(c("LICENSE"))   return {ok:false,short:"LAYSIN",long:"LAYSIN — trade cusub ma furmo ("+c("LICENSE")+"/"+n+" chart)"};
   if(c("STOPPED")===n) return {ok:false,short:"LA DAMIYAY",long:"LA DAMIYAY — trade cusub ma furmo"};
   if(c("STOPPED")) return {ok:false,short:"QAYB DAMMAN",long:(n-c("STOPPED"))+"/"+n+" chart ayaa shaqeynaya"};
   return {ok:true,short:"ONLINE",long:"SHAQEYNAYA"+(n>1?(" · "+n+" chart"):"")};
@@ -5193,6 +5493,44 @@ function swGet(id){ const e=$("#"+id); return e && e.classList.contains("on"); }
 ["mSTEPON","mBE","mLOCKMODE","mADAPT","mMGMT","mSNIPER","mNEWS"].forEach(id=>{ const e=$("#"+id); if(e) e.addEventListener("click",()=>{ e.classList.toggle("on"); mTouched=true; }); });
 MF.forEach(k=>{ const e=$("#m"+k); if(e) e.addEventListener("input",()=>{ mTouched=true; }); });
 
+/* ---- v12: laysinka + oggolaanshaha macmiilka ---- */
+const PERMS={{ perms_json|safe }};
+const PERM_OF={RISK:"risk",LOT:"lot",SLTP:"sltp",SL:"sltp",TP:"sltp",SNIPER:"sltp",SNRR:"sltp",SNSLMAX:"sltp",ADAPT:"sltp",
+  SNDAY:"day",NEWS:"prot",STEPON:"prot",STEP:"prot",STEPSTART:"prot",BE:"prot",LOCKMODE:"prot"};
+const PERM_EL={mRISK:"risk",mDLOSS:"",mMAXDD:"",mSNIPER:"sltp",mSNDAYm:"day",mSNRR:"sltp",mSNSLMAX:"sltp",mNEWS:"prot",
+  mSL:"sltp",mTP:"sltp",mLOT:"lot",mSTEPON:"prot",mADAPT:"sltp",mLOCKMODE:"prot",mBE:"prot",mMGMT:"",mSTEP:"prot",mSTEPSTART:"prot"};
+let licOK=true;
+const LKSVG='<svg class="lk" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
+function permOK(p){ return !PERMS || (licOK && !!(p && PERMS[p])); }
+function lockEl(row){ if(!row||row.classList.contains("locked")) return; row.classList.add("locked");
+  row.querySelectorAll("input,button").forEach(x=>{ x.disabled=true; x.tabIndex=-1; });
+  const lab=row.querySelector("span"); if(lab) lab.insertAdjacentHTML("beforeend",LKSVG); }
+function applyPerms(){
+  if(!PERMS) return;
+  Object.keys(PERM_EL).forEach(id=>{ const e=$("#"+id); if(!e) return;
+    if(!permOK(PERM_EL[id])) lockEl(e.closest(".frow")); });
+  if(!permOK("sltp")){ const sg=$("#mSLTP"); if(sg){ sg.classList.add("locked"); sg.querySelectorAll("button").forEach(b=>b.disabled=true); } }
+  document.querySelectorAll("[data-perm]").forEach(b=>{ if(!permOK(b.dataset.perm)){ b.classList.add("lockd"); b.disabled=true; } });
+  const ss=$("#stratSel"); if(ss){ ss.disabled=true; ss.style.display="none"; const lb=document.querySelector('label[for="stratSel"]'); if(lb) lb.style.display="none"; }
+  const r=$("#mRISK"); if(r && permOK("risk")){ r.min=PERMS.lo; r.max=PERMS.hi;
+    const lab=r.closest(".frow").querySelector("span"); if(lab && !lab.querySelector(".rhint")) lab.insertAdjacentHTML("beforeend",'<small class="rhint">xadka: '+Number(PERMS.lo).toFixed(2)+' – '+Number(PERMS.hi).toFixed(2)+'%</small>'); }
+  const any=Object.keys(PERM_OF).some(k=>permOK(PERM_OF[k])); const sb=$("#mSend"); if(sb && !any){ sb.disabled=true; sb.classList.add("lockd"); }
+}
+function paintLic(d){
+  const c=$("#licCard"); if(!c) return; const L=d.lic;
+  if(!L){ c.hidden=true; return; } c.hidden=false;
+  const pill=$("#licPill"), big=$("#licBig"), sub=$("#licSub");
+  const dt=L.until?new Date(L.until*1000).toLocaleDateString([], {day:"numeric",month:"short",year:"numeric"}):"";
+  if(L.state==="OK"){ big.textContent="Shaqeynaya"; sub.textContent="Wuxuu dhacayaa "+dt+" · "+L.days+" maalmood ayaa haray";
+    pill.className="licpill "+(L.days<=5?"warn":"ok"); pill.textContent=L.days<=5?"DHOW":"✓ ACTIVE"; }
+  else if(L.state==="BLOCKED"){ big.textContent="Waa la xannibay"; sub.textContent="Bot-ku trade cusub ma furo — admin-ka la xiriir.";
+    pill.className="licpill bad"; pill.textContent="XANNIBAN"; }
+  else { big.textContent="Wuu dhacay"; sub.textContent=(dt?("Wuxuu dhacay "+dt+" · "):"")+"bot-ku trade cusub ma furo — admin-ka la xiriir.";
+    pill.className="licpill bad"; pill.textContent="DHACAY"; }
+  if(PERMS){ const ok=(L.state==="OK"); if(ok!==licOK){ licOK=ok; if(!ok) applyPerms(); } }
+}
+applyPerms();
+
 /* ---- v11: furaha bot-ka (isticmaalaha) ---- */
 (function(){
   const b=$("#myKeyCp"); if(!b) return;
@@ -5325,6 +5663,7 @@ async function sendSettings(){
   cmds.push("SET:SNIPER="+(swGet("mSNIPER")?1:0));
   cmds.push("SET:NEWS="+(swGet("mNEWS")?1:0));
   const values={}; cmds.forEach(c=>{ const m=/^SET:([A-Z]+)=(.+)$/.exec(c); if(m) values[m[1]]=m[2]; });
+  if(PERMS) Object.keys(values).forEach(k=>{ if(!permOK(PERM_OF[k])) delete values[k]; });   // v12: macmiil
   btn.disabled=true; btn.textContent="Kaydinaya…";
   let err="";
   try{
@@ -5540,10 +5879,19 @@ T_ADMIN = """<!doctype html><html lang="so"><head><meta charset="utf-8">
     <h2>Furaha bot-ka · qof kasta</h2>
     <p class="note" style="margin-top:0">Fure kasta <b>hal account oo keliya</b> ayuu furaa. Isticmaalaha u dir furihiisa →
       MT5 → Inputs → <code>MohaPro_Key</code>. {% if legacy %}Furaha guud ee hore wuu sii shaqeynayaa <b>account aan weli fure lahayn oo keliya</b>.{% else %}Furaha guud ee hore <b>waa damman yahay</b>.{% endif %}</p>
+    <!-- v12: master -->
+    <form method="post" action="/admin/master" class="mst">
+      <div><div class="knm">Sitinka macaamiisha (master)</div>
+        <div class="kseen" style="margin-top:2px">Macmiil kasta oo "sitinkaaga raac" leh wuxuu qaataa sitinka account-kan. Maamul → KAYDI &amp; DIR account-kan → dhammaan way qaataan.</div></div>
+      <div class="mrow"><select name="account" id="masterSel">
+        <option value="">— dooro account —</option>
+        {% for a in mopts %}<option value="{{ a }}" {% if a == master %}selected{% endif %}>#{{ a }}</option>{% endfor %}
+      </select><button class="kb gold" type="submit">Keydi</button></div>
+    </form>
     {% for k in keyrows %}
-    <div class="krow">
+    <div class="krow" id="k{{ k.account }}">
       <div class="khd"><span class="kav">{{ (k.name or k.account)[:1]|upper }}</span>
-        <div class="kmid"><div class="knm">{{ k.name or "—" }}</div><div class="kac">#{{ k.account }}</div></div>
+        <div class="kmid"><div class="knm">{{ k.name or "—" }}{% if k.is_master %} <span class="kmst">MASTER</span>{% endif %}</div><div class="kac">#{{ k.account }}</div></div>
         {% if not k.has %}<span class="kst">FURE MA LEH</span>
         {% elif not k.active %}<span class="kst off">XANNIBAN</span>
         {% elif k.live %}<span class="kst ok">SHAQEYNAYA</span>
@@ -5561,6 +5909,38 @@ T_ADMIN = """<!doctype html><html lang="so"><head><meta charset="utf-8">
         {% if k.has and k.active %}<button name="action" value="off" class="kb red">Xannib</button>{% endif %}
         {% if k.has and not k.active %}<button name="action" value="on" class="kb">Fur</button>{% endif %}
       </form>
+      {% if not k.is_master %}
+      <!-- v12: laysinka + oggolaanshaha -->
+      <details class="klic"{% if k.lic %} open{% endif %}>
+        <summary>{% if k.lic %}Laysin ·
+          {% if k.lic.state == "OK" %}<b class="lok">ACTIVE</b> · {{ k.until_s }} · {{ k.lic.days }} maalmood ayaa haray
+          {% elif k.lic.state == "BLOCKED" %}<b class="lbad">FURAHA WAA XANNIBAN</b>
+          {% else %}<b class="lbad">WUU DHACAY</b> · bot-ku trade cusub ma furo{% endif %}
+          {% else %}Laysin ma leh · u samee macmiil{% endif %}</summary>
+        <form method="post" action="/admin/license" class="kbtns">
+          <input type="hidden" name="account" value="{{ k.account }}">
+          <button name="action" value="add30" class="kb gold">+30 maalmood</button>
+          <button name="action" value="add365" class="kb gold">+1 sano</button>
+          {% if k.lic and k.lic.state == "OK" %}<button name="action" value="stop" class="kb red">Jooji</button>{% endif %}
+        </form>
+        {% if k.lic %}
+        <form method="post" action="/admin/license" class="kperm">
+          <input type="hidden" name="account" value="{{ k.account }}"><input type="hidden" name="action" value="perms">
+          <div class="kph">Maxaa macmiilka loo oggol yahay?</div>
+          {% for pk in perm_keys %}
+          <label class="kpr"><span>{{ perm_names[pk] }}</span><input type="checkbox" name="p_{{ pk }}" {% if k.lic.perms[pk] %}checked{% endif %}><i class="tg"></i></label>
+          {% if pk == "risk" %}<div class="kpr sub"><span>Xadka risk-ka</span><span><input name="lo" type="number" step="0.01" min="0.01" max="10" value="{{ '%.2f'|format(k.lic.perms.lo) }}"> – <input name="hi" type="number" step="0.01" min="0.01" max="10" value="{{ '%.2f'|format(k.lic.perms.hi) }}"> %</span></div>{% endif %}
+          {% endfor %}
+          <label class="kpr" style="margin-top:6px"><span><b>Sitinkaaga (master) raac</b>{% if not master %} <small class="lbad">· master lama dooran</small>{% endif %}</span><input type="checkbox" name="follow" {% if k.lic.follow %}checked{% endif %}><i class="tg"></i></label>
+          <button class="kb gold" style="width:100%;margin-top:8px" type="submit">Keydi oggolaanshaha</button>
+        </form>
+        <form method="post" action="/admin/license" style="margin-top:6px">
+          <input type="hidden" name="account" value="{{ k.account }}">
+          <button name="action" value="remove" class="klink">Ka saar laysinka (account caadi ah ka dhig)</button>
+        </form>
+        {% endif %}
+      </details>
+      {% endif %}
     </div>
     {% endfor %}
     <p class="note"><b>Fure cusub</b> → kii hore isla markiiba wuu dhintaa (bot-ka furihii hore wata wuu go'ayaa ilaa furaha cusub la geliyo).</p>
@@ -5577,6 +5957,22 @@ T_ADMIN = """<!doctype html><html lang="so"><head><meta charset="utf-8">
   .kcp,.kb{font-size:12px;font-weight:700;padding:7px 11px;border-radius:8px;border:1px solid #3a3a38;background:#232322;color:#ddd;cursor:pointer}
   .kseen{font-size:11.5px;color:var(--ink3);margin-top:6px}
   .kbtns{display:flex;gap:7px;margin-top:8px}.kbtns .kb{flex:1}
+  .mst{background:#141517;border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:4px 0 8px}
+  .mrow{display:flex;gap:8px;margin-top:8px}.mrow select{flex:1;min-width:0}
+  .kmst{font-size:10px;font-weight:800;letter-spacing:.06em;color:#f0cf86;border:1px solid rgba(217,174,85,.5);border-radius:999px;padding:1px 7px;vertical-align:middle}
+  .klic{margin-top:10px;background:#141517;border:1px solid var(--line);border-radius:12px;padding:9px 12px}
+  .klic summary{cursor:pointer;font-size:12.5px;color:var(--ink2)}
+  .lok{color:#7fe0ab}.lbad{color:#f2a3a3}
+  .kph{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin:12px 0 4px}
+  .kpr{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;margin:0;border-top:1px solid #222;font-size:13px;color:var(--ink);cursor:pointer;position:relative}
+  .kpr.sub{cursor:default;border-top:none;padding-top:0;color:var(--ink3);font-size:12px}
+  .kpr.sub input{width:62px;padding:4px 6px}
+  .kpr input[type=checkbox]{position:absolute;opacity:0;width:1px;height:1px}
+  .kpr .tg{width:38px;height:22px;border-radius:99px;background:#343a47;position:relative;flex:0 0 38px}
+  .kpr .tg:after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#9aa0ac;transition:left .15s}
+  .kpr input:checked+.tg{background:#2e9c68}.kpr input:checked+.tg:after{left:19px;background:#fff}
+  .kpr input:focus-visible+.tg{outline:2px solid #f0cf86;outline-offset:2px}
+  .klink{background:none;border:none;color:var(--ink3);font-size:12px;text-decoration:underline;cursor:pointer;padding:4px 0}
   .kb.gold{border-color:rgba(217,174,85,.7);color:#f0cf86}.kb.red{border-color:rgba(208,59,59,.6);color:#f2a3a3}
   </style>
   <script>
