@@ -119,6 +119,16 @@ SET_LIMITS = {          # key: (min, max, noocaa)
     "ADAPT":     (0, 1,    "int"),   # v5.2: ATR adaptive SL/TP
     "MGMT":      (0, 1,    "int"),   # v7.1: 1 = maamulku wuu shaqeynayaa, 0 = damman
     "SLTP":      (0, 2,    "int"),   # v9.3: 0 = FIXED, 1 = ATR, 2 = SNIPER
+    # v10: sitinka .set-ka ugu muhiimsan -> app-ka (EA v67.4+)
+    "RISK":      (0.01, 10, "float"),
+    "DLOSS":     (0, 50,   "float"),
+    "MAXDD":     (0, 100,  "float"),
+    "SNIPER":    (0, 1,    "int"),
+    "SNDAY":     (0, 50,   "int"),
+    "SNRR":      (1, 10,   "float"),
+    "SNSLMAX":   (0, 500,  "int"),
+    "NEWS":      (0, 1,    "int"),
+    "REV":       (0, 2000000000, "int"),
 }
 
 def valid_command(cmd):
@@ -240,6 +250,12 @@ CREATE TABLE IF NOT EXISTS messages(
 );
 CREATE INDEX IF NOT EXISTS ix_msg ON messages(thread, id);
 CREATE INDEX IF NOT EXISTS ix_msg_unread ON messages(from_admin, read_at);
+CREATE TABLE IF NOT EXISTS ea_config(
+  account    TEXT PRIMARY KEY,
+  data       TEXT NOT NULL,
+  rev        INTEGER NOT NULL DEFAULT 0,
+  updated_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS trade_shots(
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   account    TEXT NOT NULL,
@@ -2212,6 +2228,114 @@ def _collapse_cmds(cmds):
     return [c for _, c in sorted(last.values())]
 
 
+# --------------------------------------------------------------------------
+# v10: SITINKA BOT-KA (.set la'aan) — app-ka ayaa kaydiya, server-ka ayaa hayaa.
+#  POST /api/config        (app)  -> kaydi + chart kasta u dir (SET:... + SET:REV=n)
+#  GET  /api/config        (app)  -> sitinka la kaydiyay + rev
+#  GET  /api/ea_config     (EA)   -> marka bot-ku kaco: sitinka kaydsan (qaab amar ah)
+# --------------------------------------------------------------------------
+CFG_KEYS = ("RISK", "DLOSS", "MAXDD", "SNIPER", "SNDAY", "SNRR", "SNSLMAX", "NEWS",
+            "SLTP", "SL", "TP", "LOT", "STEPON", "STEP", "STEPSTART", "BE", "LOCKMODE", "ADAPT", "MGMT")
+
+
+def _cfg_cmds(vals, rev):
+    out = []
+    for k in CFG_KEYS:
+        if k in vals:
+            ok, c = valid_command("SET:%s=%s" % (k, vals[k]))
+            if ok:
+                out.append(c)
+    out.append("SET:REV=%d" % int(rev))
+    return out
+
+
+@app.get("/api/config")
+@login_required
+def api_config_get():
+    u = request.user
+    acc = _visible_account(u)
+    with db() as con:
+        r = con.execute("SELECT data,rev,updated_at FROM ea_config WHERE account=?", (acc,)).fetchone()
+    if not r:
+        return jsonify(ok=True, account=acc, values={}, rev=0, saved=None)
+    try:
+        vals = json.loads(r["data"])
+    except ValueError:
+        vals = {}
+    return jsonify(ok=True, account=acc, values=vals, rev=int(r["rev"]), saved=float(r["updated_at"]))
+
+
+@app.post("/api/config")
+@login_required
+def api_config_save():
+    u = request.user
+    if not u["can_control"] and u["role"] != "admin":
+        return jsonify(ok=False, error="Amar diritaanka lagaama ogola."), 403
+    body = request.get_json(silent=True) or {}
+    acc = clean_account(body.get("account")) if u["role"] == "admin" else u["account"]
+    acc = acc or u["account"]
+    now = time.time()
+    if body.get("reset"):
+        with db() as con:
+            con.execute("DELETE FROM ea_config WHERE account=?", (acc,))
+            con.execute("INSERT INTO commands(account,cmd,by_account,created_at) VALUES(?,?,?,?)",
+                        (acc, "SET:RESET", u["account"], now))
+        return jsonify(ok=True, account=acc, rev=0, reset=True)
+    raw = body.get("values") or {}
+    if not isinstance(raw, dict):
+        return jsonify(ok=False, error="values"), 400
+    clean, bad = {}, []
+    for k, v in raw.items():
+        k = str(k).upper()
+        if k not in CFG_KEYS:
+            bad.append(k); continue
+        ok, c = valid_command("SET:%s=%s" % (k, v))
+        if not ok:
+            bad.append(k); continue
+        clean[k] = c.split("=", 1)[1]
+    if bad:
+        return jsonify(ok=False, error="Qiime khaldan: " + ", ".join(bad)), 400
+    with db() as con:
+        r = con.execute("SELECT data,rev FROM ea_config WHERE account=?", (acc,)).fetchone()
+        merged = {}
+        if r:
+            try:
+                merged = json.loads(r["data"]) or {}
+            except ValueError:
+                merged = {}
+        merged.update(clean)
+        rev = int(r["rev"]) + 1 if r else 1
+        con.execute(
+            "INSERT INTO ea_config(account,data,rev,updated_at) VALUES(?,?,?,?)"
+            " ON CONFLICT(account) DO UPDATE SET data=excluded.data, rev=excluded.rev, updated_at=excluded.updated_at",
+            (acc, json.dumps(merged), rev, now))
+        cmds = _cfg_cmds(clean, rev)
+        con.insert_many_ignore("commands", ("account", "cmd", "by_account", "created_at"),
+                               [(acc, c, u["account"], now) for c in cmds])
+    return jsonify(ok=True, account=acc, rev=rev, values=merged, sent=len(cmds))
+
+
+@app.get("/api/ea_config")
+def ea_config():
+    """EA-du marka ay kacdo (MT5 / VPS dib u kicin) sitinka kaydsan ayay halkan ka qaadataa."""
+    if not token_ok():
+        return jsonify(ok=False, error="bad token"), 401
+    acc = clean_account(request.args.get("account"))
+    cmds = []
+    if acc:
+        with db() as con:
+            r = con.execute("SELECT data,rev FROM ea_config WHERE account=?", (acc,)).fetchone()
+        if r:
+            try:
+                cmds = _cfg_cmds(json.loads(r["data"]) or {}, int(r["rev"]))
+            except ValueError:
+                cmds = []
+    payload = {"token": CLOUD_TOKEN, "account": acc, "commands": cmds, "ts": int(time.time())}
+    resp = make_response(json.dumps(payload, separators=(",", ":"), ensure_ascii=False))
+    resp.headers["Content-Type"] = "application/json"
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
 @app.get("/api/commands")
 def ea_commands():
     """EA-du waxay soo qaadataa amarrada sugaya. Mid kasta hal mar oo keliya."""
@@ -2487,6 +2611,7 @@ def api_state():
             "SELECT sym,data,news,ts FROM analysis WHERE account=? AND ts>? ORDER BY sym",
             (acc, now - ANALYSIS_TTL)).fetchall()
         chat_unread = _chat_unread(con, u)     # v9
+        cfgr = con.execute("SELECT rev,updated_at FROM ea_config WHERE account=?", (acc,)).fetchone()   # v10
 
     data = json.loads(snap["data"]) if snap else {}
     age = (now - snap["updated_at"]) if snap else None
@@ -2524,6 +2649,8 @@ def api_state():
         brand=(br["img"] if br else BRAND_IMAGE_URL),
         analysis=ana,
         chat_unread=chat_unread,
+        cfg_rev=(int(cfgr["rev"]) if cfgr else 0),
+        cfg_saved=(float(cfgr["updated_at"]) if cfgr else None),
     )
 
 
@@ -3434,6 +3561,21 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 .pane{display:none}
 .pane.on{display:block}
 
+/* ---------- v10: kaadhka maamulka (qaybo) ---------- */
+.grp{border:1px solid var(--line);border-radius:14px;padding:4px 12px 6px;margin:12px 0;background:#161615}
+.gh{font-size:11.5px;font-weight:800;letter-spacing:.1em;color:#d9ae55;padding:10px 0 4px}
+.savebar{font-size:12.5px;color:var(--ink2);border-radius:10px;padding:8px 11px;line-height:1.45;
+  background:rgba(230,160,60,.08);border:1px solid rgba(230,160,60,.4)}
+.savebar.ok{background:rgba(38,170,110,.08);border-color:rgba(38,170,110,.4)}
+.savebar b{color:var(--ink)} .savebar.ok b{color:#8fe6ad}
+.savebar .dt{display:inline-block;width:8px;height:8px;border-radius:50%;background:#e0a040;margin-right:6px;vertical-align:1px}
+.savebar.ok .dt{background:#26aa6e}
+.stp{display:flex;align-items:center;gap:10px}
+.stp button{width:34px;height:34px;border-radius:10px;border:1px solid var(--line);background:#1f1f1e;color:var(--ink);font-size:18px;padding:0;cursor:pointer}
+.stp b{min-width:22px;text-align:center;font-size:16px;font-variant-numeric:tabular-nums}
+#mCard .frow>span:last-child{white-space:nowrap;flex:0 0 auto}
+#mCard .frow>span:first-child{flex:1 1 auto;min-width:0;padding-right:8px}
+
 /* ---------- v9.3: habka SL/TP ---------- */
 .seg{display:flex;border:1px solid var(--line);border-radius:12px;overflow:hidden;margin:2px 0 8px}
 .seg button{flex:1;padding:11px 4px;background:none;border:none;border-radius:0;border-left:1px solid var(--line);
@@ -3702,10 +3844,25 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
     </div>
 
     <!-- v5: MAAMULKA (SL / TP / LOT / STEP-LOCK) -->
-    <div class="card" style="margin-bottom:16px">
+    <div class="card" id="mCard" style="margin-bottom:16px">
       <p class="sec-t">Maamulka bot-ka</p>
-      <!-- v9.3: habka SL/TP -->
-      <div class="frow" style="border:none;padding-bottom:2px"><span>Habka SL/TP</span><span></span></div>
+      <div class="savebar" id="mSave"><span class="dt"></span>—</div>
+
+      <div class="grp"><div class="gh">1 · KHATARTA</div>
+        <div class="frow"><span>Risk trade kasta</span><span><input id="mRISK" type="number" min="0.01" max="10" step="0.05"> <i>%</i></span></div>
+        <div class="frow"><span>Khasaaraha maalinlaha <small>(kadib wuu joogsadaa maanta)</small></span><span><input id="mDLOSS" type="number" min="0" max="50" step="0.5"> <i>%</i></span></div>
+        <div class="frow"><span>Drawdown ugu badan <small>(emergency stop)</small></span><span><input id="mMAXDD" type="number" min="0" max="100" step="1"> <i>%</i></span></div>
+      </div>
+
+      <div class="grp"><div class="gh">2 · XEELADDA</div>
+        <div class="frow"><span>Sniper <small>(tayo · CHoCH gudaha zone-ka)</small></span><span><button class="sw" id="mSNIPER" type="button" aria-label="Sniper"><i></i></button></span></div>
+        <div class="frow"><span>Trade maalintii <small>(chart-yada oo dhan)</small></span><span class="stp"><button type="button" id="mSNDAYm" aria-label="Ka yaree">−</button><b id="mSNDAY">3</b><button type="button" id="mSNDAYp" aria-label="Ku dar">+</button></span></div>
+        <div class="frow"><span>RR <small>(TP = SL × …)</small></span><span><input id="mSNRR" type="number" min="1" max="10" step="0.5"> <i>R</i></span></div>
+        <div class="frow"><span>SL ugu weyn <small>(ka weyn → trade ma furmo)</small></span><span><input id="mSNSLMAX" type="number" min="0" max="500" step="1"> <i>pip</i></span></div>
+        <div class="frow"><span>Filtarka wararka <small>(jooji warka ka hor/kadib)</small></span><span><button class="sw" id="mNEWS" type="button" aria-label="Filtarka wararka"><i></i></button></span></div>
+      </div>
+
+      <div class="grp"><div class="gh">3 · SL / TP</div>
       <div class="seg" id="mSLTP" role="radiogroup" aria-label="Habka SL/TP">
         <button type="button" data-m="2" role="radio">SNIPER</button>
         <button type="button" data-m="0" role="radio">FIXED</button>
@@ -3715,7 +3872,9 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
       <div class="frow" id="rSL"><span>Stop Loss</span><span><input id="mSL" type="number" min="0" max="5000" step="1"> <i>pip</i></span></div>
       <div class="frow" id="rTP"><span>Take Profit</span><span><input id="mTP" type="number" min="0" max="5000" step="1"> <i>pip</i></span></div>
       <div class="frow"><span>Lot <small>(0 = auto risk)</small></span><span><input id="mLOT" type="number" min="0" max="100" step="0.01"> <i>lot</i></span></div>
-      <div class="hr"></div>
+      </div>
+
+      <div class="grp"><div class="gh">4 · MAAMULKA TRADE-KA FURAN</div>
       <div class="frow"><span>Step-Lock</span><span><button class="sw" id="mSTEPON" type="button"><i></i></button></span></div>
       <div id="mWarn"></div>
       <div class="frow" id="rADAPT"><span>ATR maamulo SL/TP <small>(suuqa ayuu la socdaa · ATR oo keliya)</small></span><span><button class="sw" id="mADAPT" type="button"><i></i></button></span></div>
@@ -3724,12 +3883,13 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
       <div class="frow"><span>Maamulka trade-ka <small>(dami = SL/TP oo keliya)</small></span><span><button class="sw" id="mMGMT" type="button"><i></i></button></span></div>
       <div class="frow"><span>Tallaabo kasta</span><span><input id="mSTEP" type="number" min="1" max="5000" step="1"> <i>pip</i></span></div>
       <div class="frow"><span>Bilowga</span><span><input id="mSTEPSTART" type="number" min="1" max="5000" step="1"> <i>pip</i></span></div>
+      </div>
       <div class="acts" style="margin-top:14px;grid-template-columns:2fr 1fr">
-        <button class="act go" id="mSend" style="flex-direction:row;gap:9px;padding:14px">DIR BOT-KA</button>
+        <button class="act go" id="mSend" style="flex-direction:row;gap:9px;padding:14px">KAYDI &amp; DIR</button>
         <button class="act" id="mReset" style="flex-direction:row;gap:8px;padding:14px;border-color:var(--line);color:var(--ink2)">CELI</button>
       </div>
       <div class="note" id="mNote">Bot-ku wuxuu hadda isticmaalayaa: —</div>
-      <div class="note" style="margin-top:6px">Amarku <b>chart kasta</b> wuu gaadhayaa (EA v67.1+). Sitinka chart kasta: tab-ka <b>Analiis</b>.</div>
+      <div class="note" style="margin-top:6px">Sitinkan ayaa bot-ka u ah <b>.set</b>: server-ka ayuu ku kaydsan yahay, <b>chart kasta</b> wuu gaadhayaa, MT5 ama VPS dib u kicin → bot-ku halkan ayuu ka soo qaadanayaa (EA v67.4+).</div>
     </div>
 
     <!-- v5: xidhitaanka faa'iidada -->
@@ -3990,6 +4150,7 @@ function paint(d){
   paintAnalysis(d.analysis);                        // v7
   paintHealth(d);                                   // v7.2
   paintChatBadge(d.chat_unread);                    // v9
+  paintSave(d);                                     // v10
   $("#st").textContent=d.online?(RS.long+" · "+(d.age||0)+"s ka hor")
     :(d.age==null?"Xog lama helin":"OFFLINE · "+d.age+"s ka hor");
   $("#bal").textContent=money(x.balance);
@@ -4861,8 +5022,24 @@ const MF=["SL","TP","LOT","STEP","STEPSTART"];
 let mTouched=false, mSeeded=false;
 function swSet(id,on){ const e=$("#"+id); if(e) e.classList.toggle("on",!!on); }
 function swGet(id){ const e=$("#"+id); return e && e.classList.contains("on"); }
-["mSTEPON","mBE","mLOCKMODE","mADAPT","mMGMT"].forEach(id=>{ const e=$("#"+id); if(e) e.addEventListener("click",()=>{ e.classList.toggle("on"); mTouched=true; }); });
+["mSTEPON","mBE","mLOCKMODE","mADAPT","mMGMT","mSNIPER","mNEWS"].forEach(id=>{ const e=$("#"+id); if(e) e.addEventListener("click",()=>{ e.classList.toggle("on"); mTouched=true; }); });
 MF.forEach(k=>{ const e=$("#m"+k); if(e) e.addEventListener("input",()=>{ mTouched=true; }); });
+
+/* ---- v10: stepper-ka trade maalintii + bar-ka kaydinta ---- */
+function snDay(d){ const e=$("#mSNDAY"); if(!e) return; let v=Number(e.textContent)||0; v=Math.max(0,Math.min(50,v+d)); e.textContent=v; mTouched=true; }
+if($("#mSNDAYm")) $("#mSNDAYm").addEventListener("click",()=>snDay(-1));
+if($("#mSNDAYp")) $("#mSNDAYp").addEventListener("click",()=>snDay(1));
+function paintSave(d){
+  const b=$("#mSave"); if(!b) return;
+  const rev=Number(d.cfg_rev||0), rows=(d.analysis||[]).filter(a=>a&&a.settings&&Number(a._age)<=300);
+  if(!rev){ b.className="savebar"; b.innerHTML='<span class="dt"></span>Weli lama kaydin — bot-ku wuxuu isticmaalayaa sitinka koodka. Riix <b>KAYDI &amp; DIR</b>.'; return; }
+  const got=rows.filter(a=>Number(a.settings.rev)===rev).length, n=rows.length;
+  const when=d.cfg_saved?new Date(d.cfg_saved*1000).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}):"";
+  const all=(n>0 && got===n);
+  b.className="savebar"+(all?" ok":"");
+  b.innerHTML='<span class="dt"></span>Server-ka ayuu ku kaydsan yahay'+(when?(' · '+esc(when)):"")+' · '
+    +(n?('<b>'+got+'/'+n+' chart</b> '+(all?"way qaateen":"ayaa qaatay — kuwa kale way sugayaan")):'chart online ma jiro');
+}
 
 /* ---- v9.3: habka SL/TP (SNIPER / FIXED / ATR) ---- */
 let mMode=null, mRR=3, mSniperOn=true, mModeKnown=false;
@@ -4909,6 +5086,9 @@ function paintSettings(st){
   mMode=(em!==null)?em:(st.sniper?2:(Number(st.sl)>0?0:1));
   modeHint();
   set("mSTEP",st.step); set("mSTEPSTART",st.stepstart);
+  set("mRISK",st.risk); set("mDLOSS",st.dloss); set("mMAXDD",st.maxdd); set("mSNRR",st.rr); set("mSNSLMAX",st.snslmax);   // v10
+  if(st.snday!==undefined && $("#mSNDAY")) $("#mSNDAY").textContent=st.snday;
+  swSet("mSNIPER",(st.sniper_on!==undefined)?!!st.sniper_on:!!st.sniper); swSet("mNEWS",st.news===undefined?true:!!st.news);
   swSet("mSTEPON",st.steplock); swSet("mBE",st.be);
   swSet("mLOCKMODE",Number(st.lockmode)===1); swSet("mADAPT",!!st.adaptive);
   swSet("mMGMT",!st.mgmt_off);            // v7.1: ON = maamulku wuu shaqeynayaa
@@ -4948,26 +5128,36 @@ async function sendSettings(){
   cmds.push("SET:LOCKMODE="+(swGet("mLOCKMODE")?1:0));
   cmds.push("SET:ADAPT="+(swGet("mADAPT")?1:0));
   cmds.push("SET:MGMT="+(swGet("mMGMT")?1:0));
-  btn.disabled=true; btn.textContent="Diraya…";
-  let bad=0;
-  for(const c of cmds){
-    const body={cmd:c}; if(accSel)body.account=accSel.value;
-    try{
-      const r=await fetch("/api/command",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-      const d=await r.json(); if(!d.ok) bad++;
-    }catch(e){ bad++; }
-  }
+  // v10: sitinka cusub
+  const r2=num("mRISK"), dl=num("mDLOSS"), md=num("mMAXDD"), rr=num("mSNRR"), sm=num("mSNSLMAX");
+  if(r2!==null) cmds.push("SET:RISK="+r2);
+  if(dl!==null) cmds.push("SET:DLOSS="+dl);
+  if(md!==null) cmds.push("SET:MAXDD="+md);
+  if(rr!==null) cmds.push("SET:SNRR="+rr);
+  if(sm!==null) cmds.push("SET:SNSLMAX="+sm);
+  cmds.push("SET:SNDAY="+(Number($("#mSNDAY").textContent)||0));
+  cmds.push("SET:SNIPER="+(swGet("mSNIPER")?1:0));
+  cmds.push("SET:NEWS="+(swGet("mNEWS")?1:0));
+  const values={}; cmds.forEach(c=>{ const m=/^SET:([A-Z]+)=(.+)$/.exec(c); if(m) values[m[1]]=m[2]; });
+  btn.disabled=true; btn.textContent="Kaydinaya…";
+  let err="";
+  try{
+    const body={values:values}; if(accSel)body.account=accSel.value;
+    const r=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const d=await r.json(); if(!d.ok) err=d.error||"Lama kaydin.";
+  }catch(e){ err="Internet ma jiro — lama kaydin."; }
   btn.disabled=false; btn.textContent=old;
-  mTouched=false;
-  $("#mNote").textContent = bad ? (bad+" amar lama dirin - qiime xad-dhaaf ah.")
-                                : "La diray. EA-du 3-5 ilbiriqsi gudahood ayuu qaadanayaa.";
+  if(!err) mTouched=false;
+  $("#mNote").textContent = err ? err : "La kaydiyay oo la diray. Chart kasta 20 ilbiriqsi gudahood ayuu qaadanayaa.";
+  tick();
 }
 if($("#mSend"))  $("#mSend").addEventListener("click",sendSettings);
 if($("#mReset")) $("#mReset").addEventListener("click",async ()=>{
-  const body={cmd:"SET:RESET"}; if(accSel)body.account=accSel.value;
-  await fetch("/api/command",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const body={reset:true}; if(accSel)body.account=accSel.value;
+  await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
   mTouched=false; mSeeded=false;
-  $("#mNote").textContent="Celis la diray - bot-ku wuxuu ku noqonayaa sitinkii .set-ka.";
+  $("#mNote").textContent="Celis: sitinka app-ka waa la tirtiray - bot-ku wuxuu ku noqonayaa sitinka koodka.";
+  tick();
 });
 
 document.querySelectorAll("[data-cmd]").forEach(b=>{
