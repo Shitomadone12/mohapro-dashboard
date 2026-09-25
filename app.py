@@ -265,6 +265,13 @@ CREATE TABLE IF NOT EXISTS licenses(
   ovr        TEXT NOT NULL DEFAULT '{}',
   updated_at REAL NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS levels(
+  account TEXT NOT NULL,
+  sym     TEXT NOT NULL,
+  data    TEXT NOT NULL,
+  ts      REAL NOT NULL,
+  UNIQUE(account, sym)
+);
 CREATE TABLE IF NOT EXISTS kv(
   k TEXT PRIMARY KEY,
   v TEXT NOT NULL DEFAULT ''
@@ -2324,6 +2331,59 @@ def clean_account(v):
 ANALYSIS_TTL = int(os.environ.get("ANALYSIS_TTL", "900"))   # 15 daq -> saf duug ah waa la iska dhaafaa
 
 
+def _lv_num(v, nd=6):
+    try:
+        f = float(v)
+        return round(f, nd) if f == f and abs(f) < 1e9 else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _save_levels(con, acc, d):
+    """v12.3 (EA v67.7): heerarka & range - zone-yada ugu dhow, ATR, jihada, shumacyada.
+    Shumacyada EA-du mar walba ma dirto (bandwidth) -> kii hore ayaa la sii hayaa."""
+    lv = d.get("levels")
+    if not isinstance(lv, dict):
+        return
+    a = d.get("analysis") if isinstance(d.get("analysis"), dict) else {}
+    sym = str(a.get("sym") or d.get("symbol") or "")[:16]
+    if not sym:
+        return
+    out = {"tf": str(lv.get("tf") or "")[:6], "px": _lv_num(lv.get("px")),
+           "dg": int(_lv_num(lv.get("dg"), 0)) if 0 <= _lv_num(lv.get("dg"), 0) <= 8 else 5,
+           "pp": _lv_num(lv.get("pp"), 8), "atr": _lv_num(lv.get("atr"), 1),
+           "mtf": (1 if _lv_num(lv.get("mtf")) > 0 else (-1 if _lv_num(lv.get("mtf")) < 0 else 0)),
+           "t": int(_lv_num(lv.get("t"), 0))}
+    zs = []
+    for z in (lv.get("z") or [])[:6]:
+        if not isinstance(z, dict):
+            continue
+        lo, hi = _lv_num(z.get("lo")), _lv_num(z.get("hi"))
+        if lo <= 0 or hi <= 0:
+            continue
+        zs.append({"d": 1 if _lv_num(z.get("d")) else 0, "lo": min(lo, hi), "hi": max(lo, hi),
+                   "t": int(_lv_num(z.get("t"), 0)), "ia": _lv_num(z.get("ia"), 2),
+                   "ip": _lv_num(z.get("ip"), 1), "r1": _lv_num(z.get("r1"), 1),
+                   "dp": _lv_num(z.get("dp"), 1), "u": 1 if _lv_num(z.get("u")) else 0})
+    out["z"] = zs
+    bars = lv.get("b")
+    if isinstance(bars, list) and bars:
+        bb = []
+        for b in bars[-60:]:
+            if isinstance(b, (list, tuple)) and len(b) >= 3:
+                bb.append([_lv_num(b[0]), _lv_num(b[1]), _lv_num(b[2])])
+        out["b"], out["bt"] = bb, int(_lv_num(lv.get("bt"), 0))
+    else:
+        r = con.execute("SELECT data FROM levels WHERE account=? AND sym=?", (acc, sym)).fetchone()
+        old = _jload(r["data"]) if r else {}
+        if old.get("b"):
+            out["b"], out["bt"] = old["b"], old.get("bt", 0)
+    con.execute(
+        "INSERT INTO levels(account,sym,data,ts) VALUES(?,?,?,?)"
+        " ON CONFLICT(account, sym) DO UPDATE SET data=excluded.data, ts=excluded.ts",
+        (acc, sym, json.dumps(out, separators=(",", ":")), time.time()))
+
+
 def _save_analysis(con, acc, d):
     """v7: EA-du chart kasta wuxuu soo diraa analiiskiisa. Saf kasta = hal symbol."""
     a = d.get("analysis")
@@ -2377,6 +2437,7 @@ def ea_update():
 
         _save_closed(con, acc, d.get("trades"))
         _save_analysis(con, acc, d)          # v7: analiiska live (chart kasta = saf)
+        _save_levels(con, acc, d)            # v12.3: heerarka & range
 
         last = con.execute("SELECT ts FROM history WHERE account=? ORDER BY ts DESC LIMIT 1",
                            (acc,)).fetchone()
@@ -2945,6 +3006,24 @@ def api_state():
         key_seen_age=(int(now - float(kseen["last_seen"])) if (kseen and kseen["last_seen"]) else None),
         lic=lic,
     )
+
+
+@app.get("/api/levels")
+@login_required
+def api_levels():
+    """v12.3: Analiis -> Heerarka & Range (symbol kasta)."""
+    u = request.user
+    acc = _visible_account(u)
+    want = str(request.args.get("sym") or "")[:16]
+    now = time.time()
+    with db() as con:
+        rows = con.execute("SELECT sym,data,ts FROM levels WHERE account=? AND ts>? ORDER BY sym",
+                           (acc, now - ANALYSIS_TTL)).fetchall()
+    syms = [r["sym"] for r in rows]
+    pick = next((r for r in rows if r["sym"] == want), None) or (rows[0] if rows else None)
+    lv = _jload(pick["data"]) if pick else None
+    return jsonify(ok=True, account=acc, syms=syms, sym=(pick["sym"] if pick else ""),
+                   lv=lv, age=(int(now - float(pick["ts"])) if pick else None))
 
 
 @app.post("/api/command")
@@ -4031,6 +4110,32 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
 .spd button{flex:1;text-align:center;padding:9px;border-radius:10px;border:1px solid var(--line);background:none;font-size:12.5px;font-weight:600;color:#bbb;cursor:pointer}
 .spd button.on{background:var(--s1);border-color:var(--s1);color:#fff}
 .mxopt[hidden]{display:none}
+/* v12.3: HEERARKA & RANGE */
+.lvsyms{display:flex;gap:8px;overflow-x:auto;margin-bottom:12px;padding-bottom:2px;scrollbar-width:none}
+.lvsyms::-webkit-scrollbar{display:none}
+.lvsyms button{flex:0 0 auto;padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:none;color:var(--ink2);font-size:13px;font-weight:650;cursor:pointer}
+.lvsyms button.on{background:var(--s1);border-color:var(--s1);color:#fff}
+.lvhd{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.lvpill{font-size:11px;font-weight:800;letter-spacing:.04em;padding:5px 10px;border-radius:999px;background:rgba(240,207,134,.14);color:#f0cf86;border:1px solid rgba(240,207,134,.4);white-space:nowrap}
+.lvpill.up{background:rgba(38,170,110,.15);color:#7fe0ab;border-color:rgba(38,170,110,.45)}
+.lvpill.dn{background:rgba(208,59,59,.15);color:#f2a3a3;border-color:rgba(208,59,59,.45)}
+.lvleg{display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--ink3);margin-top:6px}
+.lvleg i{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.lvk{font-size:11px;font-weight:800;letter-spacing:.08em;color:var(--ink3);text-transform:uppercase}
+.lvbig{font-size:22px;font-weight:800;margin:4px 0 0;font-variant-numeric:tabular-nums}
+.lvbot{display:flex;gap:10px;align-items:flex-start;background:color-mix(in srgb,var(--s1) 12%,transparent);border:1px solid color-mix(in srgb,var(--s1) 45%,transparent);border-radius:12px;padding:12px;font-size:13.5px;line-height:1.45}
+.lvbot b{color:color-mix(in srgb,var(--s1) 55%,#fff)}
+.lvz{border-radius:12px;padding:12px;margin-top:10px}
+.lvz.d{background:rgba(38,170,110,.10);border:1px solid rgba(38,170,110,.35)}.lvz.s{background:rgba(208,59,59,.10);border:1px solid rgba(208,59,59,.35)}
+.lvz .zk{font-size:11px;font-weight:800;letter-spacing:.07em}.lvz.d .zk{color:#7fe0ab}.lvz.s .zk{color:#f2a3a3}
+.lvz .zv{font-size:19px;font-weight:800;margin:3px 0 6px;font-variant-numeric:tabular-nums}
+.lvz .ev{display:flex;flex-direction:column;gap:3px;font-size:12.5px;color:var(--ink2)}
+.lvdots{display:inline-flex;gap:4px;margin-left:6px;vertical-align:middle}.lvdots b{width:9px;height:9px;border-radius:50%;background:#26aa6e}
+.lvbar{height:6px;border-radius:6px;background:#2a2a28;margin-top:9px;overflow:hidden}.lvbar i{display:block;height:100%}
+.lvchg{margin:8px 0 0;padding-left:18px;font-size:13px;color:var(--ink2)}.lvchg li{margin:5px 0}
+.lvsrc{display:grid;grid-template-columns:1fr 1fr;gap:8px}.lvsrc div{border:1px solid var(--line);border-radius:10px;padding:9px}
+.lvsrc b{display:block;font-size:11.5px;letter-spacing:.06em;color:#f0cf86}.lvsrc span{font-size:11.5px;color:var(--ink3)}
+#lvChart svg{display:block;width:100%;height:auto}
 .locked{opacity:.55}.locked input,.locked button{pointer-events:none}
 .lk{display:inline-block;width:13px;height:13px;margin-left:6px;vertical-align:-2px;fill:none;stroke:#f0cf86;stroke-width:2.2}
 .act.lockd{opacity:.35;filter:grayscale(1);pointer-events:none}
@@ -4485,6 +4590,29 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
 
   <!-- ============ ANALIIS (v7) ============ -->
   <section class="pane" id="pAnaliis">
+    <!-- v12.3: HEERARKA & RANGE (EA v67.7+) -->
+    <div id="lvWrap">
+      <div class="lvsyms" id="lvSyms" role="tablist" aria-label="Symbol"></div>
+      <div id="lvBody" hidden>
+        <div class="card" style="margin-bottom:12px">
+          <div class="lvhd"><p class="sec-t" style="margin:0">Heerarka &amp; Range</p><span class="lvpill" id="lvPill">—</span></div>
+          <div class="note" id="lvSub" style="margin:2px 0 8px">—</div>
+          <div id="lvChart"></div>
+          <div class="lvleg"><span><i style="background:var(--s1)"></i>Qiimaha</span><span><i style="background:#f0cf86"></i>Dhaqaaqa la filayo</span><span><i style="background:#26aa6e"></i>Demand</span><span><i style="background:#d03b3b"></i>Supply</span></div>
+        </div>
+        <div class="card" style="margin-bottom:12px"><div class="lvk">Dhaqaaqa la filayo (ATR D1) · maalin</div>
+          <div class="lvbig" id="lvRange">—</div><div class="note" id="lvRangeS" style="margin:0">—</div></div>
+        <div class="lvbot" id="lvBot" style="margin-bottom:12px">—</div>
+        <div class="card" style="margin-bottom:12px"><div class="lvk">Caddaynta zone kasta</div><div id="lvZones"></div></div>
+        <div class="card" style="margin-bottom:12px"><div class="lvk">Maxaa beddeli kara aragtida?</div><ul class="lvchg" id="lvChg"></ul></div>
+        <div class="card" style="margin-bottom:16px"><div class="lvk" style="margin-bottom:8px">Xogta laga soo qaaday</div>
+          <div class="lvsrc"><div><b>ZONE</b><span>Supply &amp; Demand (bot-ka)</span></div><div><b>TIJAABOOYIN</b><span>Taabasho · xooga ka laabashada</span></div>
+          <div><b>JIHADA</b><span>H4 · EMA200</span></div><div><b>DHAQAAQA</b><span>ATR D1 (14)</span></div></div></div>
+      </div>
+      <div class="card" id="lvEmpty" style="margin-bottom:16px" hidden><p class="sec-t">Heerarka &amp; Range</p>
+        <div class="note" style="margin:0">Weli xog lama helin. Bot-ka <b>v67.7</b> ku cusboonaysii (F7) — chart kasta 1 daqiiqo gudaheed ayuu soo diraa zone-yada, ATR-ka iyo shumacyada.</div></div>
+    </div>
+
     <div class="card" style="margin-bottom:16px">
       <div class="zh" style="margin-bottom:12px">
         <p class="sec-t" style="margin:0">Analiiska bot-ka</p>
@@ -5451,9 +5579,114 @@ function anMins(m){
   const h=Math.floor(m/60), r=m%60;
   return h+" saac"+(r?(" "+r+"d"):"");
 }
+/* ---- v12.3: HEERARKA & RANGE ---- */
+var LV={sym:"",last:0,an:[],d:null};
+async function loadLevels(force){
+  if(!$("#lvWrap")) return;
+  if(!force && Date.now()-LV.last<20000) return;
+  LV.last=Date.now();
+  const q=new URLSearchParams(); if(accSel) q.set("account",accSel.value); if(LV.sym) q.set("sym",LV.sym);
+  try{ const r=await fetch("/api/levels?"+q.toString()); const d=await r.json(); if(d&&d.ok){ LV.d=d; paintLevels(d); } }catch(e){}
+}
+function lvStrength(z,mtf){
+  let s=0; const ia=Number(z.ia)||0, t=Number(z.t)||0, r1=Number(z.r1);
+  if(ia>=1.2) s+=2; else if(ia>=0.8) s+=1;
+  if(t===0) s+=1; else if(t>=3) s-=1;
+  const al=z.d?(mtf>0):(mtf<0), ag=z.d?(mtf<0):(mtf>0);
+  if(al) s+=1; if(ag) s-=1;
+  if(r1>=25) s+=1;
+  const lbl=s>=3?"XOOG SARE":(s>=1?"DHEXE":"DACIIF");
+  return {s:s,lbl:lbl,w:Math.max(12,Math.min(95,30+s*16)),al:al,ag:ag};
+}
+function lvChart(lv,dem,sup){
+  const b=(lv.b||[]).filter(x=>Array.isArray(x)&&x[0]>0&&x[1]>0);
+  const W=340,H=290,L=48,R=8,T=12,B=22, dg=lv.dg, pp=Number(lv.pp)||Math.pow(10,-(dg>=3?dg-1:dg)), px=Number(lv.px)||0;
+  const half=(Number(lv.atr)||0)/2*pp;
+  let vals=[]; b.forEach(x=>{vals.push(x[0],x[1]);}); if(px) vals.push(px);
+  [dem,sup].forEach(z=>{ if(z){ vals.push(z.lo,z.hi); } });
+  if(half>0){ vals.push(px-half,px+half); }
+  if(!vals.length) return '<div class="empty" style="padding:30px 0">Shumacyo weli lama helin.</div>';
+  let lo=Math.min.apply(null,vals), hi=Math.max.apply(null,vals); const pad=(hi-lo)*0.08||pp*5; lo-=pad; hi+=pad;
+  const y=v=>T+(hi-v)/(hi-lo)*(H-T-B), n=Math.max(b.length,2), x=i=>L+i*(W-L-R)/(n-1);
+  let s='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Qiimaha iyo zone-yada">';
+  for(let k=0;k<=4;k++){ const v=lo+(hi-lo)*k/4; s+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(v).toFixed(1)+'" y2="'+y(v).toFixed(1)+'" stroke="var(--line)"/>'
+      +'<text x="'+(L-5)+'" y="'+(y(v)+3.5).toFixed(1)+'" text-anchor="end" font-size="9.5" fill="#8b8a82">'+v.toFixed(dg)+'</text>'; }
+  const zr=(z,fill,col,name)=>{ if(!z) return; const a=y(z.hi), c=y(z.lo);
+    s+='<rect x="'+L+'" y="'+a.toFixed(1)+'" width="'+(W-L-R)+'" height="'+Math.max(2,c-a).toFixed(1)+'" fill="'+fill+'"/>';
+    const ty=(z.d? a+12 : a+12); s+='<text x="'+(L+6)+'" y="'+Math.min(H-B-3,Math.max(T+10,ty)).toFixed(1)+'" font-size="10" font-weight="700" fill="'+col+'">'+name+' '+Number(z.lo).toFixed(dg)+'–'+Number(z.hi).toFixed(dg)+'</text>'; };
+  zr(sup,"rgba(208,59,59,.20)","#f2a3a3","SUPPLY"); zr(dem,"rgba(38,170,110,.20)","#7fe0ab","DEMAND");
+  if(half>0) [px-half,px+half].forEach(v=>{ s+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(v).toFixed(1)+'" y2="'+y(v).toFixed(1)+'" stroke="#f0cf86" stroke-dasharray="4 4" opacity=".75"/>'; });
+  b.forEach((q,i)=>{ s+='<line x1="'+x(i).toFixed(1)+'" x2="'+x(i).toFixed(1)+'" y1="'+y(q[0]).toFixed(1)+'" y2="'+y(q[1]).toFixed(1)+'" stroke="#6f7076"/>'; });
+  if(b.length>1) s+='<polyline points="'+b.map((q,i)=>x(i).toFixed(1)+","+y(q[2]).toFixed(1)).join(" ")+'" fill="none" stroke="var(--s1)" stroke-width="2.2" stroke-linejoin="round"/>';
+  if(px){ const sy=y(px); s+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+sy.toFixed(1)+'" y2="'+sy.toFixed(1)+'" stroke="#c3c2b7" stroke-dasharray="2 3" opacity=".6"/>'
+      +'<rect x="'+(W-R-96)+'" y="'+(sy-19).toFixed(1)+'" width="94" height="17" rx="8.5" fill="#15181d" stroke="var(--s1)"/>'
+      +'<text x="'+(W-R-49)+'" y="'+(sy-7).toFixed(1)+'" text-anchor="middle" font-size="9.5" font-weight="700" fill="#e6e6e6">HADDA '+px.toFixed(dg)+'</text>'; }
+  s+='<text x="'+L+'" y="'+(H-6)+'" font-size="9.5" fill="#8b8a82">'+b.length+' × '+esc(lv.tf||"")+'</text><text x="'+(W-R)+'" y="'+(H-6)+'" text-anchor="end" font-size="9.5" fill="#8b8a82">hadda</text>';
+  return s+'</svg>';
+}
+function paintLevels(d){
+  const syb=$("#lvSyms"), body=$("#lvBody"), emp=$("#lvEmpty"); if(!syb) return;
+  syb.innerHTML=(d.syms||[]).map(x=>'<button type="button" role="tab" aria-selected="'+(x===d.sym)+'" class="'+(x===d.sym?"on":"")+'" data-s="'+esc(x)+'">'+esc(x)+'</button>').join("");
+  const lv=d.lv;
+  if(!lv){ body.hidden=true; emp.hidden=false; return; }
+  body.hidden=false; emp.hidden=true; LV.sym=d.sym;
+  const dg=(Number(lv.dg)>=0&&Number(lv.dg)<=8)?Number(lv.dg):5, pp=Number(lv.pp)||0, px=Number(lv.px)||0, mtf=Number(lv.mtf)||0;
+  lv.dg=dg;
+  const zs=lv.z||[], dem=zs.find(z=>z.d), sup=zs.find(z=>!z.d);
+  const pill=$("#lvPill");
+  if(dem&&sup){ pill.className="lvpill"; pill.textContent="RANGE"; }
+  else if(mtf>0){ pill.className="lvpill up"; pill.textContent="TREND ↑"; }
+  else if(mtf<0){ pill.className="lvpill dn"; pill.textContent="TREND ↓"; }
+  else { pill.className="lvpill"; pill.textContent="—"; }
+  $("#lvSub").textContent="Zone-yada Supply & Demand · dhaqaaqa la filayo · "+d.sym+" "+(lv.tf||"")+(d.age!=null?(" · "+d.age+"s ka hor"):"");
+  $("#lvChart").innerHTML=lvChart(lv,dem,sup);
+  const atr=Number(lv.atr)||0;
+  if(atr>0&&pp>0&&px>0){ const h=atr/2*pp; $("#lvRange").textContent=(px-h).toFixed(dg)+" – "+(px+h).toFixed(dg);
+    $("#lvRangeS").textContent="Qiyaastii ±"+(atr/2).toFixed(0)+" pip · ATR D1 = "+atr.toFixed(0)+" pip (dhaqaaqa caadiga ah ee maalin)"; }
+  else { $("#lvRange").textContent="—"; $("#lvRangeS").textContent="ATR weli lama helin."; }
+  /* bot-ku maxuu sugayaa */
+  const a=(LV.an||[]).find(r=>r&&r.sym===d.sym)||null, bot=$("#lvBot");
+  let t="Xaaladda bot-ka chart-kan weli lama helin.";
+  if(a){ const st=String(a.st||""), side=String(a.side||""), hasZ=Number(a.lo)>0&&Number(a.hi)>0, dir=(side==="DEMAND")?"BUY":"SELL";
+    const zt=esc(side)+" "+anNum(a.lo,dg)+"–"+anNum(a.hi,dg), dist=Number(a.dist);
+    if(a.status&&a.status!=="RUNNING") t='<b>Bot-ku ma furayo trade cusub:</b> '+esc(ST_TXT[a.status]||a.status)+'.';
+    else if(st==="SIGNAL") t='<b>Signal!</b> Shuruudihii waa buuxsameen — bot-ku '+dir+' ayuu furayaa ('+zt+').';
+    else if(st==="NEWS") t='<b>War ayaa socda:</b> '+esc(a.news||"")+' — bot-ku wuu sugayaa ilaa uu dhammaado.';
+    else if(st==="IN"&&hasZ) t='<b>Qiimuhu wuxuu ku jiraa</b> '+zt+' — bot-ku wuxuu sugayaa xaqiijin (CHoCH) → <b>'+dir+'</b>.';
+    else if(hasZ) t='<b>Bot-ku wuxuu sugayaa:</b> qiimuhu '+zt+' ha taabto + xaqiijin (CHoCH) → <b>'+dir+'</b>.'+(dist>0?(' Masaafo: <b>'+dist.toFixed(1)+' pip</b>.'):"");
+    else t='<b>Zone ku habboon weli lama helin.</b>'+(a.why?(' '+esc(a.why)):"");
+  }
+  bot.innerHTML='<span aria-hidden="true">🎯</span><div>'+t+'</div>';
+  /* caddaynta */
+  const mtfTxt=mtf>0?"KOR ↑":(mtf<0?"HOOS ↓":"dhexe");
+  const card=z=>{ if(!z) return ""; const S=lvStrength(z,mtf), t=Number(z.t)||0, dp=Number(z.dp)||0;
+    const col=z.d?"#26aa6e":"#d03b3b";
+    let ev='<span>Taabasho: '+(t===0?'<b>cusub — weli lama taaban</b>':('<b>'+t+' jeer · dhammaan way qabteen</b><span class="lvdots">'+'<b></b>'.repeat(Math.min(t,5))+'</span>'))+'</span>';
+    ev+='<span>Impulse ka baxay: <b>'+Number(z.ip||0).toFixed(0)+' pip</b> ('+Number(z.ia||0).toFixed(1)+' × ATR)</span>';
+    if(Number(z.r1)>0) ev+='<span>Ka laabashadii 1aad: <b>'+Number(z.r1).toFixed(0)+' pip</b></span>';
+    ev+='<span>Jihada weyn (H4 · EMA200): <b>'+mtfTxt+'</b>'+(S.al?' · la socota ✓':(S.ag?' · ka soo horjeeda ✕':''))+'</span>';
+    ev+='<span>'+(dp>0?('Masaafo: <b>'+dp.toFixed(1)+' pip</b>'):'<b>Qiimuhu zone-ka gudihiisa ayuu ku jiraa</b>')+'</span>';
+    if(z.u) ev+='<span style="color:#f0c070">Zone-kan hore waa loo ganacsaday — mar kale lama galo.</span>';
+    return '<div class="lvz '+(z.d?"d":"s")+'"><div class="zk">'+(z.d?"DEMAND (IIBSO)":"SUPPLY (IIBI)")+' · '+S.lbl+'</div>'
+      +'<div class="zv">'+Number(z.lo).toFixed(dg)+' – '+Number(z.hi).toFixed(dg)+'</div><div class="ev">'+ev+'</div>'
+      +'<div class="lvbar"><i style="width:'+S.w+'%;background:'+col+'"></i></div></div>'; };
+  $("#lvZones").innerHTML=(dem||sup)?(card(dem)+card(sup)):'<div class="note" style="margin-top:8px">Zone nool oo u dhow qiimaha weli lama helin.</div>';
+  /* maxaa beddeli kara */
+  const li=[];
+  if(sup) li.push('Shumac '+esc(lv.tf||"")+' oo <b>ka xidhma '+Number(sup.hi).toFixed(dg)+' kor</b> → supply-ga waa jabay (breakout)');
+  if(dem) li.push('Shumac '+esc(lv.tf||"")+' oo <b>ka xidhma '+Number(dem.lo).toFixed(dg)+' hoos</b> → demand-ka waa jabay');
+  const nw=(a&&a._news||[]).filter(n=>n&&n.im==="High"&&Number(n.m)>=0);
+  if(nw.length) li.push('War xoog leh: <b>'+esc(nw[0].ti||"")+'</b> ('+Number(nw[0].m)+' daq) → bot-ku wuu joogsadaa');
+  else li.push('War xoog leh (NFP, CPI, dulsaarka) → bot-ku wuu joogsadaa');
+  $("#lvChg").innerHTML=li.map(x=>"<li>"+x+"</li>").join("");
+}
+if($("#lvSyms")) $("#lvSyms").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b) return; LV.sym=b.dataset.s; loadLevels(true); });
+
 function paintAnalysis(rows){
   const box=$("#anList"); if(!box) return;
   rows=rows||[];
+  LV.an=rows;                                        // v12.3
+  if($("#pAnaliis") && $("#pAnaliis").classList.contains("on")) loadLevels(false);
   const nb=$("#anBadge"); if(nb) nb.textContent=rows.length?rows.length:"";
   if(!rows.length){
     box.innerHTML='<div class="empty" style="padding:22px 0">Weli analiis lama helin.<br>'
@@ -5932,6 +6165,7 @@ function tab(n){
   if(n==="Chart") drawChart();
   if(n==="Journal") loadJournal();
   if(n==="Trade") loadShots();                        // v9.1
+  if(n==="Analiis") loadLevels(true);                 // v12.3
   try{ localStorage.setItem("mp_tab",n); }catch(e){}
   scrollTo({top:0,behavior:"instant"});
 }
@@ -5940,7 +6174,7 @@ document.querySelectorAll(".appbar button").forEach(b=>{
 });
 try{ const t=localStorage.getItem("mp_tab"); if(t && $("#p"+t)) tab(t); }catch(e){}
 
-if(accSel)accSel.addEventListener("change",()=>{tick(); if(jLoaded)loadJournal(); if(SH.loaded)loadShots();});
+if(accSel)accSel.addEventListener("change",()=>{tick(); if(jLoaded)loadJournal(); if(SH.loaded)loadShots(); LV.sym=""; if($("#pAnaliis").classList.contains("on")) loadLevels(true);});
 setInterval(()=>{ if(!document.hidden && $("#pTrade").classList.contains("on")) loadShots(); },60000);   // v9.1
 /* v5.4 BANDWIDTH: 5s -> 12s, oo marka bogga la qariyo GEBI AHAAN wuu joogsanayaa.
    Taleefanka oo furan maalin dhan: ~3 MB halkii 30 MB. */
