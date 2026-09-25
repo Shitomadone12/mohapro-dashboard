@@ -3815,6 +3815,17 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 
   <!-- ============ GUUD ============ -->
   <section class="pane on" id="pGuud">
+    <div class="grid">
+      <div class="tile"><div class="k">Balance</div><div class="v neu" id="bal">—</div></div>
+      <div class="tile"><div class="k">Equity</div><div class="v neu" id="eq">—</div></div>
+      <div class="tile"><div class="k">Faa'iido xidhan (maanta)</div><div class="v" id="pf">—</div></div>
+      <div class="tile"><div class="k">Faa'iido furan (float)</div><div class="v" id="fl">—</div></div>
+      <div class="tile"><div class="k">Wadarta hadda</div><div class="v" id="tot">—</div></div>
+      <div class="tile"><div class="k">Win rate</div><div class="v neu" id="wr">—</div></div>
+      <div class="tile"><div class="k">Drawdown</div><div class="v" id="dd">—</div></div>
+      <div class="tile"><div class="k">Trade furan</div><div class="v neu" id="ot">—</div></div>
+    </div>
+
     {% if can_control %}
     <div class="card" style="margin-bottom:16px">
       <p class="sec-t">Amarrada</p>
@@ -3843,6 +3854,26 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
       <div class="note" id="cmdNote">Amarku wuxuu gaadhayaa EA-da 3–5 ilbiriqsi gudahood.</div>
     </div>
 
+    <!-- v5: xidhitaanka faa'iidada -->
+    <div class="card" style="margin-bottom:16px">
+      <h2>Faa'iidada la xidhay <span class="cnt" id="cLock"></span></h2>
+      <div class="scroll"><table id="tl">
+        <thead><tr><th>Waqti</th><th>Symbol</th><th style="text-align:right">Faa'iido</th>
+          <th style="text-align:right">Xidhay</th></tr></thead>
+        <tbody><tr><td colspan="4" class="empty">Weli wax lama xidhin.</td></tr></tbody>
+      </table></div>
+      <div class="note" id="lockSum" style="margin-top:10px">—</div>
+    </div>
+    {% endif %}
+
+    <div class="card"><p class="sec-t">Xogta account-ka</p>
+      <div class="note" id="meta" style="margin:0">—</div></div>
+  </section>
+
+
+  <!-- ============ MAAMUL (v10.1: tab gooni ah) ============ -->
+  {% if can_control %}
+  <section class="pane" id="pMaamul">
     <!-- v5: MAAMULKA (SL / TP / LOT / STEP-LOCK) -->
     <div class="card" id="mCard" style="margin-bottom:16px">
       <p class="sec-t">Maamulka bot-ka</p>
@@ -3891,33 +3922,8 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
       <div class="note" id="mNote">Bot-ku wuxuu hadda isticmaalayaa: —</div>
       <div class="note" style="margin-top:6px">Sitinkan ayaa bot-ka u ah <b>.set</b>: server-ka ayuu ku kaydsan yahay, <b>chart kasta</b> wuu gaadhayaa, MT5 ama VPS dib u kicin → bot-ku halkan ayuu ka soo qaadanayaa (EA v67.4+).</div>
     </div>
-
-    <!-- v5: xidhitaanka faa'iidada -->
-    <div class="card" style="margin-bottom:16px">
-      <h2>Faa'iidada la xidhay <span class="cnt" id="cLock"></span></h2>
-      <div class="scroll"><table id="tl">
-        <thead><tr><th>Waqti</th><th>Symbol</th><th style="text-align:right">Faa'iido</th>
-          <th style="text-align:right">Xidhay</th></tr></thead>
-        <tbody><tr><td colspan="4" class="empty">Weli wax lama xidhin.</td></tr></tbody>
-      </table></div>
-      <div class="note" id="lockSum" style="margin-top:10px">—</div>
-    </div>
-    {% endif %}
-
-    <div class="grid">
-      <div class="tile"><div class="k">Balance</div><div class="v neu" id="bal">—</div></div>
-      <div class="tile"><div class="k">Equity</div><div class="v neu" id="eq">—</div></div>
-      <div class="tile"><div class="k">Faa'iido xidhan (maanta)</div><div class="v" id="pf">—</div></div>
-      <div class="tile"><div class="k">Faa'iido furan (float)</div><div class="v" id="fl">—</div></div>
-      <div class="tile"><div class="k">Wadarta hadda</div><div class="v" id="tot">—</div></div>
-      <div class="tile"><div class="k">Win rate</div><div class="v neu" id="wr">—</div></div>
-      <div class="tile"><div class="k">Drawdown</div><div class="v" id="dd">—</div></div>
-      <div class="tile"><div class="k">Trade furan</div><div class="v neu" id="ot">—</div></div>
-    </div>
-
-    <div class="card"><p class="sec-t">Xogta account-ka</p>
-      <div class="note" id="meta" style="margin:0">—</div></div>
   </section>
+  {% endif %}
 
   <!-- ============ TRADE ============ -->
   <section class="pane" id="pTrade">
@@ -4073,6 +4079,10 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
     <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg>Trade</button>
   <button data-tab="Analiis">
     <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5M11 8v3l2 2"/></svg>Analiis</button>
+  {% if can_control %}
+  <button data-tab="Maamul">
+    <svg viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg>Maamul</button>
+  {% endif %}
   <button data-tab="Chart">
     <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-6"/></svg>Chart</button>
   <button data-tab="Journal">
@@ -5378,3 +5388,4 @@ T_ADMIN = """<!doctype html><html lang="so"><head><meta charset="utf-8">
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
+0⁰
