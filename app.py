@@ -3850,6 +3850,9 @@ T_DASH = """<!doctype html><html lang="so"><head><meta charset="utf-8">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="MOHA PRO">
 <script>if("serviceWorker" in navigator){addEventListener("load",function(){navigator.serviceWorker.register("/sw.js").catch(function(){});});}</script>
+<script>/* v12.2: midabka app-ka - ka hor inta aan bogga la sawirin */
+(function(){try{var t=JSON.parse(localStorage.getItem("mohaTheme")||"{}");
+if(t&&/^#[0-9a-fA-F]{6}$/.test(t.acc||"")&&t.acc.toLowerCase()!=="#3987e5"){var r=document.documentElement;r.classList.add("th");r.style.setProperty("--acc",t.acc);}}catch(e){}})();</script>
 <title>MOHA PRO</title><style>""" + CSS + """
 body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 
@@ -3979,7 +3982,7 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 /* v12.1: COLOUR MATRIX */
 @property --mxc{syntax:'<color>';inherits:true;initial-value:#f0cf86}
 @property --mxa{syntax:'<number>';inherits:true;initial-value:0}
-body.mx{animation:mxHue 9s linear infinite,mxPulse 2.4s ease-in-out infinite}
+body.mx{animation:mxHue var(--mxh,9s) linear infinite,mxPulse var(--mxp,2.4s) ease-in-out infinite}
 @keyframes mxHue{0%,100%{--mxc:#f0cf86}25%{--mxc:#38d4ff}50%{--mxc:#c77dff}75%{--mxc:#3fe0a0}}
 @keyframes mxPulse{0%,100%{--mxa:.08}50%{--mxa:1}}
 body.mx .hero-photo{filter:brightness(calc(1 + .16*var(--mxa))) saturate(calc(1 + .4*var(--mxa)))}
@@ -3995,7 +3998,39 @@ body.mx .act,body.mx .hero .edit,body.mx .top .btn,body.mx .top .pill{
 .mxcard{display:flex;align-items:center;gap:14px}
 .mxic{font-size:28px;width:40px;text-align:center;flex:0 0 40px}
 .mxt{flex:1;min-width:0}.mxt b{display:block;font-size:17px}.mxt small{display:block;color:var(--ink3);font-size:13px;line-height:1.35;margin-top:2px}
-@media (prefers-reduced-motion:reduce){body.mx{animation:none;--mxa:.6;--mxc:#f0cf86}}
+@media (prefers-reduced-motion:reduce){body.mx{animation:none;--mxa:.6;--mxc:var(--mx0,#f0cf86)}}
+/* v12.2: MIDABKA APP-KA (html.th + --acc) */
+html.th{--s1:var(--acc);
+  --plane:color-mix(in srgb,var(--acc) 7%,#0b0b0c);
+  --surface:color-mix(in srgb,var(--acc) 9%,#161616);
+  --line:color-mix(in srgb,var(--acc) 26%,#2a2a2a)}
+html.th body{background:var(--plane)}
+html.th .sec-t,html.th .tile .k{color:color-mix(in srgb,var(--acc) 55%,#c3c2b7)}
+html.th .sw.on{background:var(--acc)}
+html.th .appbar{background:color-mix(in srgb,var(--acc) 10%,rgba(16,16,15,.97));border-top-color:color-mix(in srgb,var(--acc) 35%,#2a2a2a)}
+html.th .top .btn,html.th .top .pill,html.th .hero .chip{border-color:color-mix(in srgb,var(--acc) 45%,#333)}
+html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(13,13,13,0) 26%,
+  color-mix(in srgb,var(--acc) 10%,rgba(13,13,13,.22)) 56%,color-mix(in srgb,var(--acc) 18%,rgba(11,11,12,.93)) 100%)}
+.thsw{display:flex;flex-wrap:wrap;gap:12px;margin:10px 0 4px}
+.thsw button{width:40px;height:40px;border-radius:50%;border:2px solid rgba(255,255,255,.12);cursor:pointer;position:relative;padding:0;flex:0 0 40px}
+.thsw button.on{outline:3px solid #fff;outline-offset:3px}
+.thsw button.on:after{content:"✓";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:17px;text-shadow:0 1px 3px rgba(0,0,0,.7)}
+.thsw .plus{background:conic-gradient(#f43f5e,#f59e0b,#22c55e,#06b6d4,#6366f1,#a855f7,#f43f5e)}
+.thsw .plus:after{content:"+";position:absolute;inset:3px;border-radius:50%;background:#161616;color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700}
+.thsw .plus.on{background:var(--cus,#888)}
+.thsw .plus.on:after{content:"✓";inset:0;background:none;font-size:17px;font-weight:900;text-shadow:0 1px 3px rgba(0,0,0,.7)}
+.thsw input[type=color]{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.thl{font-size:13.5px;font-weight:650;margin-top:14px}.thl small{display:block;font-weight:400;color:var(--ink3);font-size:12px}
+.mxch{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.mxch button{display:inline-flex;align-items:center;gap:7px;padding:7px 11px 7px 8px;border-radius:999px;border:1px solid #3a3a3a;background:none;font-size:12.5px;color:#aaa;cursor:pointer}
+.mxch button i{width:16px;height:16px;border-radius:50%;flex:0 0 16px}
+.mxch button.on{color:var(--c);border-color:var(--c);background:rgba(255,255,255,.06)}
+.mxch button.on:after{content:"✓";font-weight:800}
+.sepx{height:1px;background:var(--line);margin:16px 0}
+.spd{display:flex;gap:6px;margin-top:10px}
+.spd button{flex:1;text-align:center;padding:9px;border-radius:10px;border:1px solid var(--line);background:none;font-size:12.5px;font-weight:600;color:#bbb;cursor:pointer}
+.spd button.on{background:var(--s1);border-color:var(--s1);color:#fff}
+.mxopt[hidden]{display:none}
 .locked{opacity:.55}.locked input,.locked button{pointer-events:none}
 .lk{display:inline-block;width:13px;height:13px;margin-left:6px;vertical-align:-2px;fill:none;stroke:#f0cf86;stroke-width:2.2}
 .act.lockd{opacity:.35;filter:grayscale(1);pointer-events:none}
@@ -4343,9 +4378,18 @@ body.mx .act,body.mx .hero .edit,body.mx .top .btn,body.mx .top .pill{
     {% endif %}
     <!-- v12.1: Colour Matrix (telefoon kasta gooni) -->
     <div class="card" id="mxCard" style="margin-top:16px"><p class="sec-t">Muuqaalka</p>
+      <div class="thl" style="margin-top:4px">Midabka app-ka<small>App-ka oo dhan ayuu beddelaa — badhamada, tab-yada, xariiqyada, chart-ka</small></div>
+      <div class="thsw" id="thSw" role="radiogroup" aria-label="Midabka app-ka"></div>
+      <div class="sepx"></div>
       <div class="mxcard"><span class="mxic" aria-hidden="true">🎨</span>
         <div class="mxt"><b>Colour Matrix</b><small>Sawirka, badhamada iyo magaca way iftiimayaan — shid / dami</small></div>
         <button class="sw" id="mxSw" type="button" role="switch" aria-checked="false" aria-label="Colour Matrix"><i></i></button></div>
+      <div class="mxopt" id="mxOpt" hidden>
+        <div class="thl">Midabada iftiinka<small>Dooro inta aad rabto — way is beddelayaan (ugu yaraan 1)</small></div>
+        <div class="mxch" id="mxCh"></div>
+        <div class="thl">Xawaaraha</div>
+        <div class="spd" id="mxSpd"><button type="button" data-s="0">Gaabis</button><button type="button" data-s="1">Caadi</button><button type="button" data-s="2">Degdeg</button></div>
+      </div>
     </div>
   </section>
 
@@ -5519,14 +5563,73 @@ function swGet(id){ const e=$("#"+id); return e && e.classList.contains("on"); }
 ["mSTEPON","mBE","mLOCKMODE","mADAPT","mMGMT","mSNIPER","mNEWS"].forEach(id=>{ const e=$("#"+id); if(e) e.addEventListener("click",()=>{ e.classList.toggle("on"); mTouched=true; }); });
 MF.forEach(k=>{ const e=$("#m"+k); if(e) e.addEventListener("input",()=>{ mTouched=true; }); });
 
-/* ---- v12.1: COLOUR MATRIX (localStorage - telefoon kasta gooni) ---- */
+/* ---- v12.1/v12.2: MUUQAALKA - midabka app-ka + Colour Matrix (localStorage - telefoon kasta gooni) ---- */
 (function(){
   const sw=$("#mxSw"); if(!sw) return;
-  const get=()=>{ try{ return localStorage.getItem("mohaMx")==="1"; }catch(e){ return false; } };
-  const put=v=>{ try{ localStorage.setItem("mohaMx",v?"1":"0"); }catch(e){} };
-  const apply=v=>{ document.body.classList.toggle("mx",v); sw.classList.toggle("on",v); sw.setAttribute("aria-checked",v?"true":"false"); };
-  apply(get());
-  sw.addEventListener("click",()=>{ const v=!document.body.classList.contains("mx"); apply(v); put(v); });
+  const PAL=[["Buluug","#3987e5"],["Dahab","#d9ae55"],["Cagaar","#22c55e"],["Guduud","#a855f7"],
+             ["Casaan","#ef4444"],["Oranji","#f97316"],["Cyan","#06b6d4"],["Pink","#ec4899"]];
+  const DEF_ACC="#3987e5", DEF_MX=["#d9ae55","#3987e5","#a855f7","#22c55e"];
+  const SPD=[["14s","3.6s"],["9s","2.4s"],["4.5s","1.2s"]];
+  const HEX=/^#[0-9a-f]{6}$/;
+  const rd=(k,d)=>{ try{ const v=localStorage.getItem(k); return v===null?d:v; }catch(e){ return d; } };
+  const wr=(k,v)=>{ try{ localStorage.setItem(k,v); }catch(e){} };
+  let T={}; try{ T=JSON.parse(rd("mohaTheme","{}"))||{}; }catch(e){ T={}; }
+  let acc=HEX.test(String(T.acc||"").toLowerCase())?T.acc.toLowerCase():DEF_ACC;
+  let cus=HEX.test(String(T.cus||"").toLowerCase())?T.cus.toLowerCase():"";
+  let mx=Array.isArray(T.mx)?T.mx.map(x=>String(x).toLowerCase()).filter(x=>HEX.test(x)).slice(0,12):[];
+  if(!mx.length) mx=DEF_MX.slice();
+  let spd=[0,1,2].includes(Number(T.spd))?Number(T.spd):1;
+  const save=()=>wr("mohaTheme",JSON.stringify({acc:acc,cus:cus,mx:mx,spd:spd}));
+  const root=document.documentElement;
+  function applyAcc(){
+    const on=(acc!==DEF_ACC);
+    root.classList.toggle("th",on);
+    if(on) root.style.setProperty("--acc",acc); else root.style.removeProperty("--acc");
+    const m=document.querySelector('meta[name="theme-color"]');
+    if(m) m.setAttribute("content",on?getComputedStyle(document.body).backgroundColor:"#0f1013");
+  }
+  function applyMx(){
+    let st=$("#mxKF"); if(!st){ st=document.createElement("style"); st.id="mxKF"; document.head.appendChild(st); }
+    const n=mx.length, fr=mx.map((c,i)=>Math.round(i*100/n)+"%{--mxc:"+c+"}").join("");
+    st.textContent="@keyframes mxHue{"+fr+"100%{--mxc:"+mx[0]+"}}";
+    document.body.style.setProperty("--mx0",mx[0]);
+    document.body.style.setProperty("--mxh",SPD[spd][0]); document.body.style.setProperty("--mxp",SPD[spd][1]);
+  }
+  /* swatches - midabka app-ka */
+  const box=$("#thSw");
+  function paintSw(){
+    const inPal=PAL.some(p=>p[1]===acc);
+    box.innerHTML=PAL.map(p=>'<button type="button" role="radio" data-c="'+p[1]+'" aria-label="'+p[0]+'" aria-checked="'+(p[1]===acc)+'" class="'+(p[1]===acc?"on":"")+'" style="background:'+p[1]+'"></button>').join("")
+      +'<button type="button" role="radio" class="plus'+(!inPal?" on":"")+'" id="thPlus" aria-label="Midab kale" aria-checked="'+(!inPal)+'"'+(!inPal?' style="--cus:'+acc+'"':'')+'></button>'
+      +'<input type="color" id="thPick" value="'+(cus||acc)+'" aria-label="Dooro midab kale">';
+  }
+  box.addEventListener("click",e=>{
+    const b=e.target.closest("button"); if(!b) return;
+    if(b.id==="thPlus"){ const pk=$("#thPick"); pk.value=cus||acc; if(pk.showPicker){ try{ pk.showPicker(); return; }catch(_){ } } pk.click(); return; }
+    acc=b.dataset.c; save(); applyAcc(); paintSw();
+  });
+  box.addEventListener("input",e=>{ if(e.target.id!=="thPick") return; const v=String(e.target.value).toLowerCase(); if(!HEX.test(v)) return;
+    acc=v; cus=v; save(); applyAcc();
+    const pl=$("#thPlus"); box.querySelectorAll("button").forEach(x=>{ x.classList.remove("on"); x.setAttribute("aria-checked","false"); });
+    pl.classList.add("on"); pl.setAttribute("aria-checked","true"); pl.style.setProperty("--cus",v); });
+  box.addEventListener("change",e=>{ if(e.target.id==="thPick") paintSw(); });
+  /* midabada iftiinka */
+  const ch=$("#mxCh");
+  function paintCh(){
+    ch.innerHTML=PAL.map(p=>{ const on=mx.includes(p[1]); return '<button type="button" aria-pressed="'+on+'" data-c="'+p[1]+'" class="'+(on?"on":"")+'" style="--c:'+p[1]+'"><i style="background:'+p[1]+'"></i>'+p[0]+'</button>'; }).join("");
+  }
+  ch.addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b) return; const c=b.dataset.c;
+    if(mx.includes(c)){ if(mx.length===1) return; mx=mx.filter(x=>x!==c); }
+    else mx=PAL.map(p=>p[1]).filter(x=>x===c||mx.includes(x));
+    save(); applyMx(); paintCh(); });
+  /* xawaaraha */
+  const sp=$("#mxSpd");
+  const paintSp=()=>sp.querySelectorAll("button").forEach(b=>{ const on=Number(b.dataset.s)===spd; b.classList.toggle("on",on); b.setAttribute("aria-pressed",on); });
+  sp.addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b) return; spd=Number(b.dataset.s); save(); applyMx(); paintSp(); });
+  /* shid / dami */
+  const setMx=v=>{ document.body.classList.toggle("mx",v); sw.classList.toggle("on",v); sw.setAttribute("aria-checked",v?"true":"false"); $("#mxOpt").hidden=!v; };
+  sw.addEventListener("click",()=>{ const v=!document.body.classList.contains("mx"); setMx(v); wr("mohaMx",v?"1":"0"); });
+  applyAcc(); applyMx(); paintSw(); paintCh(); paintSp(); setMx(rd("mohaMx","0")==="1");
 })();
 
 /* ---- v12: laysinka + oggolaanshaha macmiilka ---- */
