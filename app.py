@@ -118,6 +118,7 @@ SET_LIMITS = {          # key: (min, max, noocaa)
     "LOCKMODE":  (0, 1,    "int"),   # v5.1: 0 = STEP, 1 = BE-ONLY
     "ADAPT":     (0, 1,    "int"),   # v5.2: ATR adaptive SL/TP
     "MGMT":      (0, 1,    "int"),   # v7.1: 1 = maamulku wuu shaqeynayaa, 0 = damman
+    "SLTP":      (0, 2,    "int"),   # v9.3: 0 = FIXED, 1 = ATR, 2 = SNIPER
 }
 
 def valid_command(cmd):
@@ -3433,6 +3434,18 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 .pane{display:none}
 .pane.on{display:block}
 
+/* ---------- v9.3: habka SL/TP ---------- */
+.seg{display:flex;border:1px solid var(--line);border-radius:12px;overflow:hidden;margin:2px 0 8px}
+.seg button{flex:1;padding:11px 4px;background:none;border:none;border-radius:0;border-left:1px solid var(--line);
+  color:var(--ink2);font:700 13px/1.2 inherit;font-family:inherit;letter-spacing:.04em;cursor:pointer}
+.seg button:first-child{border-left:none}
+.seg button.on{background:var(--s1);color:#fff}
+.seg button:focus-visible{outline:2px solid #9cc8fb;outline-offset:-3px}
+.sltph{font-size:12.5px;color:var(--ink2);line-height:1.5;background:#171716;border:1px solid var(--line);border-radius:10px;
+  padding:9px 11px;margin-bottom:6px}
+.sltph b{color:var(--ink)}
+.frow.off{opacity:.38;pointer-events:none}
+
 /* ---------- v9.1: SAWIRRADA TRADE-YADA ---------- */
 .flt{display:flex;gap:7px;margin-bottom:12px;overflow-x:auto}
 .flt button{flex:0 0 auto;font-size:12.5px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);
@@ -3691,13 +3704,21 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
     <!-- v5: MAAMULKA (SL / TP / LOT / STEP-LOCK) -->
     <div class="card" style="margin-bottom:16px">
       <p class="sec-t">Maamulka bot-ka</p>
-      <div class="frow"><span>Stop Loss</span><span><input id="mSL" type="number" min="0" max="5000" step="1"> <i>pip</i></span></div>
-      <div class="frow"><span>Take Profit</span><span><input id="mTP" type="number" min="0" max="5000" step="1"> <i>pip</i></span></div>
+      <!-- v9.3: habka SL/TP -->
+      <div class="frow" style="border:none;padding-bottom:2px"><span>Habka SL/TP</span><span></span></div>
+      <div class="seg" id="mSLTP" role="radiogroup" aria-label="Habka SL/TP">
+        <button type="button" data-m="2" role="radio">SNIPER</button>
+        <button type="button" data-m="0" role="radio">FIXED</button>
+        <button type="button" data-m="1" role="radio">ATR</button>
+      </div>
+      <div class="sltph" id="mSLTPHint">—</div>
+      <div class="frow" id="rSL"><span>Stop Loss</span><span><input id="mSL" type="number" min="0" max="5000" step="1"> <i>pip</i></span></div>
+      <div class="frow" id="rTP"><span>Take Profit</span><span><input id="mTP" type="number" min="0" max="5000" step="1"> <i>pip</i></span></div>
       <div class="frow"><span>Lot <small>(0 = auto risk)</small></span><span><input id="mLOT" type="number" min="0" max="100" step="0.01"> <i>lot</i></span></div>
       <div class="hr"></div>
       <div class="frow"><span>Step-Lock</span><span><button class="sw" id="mSTEPON" type="button"><i></i></button></span></div>
       <div id="mWarn"></div>
-      <div class="frow"><span>ATR maamulo SL/TP <small>(suuqa ayuu la socdaa)</small></span><span><button class="sw" id="mADAPT" type="button"><i></i></button></span></div>
+      <div class="frow" id="rADAPT"><span>ATR maamulo SL/TP <small>(suuqa ayuu la socdaa · ATR oo keliya)</small></span><span><button class="sw" id="mADAPT" type="button"><i></i></button></span></div>
       <div class="frow"><span>SL ha joogo break-even <small>(dami = SL kor buu u socdaa)</small></span><span><button class="sw" id="mLOCKMODE" type="button"><i></i></button></span></div>
       <div class="frow"><span>Break-even</span><span><button class="sw" id="mBE" type="button"><i></i></button></span></div>
       <div class="frow"><span>Maamulka trade-ka <small>(dami = SL/TP oo keliya)</small></span><span><button class="sw" id="mMGMT" type="button"><i></i></button></span></div>
@@ -4843,21 +4864,50 @@ function swGet(id){ const e=$("#"+id); return e && e.classList.contains("on"); }
 ["mSTEPON","mBE","mLOCKMODE","mADAPT","mMGMT"].forEach(id=>{ const e=$("#"+id); if(e) e.addEventListener("click",()=>{ e.classList.toggle("on"); mTouched=true; }); });
 MF.forEach(k=>{ const e=$("#m"+k); if(e) e.addEventListener("input",()=>{ mTouched=true; }); });
 
+/* ---- v9.3: habka SL/TP (SNIPER / FIXED / ATR) ---- */
+let mMode=null, mRR=3, mSniperOn=true, mModeKnown=false;
+function modeHint(){
+  const h=$("#mSLTPHint"); if(!h) return;
+  const m=mMode;
+  let t="";
+  if(m===2) t=mSniperOn?("<b>SNIPER</b> — SL sweep-ka gadaashiisa ayuu dhigaa · TP = SL × "+mRR+". SL/TP gacanta iyo ATR waa la iska dhaafayaa.")
+                      :"<b>SNIPER</b> — Sniper-ku bot-ka waa ka damman yahay: SL = zone-ka (distal), TP = RR. SL/TP gacanta waa la iska dhaafayaa.";
+  else if(m===0) t="<b>FIXED</b> — SL iyo TP waa pip-ka aad hoos ku qorto. Trade kasta isku mid.";
+  else if(m===1) t="<b>ATR</b> — SL/TP waxaa laga xisaabiyaa dhaqdhaqaaqa suuqa (ATR). Shid <b>ATR maamulo</b> si ay suuqa ula socdaan trade-ka furan.";
+  else t="Dooro habka.";
+  if(!mModeKnown) t+='<div style="margin-top:6px;color:#e0a86a">Bot-ku waa nooc hore — habkan wuxuu u baahan yahay EA v67.3.</div>';
+  h.innerHTML=t;
+  document.querySelectorAll("#mSLTP button").forEach(b=>{ const on=Number(b.dataset.m)===m; b.classList.toggle("on",on); b.setAttribute("aria-checked",on?"true":"false"); });
+  ["rSL","rTP"].forEach(id=>{ const r=$("#"+id); if(r) r.classList.toggle("off",m!==0); });
+  const ra=$("#rADAPT"); if(ra) ra.classList.toggle("off",m!==1);
+}
+document.querySelectorAll("#mSLTP button").forEach(b=>b.addEventListener("click",()=>{ mMode=Number(b.dataset.m); mTouched=true; modeHint(); }));
+const SLTP_NM=["FIXED","ATR","SNIPER"];
+
 function paintSettings(st){
   if(!st) return;
   const note=$("#mNote");
-  if(note) note.textContent="Bot-ku wuxuu hadda isticmaalayaa:  SL "+(st.sl||0)+"p  ·  TP "+(st.tp||0)+"p  ·  Lot "
+  const em=(st.sltp===undefined||st.sltp===null)?null:Number(st.sltp);
+  const src=em===null?("SL "+(st.sl||0)+"p · TP "+(st.tp||0)+"p")
+    :(em===0?("FIXED "+(st.sl||st.fix_sl||0)+"/"+(st.tp||st.fix_tp||0)+"p")
+      :(em===2?("SNIPER (RR 1:"+(st.rr||3)+")"):"ATR"+(st.adapt_eff?" · suuqa la socda":"")))
+    +(em!==null && Number(st.sltp_src)<0?" (.set)":"");
+  if(note) note.textContent="Bot-ku wuxuu hadda isticmaalayaa:  "+src+"  ·  Lot "
     +(st.auto_lot?"auto":(st.lot||0))+"  ·  Step-Lock "+(st.steplock?("ON "+(st.step||0)+"p"):"OFF")
     +"  ·  BE "+(st.be?"ON":"OFF")
     +"  ·  "+(Number(st.lockmode)===1?"SL break-even":"SL tallaabo")
-    +(st.adaptive?"  ·  ATR maamulaya":"");
+    +((em===null && st.adaptive)?"  ·  ATR maamulaya":"");
   const w=$("#mWarn");
   if(w) w.innerHTML=st.mgmt_off
     ? '<div class="nwarn" style="margin-top:10px">MAAMULKU WAA DAMMAN — trade-ku wuxuu ku xidhmayaa SL ama TP oo keliya. Break-even, trailing iyo ATR midna ma shaqeynayaan.</div>'
     : "";
   if(mTouched && mSeeded) return;          // qofku wuu wax qorayaa - ha ka qaadin gacanta
   const set=(id,v)=>{ const e=$("#"+id); if(e && v!==undefined && v!==null) e.value=v; };
-  set("mSL",st.sl); set("mTP",st.tp); set("mLOT",st.auto_lot?0:st.lot);
+  // v9.3: sanduuqyada SL/TP = pip-ka FIXED (xitaa marka habka kale la isticmaalayo - si FIXED loo diyaariyo)
+  set("mSL",(st.fix_sl!==undefined)?st.fix_sl:st.sl); set("mTP",(st.fix_tp!==undefined)?st.fix_tp:st.tp); set("mLOT",st.auto_lot?0:st.lot);
+  mModeKnown=(em!==null); mRR=Number(st.rr||3); mSniperOn=(st.sniper_on!==undefined)?!!st.sniper_on:!!st.sniper;
+  mMode=(em!==null)?em:(st.sniper?2:(Number(st.sl)>0?0:1));
+  modeHint();
   set("mSTEP",st.step); set("mSTEPSTART",st.stepstart);
   swSet("mSTEPON",st.steplock); swSet("mBE",st.be);
   swSet("mLOCKMODE",Number(st.lockmode)===1); swSet("mADAPT",!!st.adaptive);
@@ -4884,8 +4934,12 @@ async function sendSettings(){
   const num=id=>{ const e=$("#"+id); return e&&e.value!==""?e.value:null; };
   const cmds=[];
   const sl=num("mSL"), tp=num("mTP"), lot=num("mLOT"), stp=num("mSTEP"), sst=num("mSTEPSTART");
-  if(sl!==null)  cmds.push("SET:SL="+sl);
-  if(tp!==null)  cmds.push("SET:TP="+tp);
+  // v9.3: habka ayaa marka hore. SL/TP pip-ka waxaa la diraa FIXED oo keliya (hore 30/36 ayaa Sniper-ka jebin jiray).
+  if(mMode===0||mMode===1||mMode===2) cmds.push("SET:SLTP="+mMode);
+  if(mMode===0){
+    if(sl!==null && Number(sl)>0) cmds.push("SET:SL="+sl);
+    if(tp!==null && Number(tp)>0) cmds.push("SET:TP="+tp);
+  }
   if(lot!==null) cmds.push("SET:LOT="+lot);
   if(stp!==null) cmds.push("SET:STEP="+stp);
   if(sst!==null) cmds.push("SET:STEPSTART="+sst);
