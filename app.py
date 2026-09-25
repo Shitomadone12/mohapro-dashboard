@@ -41,7 +41,7 @@ from datetime import datetime, timezone
 from functools import wraps
 
 from flask import (Flask, request, session, redirect, url_for, jsonify,
-                   render_template_string, make_response, Response)
+                   render_template_string, make_response, Response, g)
 import base64 as _b64
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -250,6 +250,13 @@ CREATE TABLE IF NOT EXISTS messages(
 );
 CREATE INDEX IF NOT EXISTS ix_msg ON messages(thread, id);
 CREATE INDEX IF NOT EXISTS ix_msg_unread ON messages(from_admin, read_at);
+CREATE TABLE IF NOT EXISTS bot_keys(
+  account    TEXT PRIMARY KEY,
+  bkey       TEXT NOT NULL UNIQUE,
+  active     INTEGER NOT NULL DEFAULT 1,
+  created_at REAL NOT NULL,
+  last_seen  REAL
+);
 CREATE TABLE IF NOT EXISTS ea_config(
   account    TEXT PRIMARY KEY,
   data       TEXT NOT NULL,
@@ -2019,22 +2026,87 @@ def admin_required(fn):
         return fn(*a, **k)
     return w
 
-def token_ok():
-    """EA auth: Bearer header ama token-ka jidhka JSON-ka."""
-    if not CLOUD_TOKEN or len(CLOUD_TOKEN) < 8:
-        return False
+# v11: FURAHA QOF KASTA. Fure kasta (MP-XXXX-XXXX-XXXX) hal account oo keliya ayuu furaa.
+#  Furaha guud ee hore (CLOUD_TOKEN) wuu sii shaqeeyaa oo keliya account aan weli fure lahayn,
+#  si bot-yada hadda socda aysan u go'in. LEGACY_TOKEN=0 (Render) -> gebi ahaanba waa la xidhaa.
+LEGACY_TOKEN = os.environ.get("LEGACY_TOKEN", "1").strip() != "0"
+_KEY_ALPH = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def _new_key():
+    return "MP-" + "-".join("".join(secrets.choice(_KEY_ALPH) for _ in range(4)) for _ in range(3))
+
+
+def _presented_token():
+    cached = getattr(g, "_ptok", None)          # /update wuu tirtiraa "token" jidhka -> kaydi
+    if cached is not None:
+        return cached
     auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        if hmac.compare_digest(auth[7:].strip(), CLOUD_TOKEN):
-            return True
-    body = request.get_json(silent=True) or {}
-    t = str(body.get("token", ""))
-    if t and hmac.compare_digest(t, CLOUD_TOKEN):
-        return True
-    q = request.args.get("token", "")
-    if q and hmac.compare_digest(q, CLOUD_TOKEN):
-        return True
-    return False
+    if auth.startswith("Bearer ") and auth[7:].strip():
+        g._ptok = auth[7:].strip()
+        return g._ptok
+    body = request.get_json(silent=True, force=True) or {}
+    t = str(body.get("token", "") or "") if isinstance(body, dict) else ""
+    t = t or request.args.get("token", "")
+    g._ptok = t
+    return t
+
+
+def _eq(a, b):
+    try:
+        return bool(a) and bool(b) and hmac.compare_digest(str(a), str(b))
+    except (TypeError, ValueError):
+        return False
+
+
+def _is_legacy(t):
+    return bool(CLOUD_TOKEN) and len(CLOUD_TOKEN) >= 8 and _eq(t, CLOUD_TOKEN)
+
+
+def token_ok():
+    """EA auth (hordhac): furaha guud ama fure account ah oo shaqeynaya."""
+    t = _presented_token()
+    if not t:
+        return False
+    if _is_legacy(t):
+        return LEGACY_TOKEN
+    if not t.startswith("MP-") or len(t) > 40:
+        return False
+    with db() as con:
+        r = con.execute("SELECT active FROM bot_keys WHERE bkey=?", (t,)).fetchone()
+    return bool(r and r["active"])
+
+
+def ea_bind(acc):
+    """v11: furaha la keenay ma u shaqeeyaa account-kan? (token_ok kadib)"""
+    t = _presented_token()
+    now = time.time()
+    if _is_legacy(t):
+        if not LEGACY_TOKEN:
+            return False
+        with db() as con:
+            has = con.execute("SELECT 1 FROM bot_keys WHERE account=?", (acc,)).fetchone()
+        return has is None            # account fure leh -> furaha guud lagama aqbalo
+    with db() as con:
+        r = con.execute("SELECT account,active,last_seen FROM bot_keys WHERE bkey=?", (t,)).fetchone()
+        if not r or not r["active"] or r["account"] != acc:
+            return False
+        if now - float(r["last_seen"] or 0) > 30:
+            con.execute("UPDATE bot_keys SET last_seen=? WHERE bkey=?", (now, t))
+    return True
+
+
+def _key_for(con, acc, create=False):
+    r = con.execute("SELECT * FROM bot_keys WHERE account=?", (acc,)).fetchone()
+    if r is None and create:
+        k = _new_key()
+        con.execute("INSERT INTO bot_keys(account,bkey,active,created_at) VALUES(?,?,1,?)", (acc, k, time.time()))
+        r = con.execute("SELECT * FROM bot_keys WHERE account=?", (acc,)).fetchone()
+    return r
+
+
+BAD_KEY = ("Furaha bot-ka kuma habboona account-kan (ama waa la xannibay). "
+           "App-ka ka koobi garee furaha saxda ah oo MT5 -> Inputs -> MohaPro_Key ku dheji.")
 
 # v5.3: nadiifinta safafka duugga ah - 30 codsi mar, ee ma aha codsi kasta
 _PRUNE_EVERY = int(os.environ.get("PRUNE_EVERY", "30"))
@@ -2134,6 +2206,8 @@ def ea_update():
     if not acc:
         # EA hore (V58.x) oo aan account dirin -> magaca bot-ka ayaa fure
         acc = "bot-" + re.sub(r"[^A-Za-z0-9]", "", bot)[:16] or "bot-unknown"
+    if not ea_bind(acc):                                   # v11
+        return jsonify(ok=False, error=BAD_KEY), 403
 
     now = time.time()
     d["_server_ts"] = now
@@ -2174,6 +2248,8 @@ def ea_trades():
     acc = clean_account(d.get("account"))
     if not acc:
         acc = "bot-" + re.sub(r"[^A-Za-z0-9]", "", str(d.get("bot", "")))[:16] or "bot-unknown"
+    if not ea_bind(acc):                                   # v11
+        return jsonify(ok=False, error=BAD_KEY), 403
     rows = d.get("trades") or []
     n = 0
     now = time.time()
@@ -2321,6 +2397,8 @@ def ea_config():
     if not token_ok():
         return jsonify(ok=False, error="bad token"), 401
     acc = clean_account(request.args.get("account"))
+    if not ea_bind(acc):                                   # v11
+        return jsonify(ok=False, error=BAD_KEY), 403
     cmds = []
     if acc:
         with db() as con:
@@ -2330,7 +2408,7 @@ def ea_config():
                 cmds = _cfg_cmds(json.loads(r["data"]) or {}, int(r["rev"]))
             except ValueError:
                 cmds = []
-    payload = {"token": CLOUD_TOKEN, "account": acc, "commands": cmds, "ts": int(time.time())}
+    payload = {"token": _presented_token(), "account": acc, "commands": cmds, "ts": int(time.time())}
     resp = make_response(json.dumps(payload, separators=(",", ":"), ensure_ascii=False))
     resp.headers["Content-Type"] = "application/json"
     resp.headers["Cache-Control"] = "no-store"
@@ -2345,6 +2423,8 @@ def ea_commands():
     bot = request.args.get("bot", "")
     if not acc:
         acc = "bot-" + re.sub(r"[^A-Za-z0-9]", "", bot)[:16] or "bot-unknown"
+    if not ea_bind(acc):                                   # v11
+        return jsonify(ok=False, error=BAD_KEY), 403
     now = time.time()
     chart = re.sub(r"[^A-Za-z0-9_.#-]", "", request.args.get("chart", ""))[:40]
     with db() as con:
@@ -2377,7 +2457,7 @@ def ea_commands():
                 con.execute("UPDATE commands SET taken_at=? WHERE id IN (%s)"
                             % ",".join("?" * len(rows)),
                             [now] + [r["id"] for r in rows])
-    payload = {"token": CLOUD_TOKEN, "account": acc,
+    payload = {"token": _presented_token(), "account": acc,
                "commands": _collapse_cmds([r["cmd"] for r in rows]), "ts": int(now)}
     resp = make_response(json.dumps(payload, separators=(",", ":"), ensure_ascii=False))
     resp.headers["Content-Type"] = "application/json"
@@ -2564,10 +2644,16 @@ def dashboard():
     # v8.1: admin-ka account-kiisa xog ma laha (EA-du account kale ayay u dirtaa) ->
     # default-ku waa account-ka xogta ugu dambaysay leh, maaha "Xog lama helin".
     sel = u["account"] if (u["account"] in accounts or not accounts) else accounts[0]
+    bkey = None
+    if u["role"] != "admin":                                # v11: isticmaalaha furihiisa
+        with db() as con:
+            kr = _key_for(con, u["account"])
+        if kr is not None:
+            bkey = {"key": kr["bkey"], "active": bool(kr["active"])}
     return render_template_string(
         T_DASH, me=u["account"], sel=sel, name=u["name"] or u["account"],
         is_admin=(u["role"] == "admin"),
-        can_control=bool(u["can_control"]), accounts=accounts)
+        can_control=bool(u["can_control"]), accounts=accounts, bkey=bkey)
 
 
 _AN_ORDER = {"SIGNAL": 0, "IN": 1, "NEAR": 2, "NEWS": 3, "WAIT": 4, "NONE": 5}
@@ -2612,6 +2698,7 @@ def api_state():
             (acc, now - ANALYSIS_TTL)).fetchall()
         chat_unread = _chat_unread(con, u)     # v9
         cfgr = con.execute("SELECT rev,updated_at FROM ea_config WHERE account=?", (acc,)).fetchone()   # v10
+        kseen = con.execute("SELECT last_seen FROM bot_keys WHERE account=?", (acc,)).fetchone()        # v11
 
     data = json.loads(snap["data"]) if snap else {}
     age = (now - snap["updated_at"]) if snap else None
@@ -2651,6 +2738,7 @@ def api_state():
         chat_unread=chat_unread,
         cfg_rev=(int(cfgr["rev"]) if cfgr else 0),
         cfg_saved=(float(cfgr["updated_at"]) if cfgr else None),
+        key_seen_age=(int(now - float(kseen["last_seen"])) if (kseen and kseen["last_seen"]) else None),
     )
 
 
@@ -2804,6 +2892,8 @@ def ea_shots():
     acc = clean_account(d.get("account"))
     if not acc:
         return jsonify(ok=False, error="account"), 400
+    if not ea_bind(acc):                                   # v11
+        return jsonify(ok=False, error=BAD_KEY), 403
     tag = str(d.get("tag") or "").upper()[:8]
     if tag not in ("OPEN", "CLOSE"):
         return jsonify(ok=False, error="tag"), 400
@@ -3159,8 +3249,20 @@ def admin():
             has_data=(up is not None),
         ))
     orphans = sorted(set(snaps) - {u["account"] for u in users})
+    # v11: furaha bot-ka - isticmaale kasta + account kasta oo xog soo diray
+    with db() as con:
+        kr = {r["account"]: r for r in con.execute("SELECT * FROM bot_keys").fetchall()}
+    names = {u["account"]: (u["name"] or "") for u in users}
+    keyrows = []
+    for a in list(dict.fromkeys([r["account"] for r in rows if r["role"] != "admin"] + sorted(snaps) + sorted(kr))):
+        k = kr.get(a)
+        seen = float(k["last_seen"]) if (k and k["last_seen"]) else None
+        keyrows.append(dict(account=a, name=names.get(a, ""), key=(k["bkey"] if k else ""),
+                            active=bool(k["active"]) if k else False, has=k is not None,
+                            seen=(None if seen is None else int(now - seen)),
+                            live=(seen is not None and now - seen < 120)))
     return render_template_string(T_ADMIN, rows=rows, me=request.user["account"],
-                                  orphans=orphans)
+                                  orphans=orphans, keyrows=keyrows, legacy=LEGACY_TOKEN)
 
 
 @app.post("/admin/user")
@@ -3179,6 +3281,7 @@ def admin_user():
             return redirect(url_for("admin"))     # naftaada ha xidhin
         if action == "approve":
             con.execute("UPDATE users SET approved=1 WHERE account=?", (acc,))
+            _key_for(con, acc, create=True)                # v11: furaha bot-ka isla markiiba
         elif action == "revoke":
             con.execute("UPDATE users SET approved=0 WHERE account=?", (acc,))
         elif action == "control_on":
@@ -3216,7 +3319,31 @@ def admin_create():
                     "INSERT INTO users(account,name,pw,role,approved,can_control,created_at)"
                     " VALUES(?,?,?,'user',1,1,?)",
                     (acc, name, generate_password_hash(pw), _now_iso()))
+                _key_for(con, acc, create=True)            # v11
     return redirect(url_for("admin"))
+
+
+@app.post("/admin/key")
+@admin_required
+def admin_key():
+    """v11: fure cusub / xannib / fur - account kasta (isticmaale ama xog soo dirtay)."""
+    acc = clean_account(request.form.get("account"))
+    action = request.form.get("action", "")
+    if acc:
+        with db() as con:
+            r = _key_for(con, acc)
+            if action == "new":
+                k = _new_key()
+                if r is None:
+                    con.execute("INSERT INTO bot_keys(account,bkey,active,created_at) VALUES(?,?,1,?)", (acc, k, time.time()))
+                else:
+                    con.execute("UPDATE bot_keys SET bkey=?, active=1, created_at=?, last_seen=NULL WHERE account=?",
+                                (k, time.time(), acc))
+            elif action == "off" and r is not None:
+                con.execute("UPDATE bot_keys SET active=0 WHERE account=?", (acc,))
+            elif action == "on" and r is not None:
+                con.execute("UPDATE bot_keys SET active=1 WHERE account=?", (acc,))
+    return redirect(url_for("admin") + "#keys")
 
 # ==========================================================================
 # Templates
@@ -3868,6 +3995,36 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 
     <div class="card"><p class="sec-t">Xogta account-ka</p>
       <div class="note" id="meta" style="margin:0">—</div></div>
+
+    {% if not is_admin %}
+    <!-- v11: furaha bot-ka isticmaalaha -->
+    <div class="card" id="myKey" style="margin-top:16px"><p class="sec-t">Furahaaga bot-ka</p>
+      {% if bkey and bkey.active %}
+      <div class="mykey" id="myKeyVal">{{ bkey.key }}</div>
+      <button type="button" class="act go" id="myKeyCp" style="flex-direction:row;padding:13px;width:100%;margin-top:10px">KOOBI GAREE FURAHA</button>
+      <ol class="ksteps">
+        <li><span>MT5 → bot-ka <b>MOHA PRO</b> chart-ka ku dhaji</span></li>
+        <li><span>Tab-ka <b>Inputs</b> → <code>MohaPro_Key</code> → halkaas ku dheji furaha</span></li>
+        <li><span><b>OK</b> riix. 1 daqiiqo gudaheed xogtaadu halkan ayay ka soo muuqanaysaa.</span></li>
+      </ol>
+      <div class="note" id="myKeySt" style="margin-top:10px">—</div>
+      <div class="note" style="margin-top:8px">Furahan <b>account-kaaga #{{ me }} oo keliya</b> ayuu u shaqeeyaa. Qof kale ha siin. Haddii uu lumo, admin-ka u sheeg — fure cusub ayuu kuu samaynayaa, kii hore-na wuu dhimanayaa.</div>
+      {% elif bkey %}
+      <div class="nwarn">Furahaaga waa la xannibay. Admin-ka la xidhiidh (badhanka fariimaha).</div>
+      {% else %}
+      <div class="note">Admin-ku weli furaha kuuma samayn. Marka lagu ansixiyo, halkan ayuu ka soo muuqanayaa.</div>
+      {% endif %}
+    </div>
+    <style>
+    .mykey{font:700 19px ui-monospace,Menlo,Consolas,monospace;color:#f0cf86;letter-spacing:.04em;text-align:center;padding:14px;
+      background:#101113;border:1px dashed #6b5a2e;border-radius:12px;word-break:break-all}
+    .ksteps{margin:12px 0 0;padding-left:0;list-style:none;counter-reset:s;display:flex;flex-direction:column;gap:9px}
+    .ksteps li{counter-increment:s;display:flex;gap:10px;font-size:14px;line-height:1.45}
+    .ksteps li:before{content:counter(s);flex:0 0 24px;height:24px;border-radius:50%;background:rgba(217,174,85,.18);color:#f0cf86;
+      font-weight:700;font-size:12.5px;display:flex;align-items:center;justify-content:center}
+    .ksteps code{font:600 12.5px ui-monospace,Menlo,monospace;background:#20232b;border:1px solid #3a3f4c;border-radius:6px;padding:1px 6px;color:#f0cf86}
+    </style>
+    {% endif %}
   </section>
 
 
@@ -4161,6 +4318,7 @@ function paint(d){
   paintHealth(d);                                   // v7.2
   paintChatBadge(d.chat_unread);                    // v9
   paintSave(d);                                     // v10
+  paintMyKey(d);                                    // v11
   $("#st").textContent=d.online?(RS.long+" · "+(d.age||0)+"s ka hor")
     :(d.age==null?"Xog lama helin":"OFFLINE · "+d.age+"s ka hor");
   $("#bal").textContent=money(x.balance);
@@ -5035,6 +5193,24 @@ function swGet(id){ const e=$("#"+id); return e && e.classList.contains("on"); }
 ["mSTEPON","mBE","mLOCKMODE","mADAPT","mMGMT","mSNIPER","mNEWS"].forEach(id=>{ const e=$("#"+id); if(e) e.addEventListener("click",()=>{ e.classList.toggle("on"); mTouched=true; }); });
 MF.forEach(k=>{ const e=$("#m"+k); if(e) e.addEventListener("input",()=>{ mTouched=true; }); });
 
+/* ---- v11: furaha bot-ka (isticmaalaha) ---- */
+(function(){
+  const b=$("#myKeyCp"); if(!b) return;
+  b.addEventListener("click",()=>{
+    const k=$("#myKeyVal").textContent.trim(), old=b.textContent;
+    const ok=()=>{ b.textContent="LA KOOBIYAY ✓"; setTimeout(()=>b.textContent=old,1800); };
+    if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(k).then(ok,()=>{ const r=document.createRange(); r.selectNode($("#myKeyVal")); getSelection().removeAllRanges(); getSelection().addRange(r); });
+  });
+})();
+function paintMyKey(d){
+  const e=$("#myKeySt"); if(!e) return;
+  const a=d.key_seen_age;
+  if(a===null||a===undefined){ e.innerHTML='<span style="color:#e0a040">● Weli bot-kaagu furahan ma isticmaalin</span>'; return; }
+  const live=a<120;
+  e.innerHTML=live?('<span style="color:#7fe0ab">✓ Bot-kaagu wuu xidhan yahay · '+a+' ilbiriqsi ka hor</span>')
+                  :('<span style="color:#e0a040">● Bot-ku wuu go’ay · '+Math.round(a/60)+' daqiiqo ka hor</span>');
+}
+
 /* ---- v10: stepper-ka trade maalintii + bar-ka kaydinta ---- */
 function snDay(d){ const e=$("#mSNDAY"); if(!e) return; let v=Number(e.textContent)||0; v=Math.max(0,Math.min(50,v+d)); e.textContent=v; mTouched=true; }
 if($("#mSNDAYm")) $("#mSNDAYm").addEventListener("click",()=>snDay(-1));
@@ -5358,6 +5534,58 @@ T_ADMIN = """<!doctype html><html lang="so"><head><meta charset="utf-8">
       </tbody>
     </table></div>
   </div>
+
+  <!-- v11: furaha bot-ka -->
+  <div class="card" id="keys" style="margin-bottom:16px">
+    <h2>Furaha bot-ka · qof kasta</h2>
+    <p class="note" style="margin-top:0">Fure kasta <b>hal account oo keliya</b> ayuu furaa. Isticmaalaha u dir furihiisa →
+      MT5 → Inputs → <code>MohaPro_Key</code>. {% if legacy %}Furaha guud ee hore wuu sii shaqeynayaa <b>account aan weli fure lahayn oo keliya</b>.{% else %}Furaha guud ee hore <b>waa damman yahay</b>.{% endif %}</p>
+    {% for k in keyrows %}
+    <div class="krow">
+      <div class="khd"><span class="kav">{{ (k.name or k.account)[:1]|upper }}</span>
+        <div class="kmid"><div class="knm">{{ k.name or "—" }}</div><div class="kac">#{{ k.account }}</div></div>
+        {% if not k.has %}<span class="kst">FURE MA LEH</span>
+        {% elif not k.active %}<span class="kst off">XANNIBAN</span>
+        {% elif k.live %}<span class="kst ok">SHAQEYNAYA</span>
+        {% else %}<span class="kst wait">SUGAYA</span>{% endif %}
+      </div>
+      {% if k.has %}
+      <div class="kkey{% if not k.active %} dim{% endif %}"><code>{{ k.key if k.active else "— furaha waa la joojiyay —" }}</code>
+        {% if k.active %}<button type="button" class="kcp" data-k="{{ k.key }}">Koobi</button>{% endif %}</div>
+      <div class="kseen">{% if not k.active %}Bot-kiisu xog ma diri karo, amarrona ma qaadan karo
+        {% elif k.seen is none %}Weli bot-ku ma isticmaalin{% else %}Bot-ku wuu isticmaalay · {{ k.seen }} ilbiriqsi ka hor{% endif %}</div>
+      {% endif %}
+      <form method="post" action="/admin/key" class="kbtns">
+        <input type="hidden" name="account" value="{{ k.account }}">
+        <button name="action" value="new" class="kb gold">{{ "Fure cusub" if k.has else "Samee fure" }}</button>
+        {% if k.has and k.active %}<button name="action" value="off" class="kb red">Xannib</button>{% endif %}
+        {% if k.has and not k.active %}<button name="action" value="on" class="kb">Fur</button>{% endif %}
+      </form>
+    </div>
+    {% endfor %}
+    <p class="note"><b>Fure cusub</b> → kii hore isla markiiba wuu dhintaa (bot-ka furihii hore wata wuu go'ayaa ilaa furaha cusub la geliyo).</p>
+  </div>
+  <style>
+  .krow{border-top:1px solid #262624;padding:12px 0}.krow:first-of-type{border-top:none}
+  .khd{display:flex;align-items:center;gap:10px}.kav{width:34px;height:34px;border-radius:50%;background:#2a2620;color:#f0cf86;display:flex;align-items:center;justify-content:center;font-weight:700;flex:0 0 34px}
+  .kmid{flex:1;min-width:0}.knm{font-weight:650}.kac{font-size:12px;color:var(--ink3)}
+  .kst{font-size:11px;font-weight:700;padding:3px 8px;border-radius:999px;background:#2a2a28;color:var(--ink2);white-space:nowrap}
+  .kst.ok{background:rgba(38,170,110,.2);color:#7fe0ab}.kst.wait{background:rgba(230,160,60,.2);color:#f0c070}.kst.off{background:rgba(208,59,59,.2);color:#f2a3a3}
+  .kkey{margin-top:9px;display:flex;align-items:center;gap:8px;background:#101113;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+  .kkey code{flex:1;font:600 13px ui-monospace,Menlo,Consolas,monospace;color:#f0cf86;letter-spacing:.03em;word-break:break-all}
+  .kkey.dim code{color:#6f7076}
+  .kcp,.kb{font-size:12px;font-weight:700;padding:7px 11px;border-radius:8px;border:1px solid #3a3a38;background:#232322;color:#ddd;cursor:pointer}
+  .kseen{font-size:11.5px;color:var(--ink3);margin-top:6px}
+  .kbtns{display:flex;gap:7px;margin-top:8px}.kbtns .kb{flex:1}
+  .kb.gold{border-color:rgba(217,174,85,.7);color:#f0cf86}.kb.red{border-color:rgba(208,59,59,.6);color:#f2a3a3}
+  </style>
+  <script>
+  document.querySelectorAll(".kcp").forEach(function(b){ b.addEventListener("click",function(){
+    var k=b.getAttribute("data-k"), done=function(){ b.textContent="✓"; setTimeout(function(){ b.textContent="Koobi"; },1500); };
+    if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(k).then(done,function(){ prompt("Koobi:",k); }); }
+    else { prompt("Koobi:",k); }
+  }); });
+  </script>
 
   <div class="card" style="margin-bottom:16px">
     <h2>Ku dar isticmaale toos ah</h2>
