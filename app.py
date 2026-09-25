@@ -239,6 +239,27 @@ CREATE TABLE IF NOT EXISTS messages(
 );
 CREATE INDEX IF NOT EXISTS ix_msg ON messages(thread, id);
 CREATE INDEX IF NOT EXISTS ix_msg_unread ON messages(from_admin, read_at);
+CREATE TABLE IF NOT EXISTS trade_shots(
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  account    TEXT NOT NULL,
+  pos        TEXT NOT NULL DEFAULT '',
+  sym        TEXT NOT NULL DEFAULT '',
+  tag        TEXT NOT NULL DEFAULT '',
+  type       TEXT NOT NULL DEFAULT '',
+  lot        REAL NOT NULL DEFAULT 0,
+  entry      REAL NOT NULL DEFAULT 0,
+  sl         REAL NOT NULL DEFAULT 0,
+  tp         REAL NOT NULL DEFAULT 0,
+  closep     REAL NOT NULL DEFAULT 0,
+  profit     REAL NOT NULL DEFAULT 0,
+  ot         REAL NOT NULL DEFAULT 0,
+  ct         REAL NOT NULL DEFAULT 0,
+  dg         INTEGER NOT NULL DEFAULT 5,
+  mime       TEXT NOT NULL DEFAULT '',
+  data       TEXT NOT NULL DEFAULT '',
+  created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_shots ON trade_shots(account, id);
 CREATE TABLE IF NOT EXISTS chat_images(
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   thread     TEXT NOT NULL,
@@ -2632,6 +2653,125 @@ def _msg_row(r):
             "ts": float(r["created_at"])}
 
 
+# --------------------------------------------------------------------------
+# v9.1: SAWIRRADA TRADE-YADA — EA v67.2 ayaa soo dira (POST /shots) marka trade
+#  la furo (OPEN) iyo marka la xidho (CLOSE). App-ka: tab-ka Trade.
+# --------------------------------------------------------------------------
+SHOT_MAX  = int(os.environ.get("SHOT_MAX_KB", "900")) * 1024
+SHOT_DAYS = int(os.environ.get("SHOT_DAYS", "30"))
+
+
+def _f(v, d=0.0):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return d
+
+
+@app.post("/shots")
+def ea_shots():
+    if not token_ok():
+        return jsonify(ok=False, error="bad token"), 401
+    d = request.get_json(silent=True, force=True) or {}
+    acc = clean_account(d.get("account"))
+    if not acc:
+        return jsonify(ok=False, error="account"), 400
+    tag = str(d.get("tag") or "").upper()[:8]
+    if tag not in ("OPEN", "CLOSE"):
+        return jsonify(ok=False, error="tag"), 400
+    raw = b""; mime = ""
+    img = d.get("img") or ""
+    if img:
+        if not isinstance(img, str) or ";base64," not in img[:40]:
+            return jsonify(ok=False, error="img"), 400
+        b64 = re.sub(r"\s+", "", img.split(",", 1)[1])
+        if len(b64) > SHOT_MAX * 4 // 3 + 16:
+            return jsonify(ok=False, error="weyn"), 413
+        try:
+            raw = _b64.b64decode(b64, validate=True)
+        except (ValueError, TypeError):
+            return jsonify(ok=False, error="b64"), 400
+        mime = _img_kind(raw) or ""
+        if not mime:
+            return jsonify(ok=False, error="PNG/JPEG oo keliya"), 400
+    now = time.time()
+    try:
+        dg = max(0, min(8, int(d.get("dg") or 5)))
+    except (TypeError, ValueError):
+        dg = 5
+    with db() as con:
+        con.execute(
+            "INSERT INTO trade_shots(account,pos,sym,tag,type,lot,entry,sl,tp,closep,profit,ot,ct,dg,mime,data,created_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (acc, str(d.get("pos") or "")[:24], str(d.get("sym") or "")[:16], tag,
+             str(d.get("type") or "")[:4], _f(d.get("lot")), _f(d.get("entry")), _f(d.get("sl")),
+             _f(d.get("tp")), _f(d.get("close")), _f(d.get("profit")), _f(d.get("ot")), _f(d.get("ct")),
+             dg, mime, (_b64.b64encode(raw).decode("ascii") if raw else ""), now))
+        if _should_prune("shots:" + acc):
+            con.execute("DELETE FROM trade_shots WHERE account=? AND created_at<?", (acc, now - SHOT_DAYS * 86400))
+    return jsonify(ok=True)
+
+
+@app.get("/api/shots")
+@login_required
+def api_shots():
+    u = request.user
+    acc = _visible_account(u)
+    with db() as con:
+        rows = con.execute(
+            "SELECT id,pos,sym,tag,type,lot,entry,sl,tp,closep,profit,ot,ct,dg,mime,created_at"
+            " FROM trade_shots WHERE account=? ORDER BY id DESC LIMIT 200", (acc,)).fetchall()
+    # trade kasta: OPEN + CLOSE isku xidh (pos; haddii kale symbol + waqtiga furitaanka)
+    trades = {}
+    order = []
+    def key_for(r):
+        pos = (r["pos"] or "").strip()
+        if pos and pos != "0":
+            return "p:" + pos
+        return "t:%s:%d" % (r["sym"], int(float(r["ot"] or 0)) // 120)
+    for r in reversed(rows):                              # duug -> cusub
+        k = key_for(r)
+        if r["tag"] == "CLOSE" and k not in trades:       # pos kala duwan -> symbol + waqti ku raadi
+            for kk in reversed(order):
+                t = trades[kk]
+                if t["sym"] == r["sym"] and t.get("close") is None and abs(float(t["ot"] or 0) - float(r["ot"] or 0)) <= 180:
+                    k = kk
+                    break
+        t = trades.get(k)
+        if t is None:
+            t = {"sym": r["sym"], "type": r["type"], "lot": r["lot"], "entry": r["entry"], "sl": r["sl"],
+                 "tp": r["tp"], "ot": r["ot"], "dg": r["dg"], "pos": r["pos"], "open": None, "close": None}
+            trades[k] = t
+            order.append(k)
+        shot = {"id": int(r["id"]), "img": bool(r["mime"]), "ts": float(r["created_at"])}
+        if r["tag"] == "OPEN":
+            t["open"] = shot
+            for f in ("type", "lot", "entry", "sl", "tp", "ot", "dg"):
+                if r[f]:
+                    t[f] = r[f]
+        else:
+            t["close"] = shot
+            t["closep"] = r["closep"]; t["profit"] = r["profit"]; t["ct"] = r["ct"]
+            for f in ("type", "lot", "entry", "sl", "tp", "ot", "dg"):
+                if not t.get(f) and r[f]:
+                    t[f] = r[f]
+    out = sorted(trades.values(), key=lambda t: max(float(t.get("ct") or 0), float(t.get("ot") or 0)),
+                 reverse=True)[:60]          # dhaqdhaqaaqa ugu dambeeyay ayaa kor ah
+    return jsonify(ok=True, account=acc, trades=out, days=SHOT_DAYS)
+
+
+@app.get("/api/shots/img/<int:sid>")
+@login_required
+def api_shot_img(sid):
+    u = request.user
+    with db() as con:
+        r = con.execute("SELECT account,mime,data FROM trade_shots WHERE id=?", (sid,)).fetchone()
+    if not r or not r["data"] or (u["role"] != "admin" and r["account"] != u["account"]):
+        return Response("not found", status=404, mimetype="text/plain")
+    return Response(_b64.b64decode(r["data"]), mimetype=r["mime"] or "image/png",
+                    headers={"Cache-Control": "private, max-age=2592000, immutable",
+                             "X-Content-Type-Options": "nosniff"})
+
 @app.get("/api/chat")
 @login_required
 def api_chat():
@@ -3293,12 +3433,53 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 .pane{display:none}
 .pane.on{display:block}
 
+/* ---------- v9.1: SAWIRRADA TRADE-YADA ---------- */
+.flt{display:flex;gap:7px;margin-bottom:12px;overflow-x:auto}
+.flt button{flex:0 0 auto;font-size:12.5px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);
+  background:none;color:var(--ink2);cursor:pointer}
+.flt button.on{background:var(--s1);border-color:var(--s1);color:#fff;font-weight:600}
+.shr{display:flex;gap:11px;padding:11px 0;border-top:1px solid #262624;align-items:center;cursor:pointer;width:100%;
+  background:none;border-left:none;border-right:none;border-bottom:none;border-radius:0;color:var(--ink);font:inherit;text-align:left}
+.shr:first-child{border-top:none}
+.shth{position:relative;flex:0 0 112px;height:70px;border-radius:10px;overflow:hidden;border:1px solid var(--line);background:#101218;
+  display:flex;align-items:center;justify-content:center;color:var(--ink3);font-size:11px;text-align:center}
+.shth img{width:100%;height:100%;object-fit:cover}
+.shth .c{position:absolute;right:5px;bottom:5px;font-size:10.5px;font-weight:700;background:rgba(0,0,0,.72);border-radius:6px;padding:1px 6px;color:#ddd}
+.shr .mid{flex:1;min-width:0}.shr .sy{font-weight:700;font-size:15px}.shr .sub{font-size:12px;color:var(--ink3);margin-top:2px}
+.ttag{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:6px;margin-left:6px;vertical-align:1px}
+.ttag.sell{background:rgba(208,59,59,.2);color:#f2a3a3}.ttag.buy{background:rgba(12,163,12,.2);color:#7fd67f}
+.shr .pl{text-align:right;font-weight:700;font-size:15px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.shr .pl .p{font-size:11.5px;font-weight:500;color:var(--ink3)}
+.shr .pl .op{color:#8fc0f5;font-size:12px}
+.shv{position:fixed;inset:0;z-index:86;background:var(--plane);overflow-y:auto}
+.shv[hidden]{display:none}
+.shv .ch{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:10px;padding:calc(10px + env(safe-area-inset-top)) 12px 10px;
+  border-bottom:1px solid var(--line);background:#141413}
+.shv .ch button{background:none;border:none;color:var(--ink);padding:8px;border-radius:10px;cursor:pointer;display:flex}
+.shv .ch svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.shv .t1{font-weight:700;font-size:16px}.shv .t2{font-size:12px;color:var(--ink3)}
+.shv .lbl{display:flex;justify-content:space-between;margin:16px 14px 7px;font-size:12.5px;font-weight:700;letter-spacing:.06em;color:var(--ink2)}
+.shv .lbl span{font-weight:500;color:var(--ink3);letter-spacing:0}
+.shv .big{display:block;width:calc(100% - 28px);margin:0 14px;border-radius:12px;border:1px solid var(--line);cursor:zoom-in;background:#101218}
+.shv .none{margin:0 14px;padding:26px 14px;border:1px dashed var(--line);border-radius:12px;text-align:center;color:var(--ink3);font-size:13px}
+.shv .stats{margin:14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.shv .stats div{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:9px 10px}
+.shv .stats b{display:block;font-size:14.5px;font-variant-numeric:tabular-nums}.shv .stats i{font-style:normal;font-size:11px;color:var(--ink3)}
+.shv .res{margin:0 14px 24px;padding:11px 13px;border-radius:12px;font-weight:650;font-size:14px}
+.shv .res.w{background:rgba(63,207,111,.1);border:1px solid rgba(63,207,111,.45);color:#8fe6ad}
+.shv .res.l{background:rgba(208,59,59,.1);border:1px solid rgba(208,59,59,.45);color:#f2a3a3}
+.shv .res.o{background:rgba(57,135,229,.1);border:1px solid rgba(57,135,229,.45);color:#9cc8fb}
+
 /* ---------- v9: WADA-SHEEKAYSI ---------- */
 .cfab{position:fixed;right:16px;bottom:calc(76px + env(safe-area-inset-bottom));z-index:45;width:56px;height:56px;
   border-radius:50%;border:1px solid rgba(217,174,85,.75);background:#1d1a12;color:#f0cf86;cursor:pointer;
   display:flex;align-items:center;justify-content:center;box-shadow:0 6px 22px rgba(0,0,0,.5);padding:0}
 .cfab svg{width:26px;height:26px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 .cfab:focus-visible{outline:2px solid #f0cf86;outline-offset:3px}
+.cfab{touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}   /* v9.2: la jiidi karo */
+.cfab.drag{transform:scale(1.1);box-shadow:0 14px 34px rgba(0,0,0,.7);cursor:grabbing;opacity:.96}
+.cfab.snap{transition:left .2s ease,top .2s ease}
+@media (prefers-reduced-motion:reduce){.cfab.snap{transition:none}.cfab.drag{transform:none}}
 .cfab .n{position:absolute;top:-3px;right:-3px;min-width:21px;height:21px;padding:0 6px;border-radius:999px;
   background:#e5534b;color:#fff;font:700 11.5px/21px system-ui,sans-serif;text-align:center}
 .chat{position:fixed;inset:0;z-index:85;background:var(--plane);display:flex;flex-direction:column}
@@ -3559,6 +3740,18 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 
   <!-- ============ TRADE ============ -->
   <section class="pane" id="pTrade">
+    <!-- v9.1: sawirrada trade-yada (EA v67.2+) -->
+    <div class="card" style="margin-bottom:16px">
+      <h2>Sawirrada trade-yada <span class="cnt" id="cShots"></span></h2>
+      <div class="flt" id="shFlt">
+        <button type="button" class="on" data-f="all">Dhammaan</button>
+        <button type="button" data-f="win">Faa'iido</button>
+        <button type="button" data-f="loss">Khasaare</button>
+        <button type="button" data-f="open">Furan</button>
+      </div>
+      <div id="shList"><div class="empty" style="padding:18px 0">Soo raraya…</div></div>
+      <div class="note" id="shNote"></div>
+    </div>
     <div class="card" style="margin-bottom:16px">
       <h2>Trade-yada furan <span class="cnt" id="cOpen"></span></h2>
       <div class="scroll xscroll"><table id="tt">
@@ -3727,6 +3920,13 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
     <button class="ib send" type="button" id="chatSend" aria-label="Dir">
       <svg viewBox="0 0 24 24"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4Z"/></svg></button>
   </div>
+</div>
+<div class="shv" id="shView" hidden role="dialog" aria-modal="true" aria-labelledby="shT1">
+  <div class="ch">
+    <button type="button" id="shBack" aria-label="Dib u noqo"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button>
+    <div><div class="t1" id="shT1"></div><div class="t2" id="shT2"></div></div>
+  </div>
+  <div id="shBody"></div>
 </div>
 <div class="iview" id="imgView" hidden><img id="imgViewImg" alt="Sawir"></div>
 <div class="isheet" id="iSheet" hidden>
@@ -4192,6 +4392,92 @@ function paintHealth(d){
   if(b){ if(nr){ b.textContent=nr; b.style.display=""; } else b.style.display="none"; }
 }
 
+/* ---- v9.1: SAWIRRADA TRADE-YADA ---- */
+const SH={rows:[],f:"all",t:0,loaded:false};
+function shNum(v,dg){ const n=Number(v); return (!n)?"—":n.toFixed(dg==null?5:dg); }
+function shWhen(ts){ if(!ts) return ""; const d=new Date(ts*1000), t=new Date(), y=new Date(); y.setDate(t.getDate()-1);
+  const hm=d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
+  if(d.toDateString()===t.toDateString()) return "Maanta "+hm;
+  if(d.toDateString()===y.toDateString()) return "Shalay "+hm;
+  return d.toLocaleDateString()+" "+hm; }
+function shPips(t){ const dg=Number(t.dg)||5, pip=(dg===3||dg===5)?Math.pow(10,-(dg-1)):Math.pow(10,-dg);
+  const e=Number(t.entry), c=Number(t.closep); if(!e||!c) return null;
+  const d=(String(t.type)==="BUY")?(c-e):(e-c); return d/pip; }
+function shReason(t){ const c=Number(t.closep), tp=Number(t.tp), sl=Number(t.sl), e=Number(t.entry); if(!c) return "";
+  const dg=Number(t.dg)||5, tol=3*((dg===3||dg===5)?Math.pow(10,-(dg-1)):Math.pow(10,-dg));
+  if(tp && Math.abs(c-tp)<=tol) return "TP"; if(sl && Math.abs(c-sl)<=tol) return (Math.abs(sl-e)<=tol?"BE":"SL"); return "gacan/kale"; }
+function shState(t){ return t.close ? (Number(t.profit)>=0?"win":"loss") : "open"; }
+function shThumb(t){
+  const s=t.close&&t.close.img?t.close:(t.open&&t.open.img?t.open:null);
+  const n=(t.open&&t.open.img?1:0)+(t.close&&t.close.img?1:0);
+  return '<span class="shth">'+(s?('<img loading="lazy" src="/api/shots/img/'+s.id+'" alt="">'):"sawir<br>lama helin")
+    +(n?('<span class="c">'+n+'</span>'):"")+'</span>';
+}
+function paintShots(){
+  const box=$("#shList"); if(!box) return;
+  const rows=SH.rows.filter(t=>SH.f==="all"||shState(t)===SH.f);
+  $("#cShots").textContent=SH.rows.length?("· "+SH.rows.length):"";
+  if(!SH.rows.length){ box.innerHTML='<div class="empty" style="padding:18px 0">Weli sawir lama helin.<br>Bot-ka v67.2 ayaa soo dira marka trade la furo ama la xidho.</div>'; $("#shNote").textContent=""; return; }
+  if(!rows.length){ box.innerHTML='<div class="empty" style="padding:18px 0">Midna kuma jiro shaandhadan.</div>'; return; }
+  box.innerHTML=rows.map((t,i)=>{
+    const st=shState(t), pp=shPips(t), dg=Number(t.dg)||5;
+    const sub=t.close?(shWhen(t.ot)+" → "+shWhen(t.ct).replace(/^(Maanta|Shalay) /,"")+" · "+shReason(t)):(shWhen(t.ot)+" · "+Number(t.lot||0).toFixed(2)+" lot");
+    const pl=st==="open"?'<span class="op">FURAN</span>'
+      :('<span class="'+(st==="win"?"pos":"neg")+'">'+(Number(t.profit)>=0?"+":"−")+"$"+Math.abs(Number(t.profit)).toFixed(2)+'</span>'
+        +(pp!=null?('<div class="p">'+(pp>=0?"+":"−")+Math.abs(pp).toFixed(0)+' pip</div>'):""));
+    return '<button type="button" class="shr" data-i="'+SH.rows.indexOf(t)+'">'+shThumb(t)
+      +'<span class="mid"><div class="sy">'+esc(t.sym||"")+'<span class="ttag '+(t.type==="BUY"?"buy":"sell")+'">'+esc(t.type||"")+'</span></div>'
+      +'<div class="sub">'+esc(sub)+'</div></span><span class="pl">'+pl+'</span></button>';
+  }).join("");
+  box.querySelectorAll(".shr").forEach(b=>b.addEventListener("click",()=>shOpen(SH.rows[Number(b.dataset.i)])));
+  $("#shNote").textContent="Sawirrada "+(SH.days||30)+" maalmood kadib way tirtirmaan.";
+}
+async function loadShots(){
+  try{
+    const q=accSel?("?account="+encodeURIComponent(accSel.value)):"";
+    const r=await fetch("/api/shots"+q,{headers:{"Accept":"application/json"}}); if(r.status===401){ location.href="/login"; return; }
+    const d=await r.json(); if(!d.ok) return;
+    SH.rows=d.trades||[]; SH.days=d.days; SH.loaded=true; paintShots();
+  }catch(e){}
+}
+document.querySelectorAll("#shFlt button").forEach(b=>b.addEventListener("click",()=>{
+  SH.f=b.dataset.f; document.querySelectorAll("#shFlt button").forEach(x=>x.classList.toggle("on",x===b)); paintShots(); }));
+function shImg(s,label,when){
+  return '<div class="lbl">'+label+'<span>'+esc(when)+'</span></div>'
+    +(s&&s.img?('<img class="big" src="/api/shots/img/'+s.id+'" alt="'+esc(label)+'">')
+      :('<div class="none">'+(s?"Sawir lama helin — MQL5 VPS chart-yada ma sawiro":"Weli lama xidhin")+'</div>'));
+}
+function shOpen(t){
+  if(!t) return;
+  const dg=Number(t.dg)||5, st=shState(t), pp=shPips(t), rs=shReason(t);
+  $("#shT1").textContent=(t.sym||"")+" · "+(t.type||"");
+  $("#shT2").textContent=(t.pos&&t.pos!=="0"?("#"+t.pos+" · "):"")+Number(t.lot||0).toFixed(2)+" lot";
+  const e=Number(t.entry), sl=Number(t.sl), tp=Number(t.tp);
+  const rr=(e&&sl&&tp&&Math.abs(e-sl)>0)?("1 : "+(Math.abs(tp-e)/Math.abs(e-sl)).toFixed(1)):"—";
+  let dur=""; if(t.ct&&t.ot){ const m=Math.round((t.ct-t.ot)/60); dur=m>=60?(Math.floor(m/60)+" saac "+(m%60)+" daq"):(m+" daq"); }
+  const res=st==="open"?'<div class="res o">Weli waa furan yahay</div>'
+    :('<div class="res '+(st==="win"?"w":"l")+'">'+(st==="win"?"✓ Faa'iido ":"✗ Khasaare ")
+      +(Number(t.profit)>=0?"+":"−")+"$"+Math.abs(Number(t.profit)).toFixed(2)
+      +(pp!=null?(" · "+(pp>=0?"+":"−")+Math.abs(pp).toFixed(0)+" pip"):"")+(dur?(" · "+dur):"")+(rs?(" · "+rs):"")+'</div>');
+  $("#shBody").innerHTML=shImg(t.open,"MARKA LA FURAY",shWhen(t.ot))
+    +shImg(t.close,"MARKA LA XIDHAY",t.close?(shWhen(t.ct)+(rs?(" · "+rs):"")):"")
+    +'<div class="stats"><div><b>'+shNum(t.entry,dg)+'</b><i>Entry</i></div><div><b>'+shNum(t.closep,dg)+'</b><i>Xidhan</i></div><div><b>'+Number(t.lot||0).toFixed(2)+'</b><i>Lot</i></div>'
+    +'<div><b class="neg">'+shNum(t.sl,dg)+'</b><i>SL</i></div><div><b class="pos">'+shNum(t.tp,dg)+'</b><i>TP</i></div><div><b>'+rr+'</b><i>RR</i></div></div>'+res;
+  $("#shView").hidden=false; $("#shView").scrollTop=0; document.body.style.overflow="hidden";
+  try{ history.pushState({mohaShot:1},""); }catch(e){}
+}
+function shClose(fromPop){
+  if($("#shView").hidden) return;
+  $("#shView").hidden=true; if(!CH.open) document.body.style.overflow="";
+  if(!fromPop){ chSkipPop=true; try{ history.back(); }catch(e){ chSkipPop=false; } }
+}
+$("#shBack").addEventListener("click",()=>shClose(false));
+$("#shBody").addEventListener("click",e=>{
+  const im=e.target.closest(".big"); if(!im) return;
+  $("#imgViewImg").src=im.src; $("#imgView").hidden=false;
+  try{ history.pushState({mohaShot:1,img:1},""); }catch(err){}
+});
+
 /* ---- v9: WADA-SHEEKAYSI (isticmaale <-> admin) ---- */
 const IS_ADMIN = {{ 'true' if is_admin else 'false' }};
 const CH={open:false,thread:null,last:0,seen:0,timer:null,img:null,busy:false,lastDay:""};
@@ -4294,12 +4580,69 @@ let chSkipPop=false;
 addEventListener("popstate",()=>{
   if(chSkipPop){ chSkipPop=false; return; }
   if(!$("#imgView").hidden){ $("#imgView").hidden=true; return; }
+  if(!$("#shView").hidden){ shClose(true); return; }   // v9.1
   if(CH.open){
     if(IS_ADMIN && CH.thread){ chShowList(); try{ history.pushState({mohaChat:1},""); }catch(e){} }
     else closeChat(true);
   }
 });
-$("#chatFab").addEventListener("click",openChat);
+$("#chatFab").addEventListener("click",()=>{ if(FAB.justDragged) return; openChat(); });   // v9.2: jiidis kadib ha furin
+
+/* ---- v9.2: badhanka fariimaha — farta ku hay oo jiid; dhinaca ugu dhow ayuu ku dhegaa; wuu xasuustaa ---- */
+const FAB={justDragged:false};
+(function(){
+  const f=$("#chatFab"); if(!f) return;
+  const KEY="mohapro_fab", M=12;
+  const bounds=()=>{
+    const s=f.offsetWidth||56, bar=(document.querySelector(".appbar")||{offsetHeight:0}).offsetHeight||0;
+    return {minX:M, maxX:Math.max(M,innerWidth-s-M), minY:M, maxY:Math.max(M,innerHeight-bar-s-M)};
+  };
+  const place=(x,y)=>{
+    const b=bounds(); x=Math.min(b.maxX,Math.max(b.minX,x)); y=Math.min(b.maxY,Math.max(b.minY,y));
+    f.style.left=x+"px"; f.style.top=y+"px"; f.style.right="auto"; f.style.bottom="auto"; return {x:x,y:y,b:b};
+  };
+  const load=()=>{ try{ return JSON.parse(localStorage.getItem(KEY)||"null"); }catch(e){ return null; } };
+  const apply=()=>{                                   // meeshii la kaydiyay (dhinac + boqolley dherer) -> shaashad kasta
+    const v=load(); if(!v || (v.side!=="L" && v.side!=="R")) return;
+    const b=bounds(), yf=Math.min(1,Math.max(0,Number(v.yf)||0));
+    place(v.side==="L"?b.minX:b.maxX, b.minY+yf*(b.maxY-b.minY));
+  };
+  apply();
+  addEventListener("resize",apply);
+  let st=null, moved=false;
+  f.addEventListener("pointerdown",e=>{
+    if(e.button!==undefined && e.button>0) return;
+    const r=f.getBoundingClientRect();
+    st={px:e.clientX,py:e.clientY,x:r.left,y:r.top,id:e.pointerId}; moved=false;
+    try{ f.setPointerCapture(e.pointerId); }catch(err){}   // mouse: dhaqdhaqaaqa ha raaco xitaa marka uu badhanka ka baxo
+  });
+  f.addEventListener("pointermove",e=>{
+    if(!st || e.pointerId!==st.id) return;
+    const dx=e.clientX-st.px, dy=e.clientY-st.py;
+    if(!moved){
+      if(Math.hypot(dx,dy)<8) return;                 // taabasho yar = riix (furi), maaha jiid
+      moved=true; f.classList.remove("snap"); f.classList.add("drag");
+    }
+    place(st.x+dx, st.y+dy); e.preventDefault();
+  });
+  const end=e=>{
+    if(!st) return;
+    if(moved){
+      const r=f.getBoundingClientRect(), b=bounds(), mid=(b.minX+b.maxX)/2;
+      const side=(r.left+ (f.offsetWidth||56)/2 < mid+ (f.offsetWidth||56)/2)?"L":"R";
+      f.classList.remove("drag"); f.classList.add("snap");
+      const p=place(side==="L"?b.minX:b.maxX, r.top);
+      const yf=(p.b.maxY>p.b.minY)?(p.y-p.b.minY)/(p.b.maxY-p.b.minY):1;
+      try{ localStorage.setItem(KEY,JSON.stringify({side:side,yf:Math.round(yf*1000)/1000})); }catch(err){}
+      FAB.justDragged=true; setTimeout(()=>{ FAB.justDragged=false; },400);
+      setTimeout(()=>f.classList.remove("snap"),260);
+    }
+    try{ if(st && f.hasPointerCapture && f.hasPointerCapture(st.id)) f.releasePointerCapture(st.id); }catch(err){}
+    st=null;
+  };
+  f.addEventListener("pointerup",end); f.addEventListener("pointercancel",end);
+  f.addEventListener("contextmenu",e=>e.preventDefault());   // farta oo la hayo -> menu-ga browser-ka ha soo bixin
+})();
 $("#chatBack").addEventListener("click",()=>{ if(IS_ADMIN && CH.thread) chShowList(); else closeChat(false); });
 function chClearImg(){ CH.img=null; $("#chatPrev").hidden=true; $("#chatPrevImg").removeAttribute("src"); $("#chatFile").value=""; }
 function chCompress(file){
@@ -4680,6 +5023,7 @@ function tab(n){
   document.querySelectorAll(".appbar button").forEach(b=>b.classList.toggle("on",b.dataset.tab===n));
   if(n==="Chart") drawChart();
   if(n==="Journal") loadJournal();
+  if(n==="Trade") loadShots();                        // v9.1
   try{ localStorage.setItem("mp_tab",n); }catch(e){}
   scrollTo({top:0,behavior:"instant"});
 }
@@ -4688,7 +5032,8 @@ document.querySelectorAll(".appbar button").forEach(b=>{
 });
 try{ const t=localStorage.getItem("mp_tab"); if(t && $("#p"+t)) tab(t); }catch(e){}
 
-if(accSel)accSel.addEventListener("change",()=>{tick(); if(jLoaded)loadJournal();});
+if(accSel)accSel.addEventListener("change",()=>{tick(); if(jLoaded)loadJournal(); if(SH.loaded)loadShots();});
+setInterval(()=>{ if(!document.hidden && $("#pTrade").classList.contains("on")) loadShots(); },60000);   // v9.1
 /* v5.4 BANDWIDTH: 5s -> 12s, oo marka bogga la qariyo GEBI AHAAN wuu joogsanayaa.
    Taleefanka oo furan maalin dhan: ~3 MB halkii 30 MB. */
 const POLL_MS=12000;
