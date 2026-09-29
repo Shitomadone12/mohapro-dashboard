@@ -104,6 +104,7 @@ VALID_COMMANDS = [
     "START", "STOP", "CLOSE_ALL", "CLOSE_PROFIT",
     "STRATEGY:SR", "STRATEGY:SMC", "STRATEGY:BOTH",   # v12.5: BB/EMA/VSA/POC waa la saaray (EA v68.1)
     "SET:RESET",
+    "BASKET:CLOSE", "BASKET:BE",                         # v12.7: GOLD BASKET (EA v69.0)
 ]
 
 # v5: sitinka App-ka (SET:KEY=VALUE). xad kasta waa la hubinayaa - qiime khaldan lama dirayo.
@@ -135,7 +136,24 @@ SET_LIMITS = {          # key: (min, max, noocaa)
     "STARS":     (1, 3,    "int"),   # ★ ugu yar
     "LOT2":      (10, 100, "int"),   # lot-ka ★★ (%)
     "PROT":      (0, 2,    "int"),   # 0 = DAMMAN, 1 = BREAK-EVEN, 2 = TALLAABO
+    # v12.7: GOLD BASKET (EA v69.0) - XAUUSD oo keliya
+    "BSK":       (0, 1,    "int"),   # 1 = basket ON
+    "BSKSIG":    (0, 2,    "int"),   # 0 = ZONE, 1 = EMA, 2 = LABADA
+    "BSKN":      (2, 5,    "int"),   # trade-yada basket-ka
+    "BSKENT":    (0, 1,    "int"),   # 0 = LAKAB, 1 = ISKU MAR
+    "BSKRISK":   (0.05, 5, "float"), # risk basket-ka oo dhan (%)
+    "BSKMAX":    (0, 100000, "int"), # xad $ adag (0 = off)
+    "BSKDAY":    (1, 10,   "int"),   # basket maalintii
+    "BSKSPR":    (5, 500,  "int"),   # spread ugu badan (sent)
+    "BSKTP":     (0, 1,    "int"),   # 0 = JARANJAR, 1 = WADAJIR
+    "BSKTGT":    (1, 100000, "int"), # WADAJIR: bartilmaameed $
+    "BSKBE":     (0, 1,    "int"),   # TP1 kadib BE
+    "BSKLOCK":   (0, 1,    "int"),   # qufulka faa'iidada
+    "BSKSES":    (0, 1,    "int"),   # waqtiga dahabka
+    "BSKBLK":    (0, 1,    "int"),   # 2 khasaare -> jihada jooji
 }
+BSK_KEYS = ("BSK", "BSKSIG", "BSKN", "BSKENT", "BSKRISK", "BSKMAX", "BSKDAY", "BSKSPR",
+            "BSKTP", "BSKTGT", "BSKBE", "BSKLOCK", "BSKSES", "BSKBLK")
 
 def valid_command(cmd):
     """True + amarka nadiifsan, ama False + sabab."""
@@ -2390,6 +2408,52 @@ def _save_levels(con, acc, d):
         (acc, sym, json.dumps(out, separators=(",", ":")), time.time()))
 
 
+def _bsk_num(v, nd=2, lo=-1e9, hi=1e9):
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return 0.0
+    if f != f:
+        return 0.0
+    return round(max(lo, min(hi, f)), nd)
+
+
+def _save_basket(con, acc, d):
+    """v12.7 (EA v69.0): GOLD BASKET - chart-ka dahabka ayaa diraa. Chart-yada kale ma dirayaan,
+    sidaas darteed xaaladda basket-ka gooni ayaa loo kaydiyaa (kv) si aan loo tirtirin."""
+    b = d.get("bsk")
+    if not isinstance(b, dict) or not b.get("gold"):
+        return
+    day = b.get("day") if isinstance(b.get("day"), dict) else {}
+    out = {"sym": str(b.get("sym") or "")[:16], "on": bool(b.get("on")), "sig": int(_bsk_num(b.get("sig"), 0, 0, 2)),
+           "act": bool(b.get("act")), "why": str(b.get("why") or "")[:160],
+           "day": {"n": int(_bsk_num(day.get("n"), 0, 0, 99)), "max": int(_bsk_num(day.get("max"), 0, 0, 99)),
+                   "pl": _bsk_num(day.get("pl")), "blk": str(day.get("blk") or "")[:12]},
+           "ts": time.time()}
+    if out["act"]:
+        dg = int(_bsk_num(b.get("dg"), 0, 0, 8))
+        out.update({"id": int(_bsk_num(b.get("id"), 0, 0, 10**7)), "dir": "SELL" if str(b.get("dir")) == "SELL" else "BUY",
+                    "src": str(b.get("src") or "")[:8], "stars": int(_bsk_num(b.get("stars"), 0, 0, 3)),
+                    "n": int(_bsk_num(b.get("n"), 0, 0, 5)), "fill": int(_bsk_num(b.get("fill"), 0, 0, 5)),
+                    "open": int(_bsk_num(b.get("open"), 0, 0, 5)), "ent": "LAKAB" if str(b.get("ent")) == "LAKAB" else "ISKU MAR",
+                    "pl": _bsk_num(b.get("pl")), "peak": _bsk_num(b.get("peak")), "max": _bsk_num(b.get("max")),
+                    "risk": _bsk_num(b.get("risk")), "tgt": _bsk_num(b.get("tgt")), "tpm": int(_bsk_num(b.get("tpm"), 0, 0, 1)),
+                    "be": bool(b.get("be")), "tp1": bool(b.get("tp1")), "t0": int(_bsk_num(b.get("t0"), 0, 0, 4e9)),
+                    "sl": _bsk_num(b.get("sl"), dg, 0, 1e7), "dg": dg})
+        rows = []
+        for r in (b.get("rows") or [])[:5]:
+            if not isinstance(r, dict):
+                continue
+            st = str(r.get("st") or "")
+            rows.append({"k": int(_bsk_num(r.get("k"), 0, 0, 9)), "px": _bsk_num(r.get("px"), dg, 0, 1e7),
+                         "lot": _bsk_num(r.get("lot"), 2, 0, 1e4), "pl": _bsk_num(r.get("pl")),
+                         "tp": _bsk_num(r.get("tp"), dg, 0, 1e7), "r": _bsk_num(r.get("r"), 1, 0, 50),
+                         "st": st if st in ("WAIT", "OPEN", "TP", "SL", "BE", "OFF") else "OFF"})
+        out["rows"] = rows
+    con.execute("INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                ("bsk:" + acc, json.dumps(out, separators=(",", ":"), ensure_ascii=False)))
+
+
 def _save_analysis(con, acc, d):
     """v7: EA-du chart kasta wuxuu soo diraa analiiskiisa. Saf kasta = hal symbol."""
     a = d.get("analysis")
@@ -2442,6 +2506,7 @@ def ea_update():
             (acc, bot, json.dumps(d, ensure_ascii=False), now))
 
         _save_closed(con, acc, d.get("trades"))
+        _save_basket(con, acc, d)            # v12.7: GOLD BASKET (chart-ka dahabka oo keliya)
         _save_analysis(con, acc, d)          # v7: analiiska live (chart kasta = saf)
         _save_levels(con, acc, d)            # v12.3: heerarka & range
 
@@ -2536,7 +2601,7 @@ def _collapse_cmds(cmds):
 # --------------------------------------------------------------------------
 CFG_KEYS = ("RISK", "DLOSS", "MAXDD", "SNIPER", "SNDAY", "SNRR", "SNSLMAX", "NEWS",
             "SLTP", "SL", "TP", "LOT", "STEPON", "STEP", "STEPSTART", "BE", "LOCKMODE", "ADAPT", "MGMT",
-            "STRAT", "EMAF", "STARS", "LOT2", "PROT")   # v12.6
+            "STRAT", "EMAF", "STARS", "LOT2", "PROT") + BSK_KEYS   # v12.6 · v12.7 GOLD BASKET
 
 
 def _cfg_cmds(vals, rev):
@@ -2971,9 +3036,15 @@ def api_state():
         cfgr = con.execute("SELECT rev,updated_at FROM ea_config WHERE account=?", (acc,)).fetchone()   # v10
         kseen = con.execute("SELECT last_seen FROM bot_keys WHERE account=?", (acc,)).fetchone()        # v11
         lic = _lic_info(con, acc, now)                                                                     # v12
+        bskr = con.execute("SELECT v FROM kv WHERE k=?", ("bsk:" + acc,)).fetchone()                       # v12.7
 
     data = json.loads(snap["data"]) if snap else {}
     age = (now - snap["updated_at"]) if snap else None
+    bsk = _jload(bskr["v"]) if bskr else None                 # v12.7: GOLD BASKET
+    if isinstance(bsk, dict):
+        bsk["age"] = int(now - float(bsk.get("ts") or 0))
+        if bsk["age"] > ANALYSIS_TTL:
+            bsk = None
     online = (age is not None and age < STALE_SECONDS)
 
     ct = []
@@ -3012,6 +3083,7 @@ def api_state():
         cfg_saved=(float(cfgr["updated_at"]) if cfgr else None),
         key_seen_age=(int(now - float(kseen["last_seen"])) if (kseen and kseen["last_seen"]) else None),
         lic=lic,
+        bsk=bsk,
     )
 
 
@@ -3051,7 +3123,7 @@ def api_command():
         if lic["state"] != "OK":
             return jsonify(ok=False, error="Laysinkaagu wuu dhacay - admin-ka la xiriir."), 403
         need = ("run" if cmd in ("START", "STOP") else
-                "close" if cmd in ("CLOSE_ALL", "CLOSE_PROFIT") else "")
+                "close" if cmd in ("CLOSE_ALL", "CLOSE_PROFIT", "BASKET:CLOSE", "BASKET:BE") else "")
         if not need or not lic["perms"].get(need):
             return jsonify(ok=False, error="Amarkan admin-ka ayaa leh."), 403
     with db() as con:
@@ -4058,6 +4130,39 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 
 /* ---------- v10: kaadhka maamulka (qaybo) ---------- */
 .grp{border:1px solid var(--line);border-radius:14px;padding:4px 12px 6px;margin:12px 0;background:#161615}
+/* v12.7: GOLD BASKET */
+.gold{display:inline-flex;align-items:center;gap:8px;font-weight:900;color:#f0cf86;letter-spacing:.08em}
+.gold small{font-size:10px;color:var(--ink3);letter-spacing:.06em;font-weight:700}
+.coin{width:18px;height:18px;border-radius:50%;flex:0 0 auto;background:radial-gradient(circle at 35% 35%,#fff3c4,#e2b650 55%,#9c7424);box-shadow:0 0 8px rgba(240,207,134,.45)}
+.bskg{border-color:rgba(217,174,85,.45);background:linear-gradient(180deg,#1b1810,#161615 60%)}
+.bskgh{display:flex;align-items:center;justify-content:space-between;padding:10px 0 6px}
+.bsub{font-size:10.5px;font-weight:800;letter-spacing:.1em;color:#b89448;padding:12px 0 2px;border-top:1px dashed rgba(217,174,85,.22);margin-top:6px}
+.bskg.off .bsub,.bskg.off .frow,.bskg.off .sltph:not(:first-of-type){opacity:.45}
+.bskc{border-color:rgba(217,174,85,.4)}
+.bskh{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.bchip{font-size:11px;font-weight:900;padding:4px 9px;border-radius:8px;background:#26262a;color:var(--ink2);white-space:nowrap}
+.bchip.run{background:#12301f;color:#7fe0ab}.bchip.off{background:#361519;color:#f2a3a3}.bchip.wait{background:#33280e;color:#f0c070}
+.bchips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.bchips span{font-size:11px;font-weight:800;padding:3px 8px;border-radius:7px;background:#172a45;color:#9cc3f5}
+.bchips span.y{background:#33280e;color:#f0c070}.bchips span.g{background:#12301f;color:#7fe0ab}.bchips span.r{background:#361519;color:#f2a3a3}
+.bbig{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px 10px;margin:10px 0 2px}
+.bbig b{font-size:30px;font-weight:900;font-variant-numeric:tabular-nums}
+.bbig b.pos{color:#3ddc84}.bbig b.neg{color:#f07a7a}
+.bbig span{color:var(--ink3);font-size:12.5px}
+.bbar{height:10px;border-radius:99px;background:#26262a;position:relative;overflow:hidden;margin:10px 0 4px}
+.bbar i{position:absolute;left:0;top:0;bottom:0;border-radius:99px;background:linear-gradient(90deg,#26aa6e,#3ddc84);transition:width .4s}
+.bbar i.neg{background:linear-gradient(90deg,#c24848,#f07a7a)}
+.bbar em{position:absolute;top:-2px;bottom:-2px;width:2px;background:#f0cf86;opacity:.8}
+.bbl{display:flex;justify-content:space-between;font-size:10.5px;color:var(--ink3)}
+.btr{display:grid;grid-template-columns:30px 1fr auto 44px;gap:8px;align-items:center;padding:8px 10px;border-radius:10px;font-size:13px;background:#161615;border:1px solid #262624;margin-top:6px}
+.btr .n{font-weight:900;color:#d9ae55}.btr .p{text-align:right;font-weight:800;font-variant-numeric:tabular-nums}.btr .rr{text-align:right;color:var(--ink3);font-size:11.5px}
+.btr .s{font-size:10px;font-weight:900;padding:2px 6px;border-radius:6px;margin-left:6px;background:#26262a;color:var(--ink2)}
+.btr .s.TP{background:#12301f;color:#7fe0ab}.btr .s.SL{background:#361519;color:#f2a3a3}.btr .s.OPEN{background:#172a45;color:#9cc3f5}.btr .s.WAIT{background:#33280e;color:#f0c070}
+.bacts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.bacts .act{flex-direction:row;gap:8px;padding:12px 6px;font-size:13px}
+.bidle{font-size:13px;color:var(--ink2);line-height:1.5;margin-top:10px}
+.bday{display:flex;justify-content:space-between;align-items:center;gap:10px;border-top:1px solid var(--line);margin-top:12px;padding-top:10px;font-size:12.5px;color:var(--ink3)}
+.bday b{color:var(--ink);font-weight:800;font-variant-numeric:tabular-nums}
 .gh{font-size:11.5px;font-weight:800;letter-spacing:.1em;color:#d9ae55;padding:10px 0 4px}
 .lic .licr{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .licbig{font-size:21px;font-weight:750;margin:4px 0 2px}
@@ -4437,6 +4542,24 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
         <span class="licpill" id="licPill">—</span></div>
     </div>
 
+    <!-- v12.7: GOLD BASKET - basket-ka hadda socda (EA v69.0) -->
+    <div class="card bskc" id="bskCard" style="margin-bottom:16px" hidden>
+      <div class="bskh"><span class="gold"><i class="coin"></i><span id="bskTitle">GOLD BASKET</span></span><span class="bchip" id="bskState">—</span></div>
+      <div class="bchips" id="bskChips"></div>
+      <div id="bskLive" hidden>
+        <div class="bbig"><b id="bskPL">—</b><span id="bskSub">—</span></div>
+        <div class="bbar"><i id="bskBar"></i><em id="bskBE"></em></div>
+        <div class="bbl"><span id="bskL">—</span><span>BE</span><span id="bskR">—</span></div>
+        <div id="bskRows"></div>
+        {% if can_control %}<div class="bacts">
+          <button class="act warn" data-cmd="BASKET:CLOSE" data-perm="close" id="bskClose">✕ Xidh basket-ka</button>
+          <button class="act calm" data-cmd="BASKET:BE" data-perm="close" id="bskBEBtn">⇆ BE hadda</button>
+        </div>{% endif %}
+      </div>
+      <div class="bidle" id="bskIdle">—</div>
+      <div class="bday"><span>Maanta · dahab</span><b id="bskDay">—</b></div>
+    </div>
+
     {% if can_control %}
     <div class="card" style="margin-bottom:16px">
       <p class="sec-t">Amarrada</p>
@@ -4541,7 +4664,7 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
         </div></div>
         <div class="frow"><span>Sniper <small>(CHoCH M5 gudaha zone / OB)</small></span><span><button class="sw" id="mSNIPER" type="button" aria-label="Sniper"><i></i></button></span></div>
         <div class="frow"><span>Trade maalintii <small>(SR + SMC wadaag · chart-yada oo dhan)</small></span><span class="stp"><button type="button" id="mSNDAYm" aria-label="Ka yaree">−</button><b id="mSNDAY">3</b><button type="button" id="mSNDAYp" aria-label="Ku dar">+</button></span></div>
-        <div class="frow"><span>EMA filter <small>(H1 + H4 isku raac → jihadaas kaliya)</small></span><span><button class="sw" id="mEMAF" type="button" aria-label="EMA filter"><i></i></button></span></div>
+        <div class="frow"><span>EMA filter <small>(EMA50 H1 + EMA200 H4 · RANGE → ma ganacsado)</small></span><span><button class="sw" id="mEMAF" type="button" aria-label="EMA filter"><i></i></button></span></div>
         <div class="frow frow-col" id="rEMA"><div class="echip" id="emaChip" hidden><i></i><span>EMA</span></div></div>
         <div class="frow"><span>★ ugu yar</span><span><span class="seg seg-s" id="mSTARS" role="radiogroup" aria-label="★ ugu yar"><button type="button" data-v="1" role="radio">★</button><button type="button" data-v="2" role="radio">★★</button><button type="button" data-v="3" role="radio">★★★</button></span></span></div>
         <div class="frow"><span>Lot-ka ★★ <small>(★★★ = 100%)</small></span><span><input id="mLOT2" type="number" min="10" max="100" step="5"> <i>%</i></span></div>
@@ -4563,6 +4686,41 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
         <div class="sltph" id="mPROTHint">—</div>
         <div class="frow" id="rSTEPSTART"><span>Bilowga <small>(faa'iidada loo baahan yahay)</small></span><span><input id="mSTEPSTART" type="number" min="1" max="5000" step="1"> <i>pip</i></span></div>
         <div class="frow" id="rSTEP"><span>Tallaabo kasta <small>(TALLAABO oo keliya)</small></span><span><input id="mSTEP" type="number" min="1" max="5000" step="1"> <i>pip</i></span></div>
+      </div>
+      <!-- v12.7: GOLD BASKET (EA v69.0) -->
+      <div class="grp bskg" id="bskGrp">
+        <div class="gh bskgh"><span class="gold"><i class="coin"></i>5 · GOLD BASKET <small>XAUUSD</small></span><button class="sw" id="mBSK" type="button" aria-label="GOLD BASKET"><i></i></button></div>
+        <div class="sltph">Marka ON: <b>XAUUSD</b> signal kasta hal trade halkii, <b>basket</b> ayuu furaa. Lammaanayaasha kale sidooda ayay u shaqeeyaan. Grid / Martingale ma jiraan.</div>
+        <div class="bsub">0 · SIGNAL-KA DAHABKA</div>
+        <div class="frow frow-col" id="rBSKSIG"><div class="sg3" id="mBSKSIG" role="radiogroup" aria-label="Signal-ka dahabka">
+          <button type="button" data-v="0" role="radio">ZONE<small>demand / supply</small></button>
+          <button type="button" data-v="1" role="radio">EMA<small>pullback trend</small></button>
+          <button type="button" data-v="2" role="radio">LABADA<small>fursad badan</small></button>
+        </div></div>
+        <div class="sltph" id="mBSKSIGHint">—</div>
+        <div class="frow"><span>Basket maalintii</span><span class="stp"><button type="button" id="mBSKDAYm" aria-label="Ka yaree">−</button><b id="mBSKDAY">3</b><button type="button" id="mBSKDAYp" aria-label="Ku dar">+</button></span></div>
+        <div class="bsub">1 · BASKET-KA</div>
+        <div class="frow"><span>Trade-yada basket-ka <small>2 – 5</small></span><span class="stp"><button type="button" id="mBSKNm" aria-label="Ka yaree">−</button><b id="mBSKN">3</b><button type="button" id="mBSKNp" aria-label="Ku dar">+</button></span></div>
+        <div class="frow frow-col" id="rBSKENT"><div class="seg" id="mBSKENT" role="radiogroup" aria-label="Sida loo galo">
+          <button type="button" data-v="0" role="radio">LAKAB · zone-ka gudihiisa</button>
+          <button type="button" data-v="1" role="radio">ISKU MAR</button>
+        </div></div>
+        <div class="sltph" id="mBSKENTHint">—</div>
+        <div class="bsub">2 · KHATARTA (basket oo dhan)</div>
+        <div class="frow"><span>Risk basket-ka oo dhan <small>waa la qaybiyaa, ma labanlaabmo</small></span><span><input id="mBSKRISK" type="number" min="0.05" max="5" step="0.05"> <i>%</i></span></div>
+        <div class="frow"><span>Khasaaraha ugu badan <small>xad adag — gaadho = xidh dhammaan</small></span><span><input id="mBSKMAX" type="number" min="0" max="100000" step="1"> <i>$</i></span></div>
+        <div class="frow"><span>Spread ugu badan <small>sent · 35 = $0.35</small></span><span><input id="mBSKSPR" type="number" min="5" max="500" step="1"> <i>¢</i></span></div>
+        <div class="bsub">3 · FAA'IIDADA (TP)</div>
+        <div class="frow frow-col" id="rBSKTP"><div class="seg" id="mBSKTP" role="radiogroup" aria-label="TP-ga basket-ka">
+          <button type="button" data-v="0" role="radio">JARANJAR · 1R 2R 3R</button>
+          <button type="button" data-v="1" role="radio">WADAJIR · $</button>
+        </div></div>
+        <div class="frow" id="rBSKTGT"><span>Bartilmaameedka WADAJIR</span><span><input id="mBSKTGT" type="number" min="1" max="100000" step="1"> <i>$</i></span></div>
+        <div class="bsub">4 · ILAALINTA</div>
+        <div class="frow"><span>TP1 kadib → SL = Break-even <small>basket-ku ma khasaari karo</small></span><span><button class="sw" id="mBSKBE" type="button" aria-label="TP1 kadib break-even"><i></i></button></span></div>
+        <div class="frow"><span>Qufulka faa'iidada <small>50% faa'iidada ugu sarreysa ha lumin</small></span><span><button class="sw" id="mBSKLOCK" type="button" aria-label="Qufulka faa'iidada"><i></i></button></span></div>
+        <div class="frow"><span>Waqtiga dahabka <small>London + NY · 07:00 – 17:00 GMT</small></span><span><button class="sw" id="mBSKSES" type="button" aria-label="Waqtiga dahabka"><i></i></button></span></div>
+        <div class="frow"><span>2 basket oo khasaara → jihadaas jooji maanta</span><span><button class="sw" id="mBSKBLK" type="button" aria-label="Jihada jooji"><i></i></button></span></div>
       </div>
       <div class="acts" style="margin-top:14px;grid-template-columns:2fr 1fr">
         <button class="act go" id="mSend" style="flex-direction:row;gap:9px;padding:14px">KAYDI &amp; DIR</button>
@@ -4837,6 +4995,7 @@ function paint(d){
   paintSave(d);                                     // v10
   paintMyKey(d);                                    // v11
   paintLic(d);                                      // v12
+  paintBasket(d.bsk);                               // v12.7
   $("#st").textContent=d.online?(RS.long+" · "+(d.age||0)+"s ka hor")
     :(d.age==null?"Xog lama helin":"OFFLINE · "+d.age+"s ka hor");
   if(MK.closed){
@@ -5863,11 +6022,11 @@ function paintRaw(x, d){
 }
 
 /* ---- v5: MAAMULKA ---- */
-const MF=["LOT","STEP","STEPSTART","RISK","DLOSS","MAXDD","SNRR","SNSLMAX","LOT2"];   // v12.6
+const MF=["LOT","STEP","STEPSTART","RISK","DLOSS","MAXDD","SNRR","SNSLMAX","LOT2","BSKRISK","BSKMAX","BSKSPR","BSKTGT"];   // v12.6 · v12.7
 let mTouched=false, mSeeded=false;
 function swSet(id,on){ const e=$("#"+id); if(e) e.classList.toggle("on",!!on); }
 function swGet(id){ const e=$("#"+id); return e && e.classList.contains("on"); }
-["mSNIPER","mNEWS","mEMAF"].forEach(id=>{ const e=$("#"+id); if(e) e.addEventListener("click",()=>{ if(e.disabled) return; e.classList.toggle("on"); mTouched=true; }); });   // v12.6
+["mSNIPER","mNEWS","mEMAF","mBSK","mBSKBE","mBSKLOCK","mBSKSES","mBSKBLK"].forEach(id=>{ const e=$("#"+id); if(e) e.addEventListener("click",()=>{ if(e.disabled) return; e.classList.toggle("on"); mTouched=true; if(id==="mBSK") bskGrpPaint(); }); });   // v12.6 · v12.7
 MF.forEach(k=>{ const e=$("#m"+k); if(e) e.addEventListener("input",()=>{ mTouched=true; }); });
 
 /* ---- v12.1/v12.2: MUUQAALKA - midabka app-ka + Colour Matrix (localStorage - telefoon kasta gooni) ---- */
@@ -5944,7 +6103,8 @@ const PERMS={{ perms_json|safe }};
 const PERM_OF={RISK:"risk",LOT:"lot",SLTP:"sltp",SL:"sltp",TP:"sltp",SNIPER:"sltp",SNRR:"sltp",SNSLMAX:"sltp",ADAPT:"sltp",
   SNDAY:"day",NEWS:"prot",STEPON:"prot",STEP:"prot",STEPSTART:"prot",BE:"prot",LOCKMODE:"prot",PROT:"prot"};   // STRAT/EMAF/STARS/LOT2/MGMT = admin
 const PERM_EL={mRISK:"risk",mDLOSS:"",mMAXDD:"",mSNIPER:"sltp",mSNDAYm:"day",mSNRR:"sltp",mSNSLMAX:"sltp",mNEWS:"prot",
-  mLOT:"lot",mSTEP:"prot",mSTEPSTART:"prot",mEMAF:"",mLOT2:"",mSTARS:""};
+  mLOT:"lot",mSTEP:"prot",mSTEPSTART:"prot",mEMAF:"",mLOT2:"",mSTARS:"",
+  mBSKDAYm:"",mBSKNm:"",mBSKRISK:"",mBSKMAX:"",mBSKSPR:"",mBSKTGT:"",mBSKBE:"",mBSKLOCK:"",mBSKSES:"",mBSKBLK:""};   // v12.7: GOLD BASKET = admin
 let licOK=true;
 const LKSVG='<svg class="lk" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
 function permOK(p){ return !PERMS || (licOK && !!(p && PERMS[p])); }
@@ -5958,6 +6118,7 @@ function applyPerms(){
   const segLock=id=>{ const sg=$("#"+id); if(sg){ sg.classList.add("locked"); sg.querySelectorAll("button").forEach(b=>b.disabled=true); } };
   if(!permOK("prot")) segLock("mPROT");
   segLock("mSTRAT"); const rs=$("#rSTRAT"); if(rs) rs.classList.add("locked");   // v12.6: xeeladda = admin
+  ["mBSKSIG","mBSKENT","mBSKTP"].forEach(segLock); const bsw=$("#mBSK"); if(bsw){ bsw.disabled=true; bsw.classList.add("lockd"); }   // v12.7
   document.querySelectorAll("[data-perm]").forEach(b=>{ if(!permOK(b.dataset.perm)){ b.classList.add("lockd"); b.disabled=true; } });
 
   const r=$("#mRISK"); if(r && permOK("risk")){ r.min=PERMS.lo; r.max=PERMS.hi;
@@ -6037,8 +6198,102 @@ function paintEma(st){
   const ch=$("#emaChip"); if(!ch || !st) return;
   if(st.ema===undefined){ ch.hidden=true; return; }
   ch.hidden=false; const e=Number(st.ema), on=(st.ema_on!==false);
-  ch.className="echip "+(!on?"off":(e>0?"up":(e<0?"dn":"mx")));
-  ch.querySelector("span").textContent=!on?"EMA filter: damman":(e>0?"Hadda: EMA ↑ KOR · BUY kaliya":(e<0?"Hadda: EMA ↓ HOOS · SELL kaliya":"Hadda: EMA ⇅ · H1/H4 isma raacsana · ma ganacsado"));
+  const rg=!!Number(st.rng||0);   // v12.6.1: RANGE (EA v68.3)
+  ch.className="echip "+(!on?"off":(rg?"mx":(e>0?"up":(e<0?"dn":"mx"))));
+  ch.querySelector("span").textContent=!on?"EMA filter: damman":(rg?"Hadda: RANGE · suuqu wuu isku fadhiyaa · ma ganacsado":(e>0?"Hadda: EMA ↑ KOR · BUY kaliya":(e<0?"Hadda: EMA ↓ HOOS · SELL kaliya":"Hadda: EMA ⇅ · H1/H4 isma hagaagsana · ma ganacsado")));
+}
+
+/* ---- v12.7: GOLD BASKET (maamul) ---- */
+let mBskSig=null, mBskEnt=null, mBskTP=null;
+function bskHints(){
+  const sh=$("#mBSKSIGHint"), eh=$("#mBSKENTHint");
+  if(sh) sh.innerHTML = mBskSig===0 ? "<b>ZONE:</b> demand (BUY) / supply (SELL) cusub → taabasho → CHoCH M5 → basket."
+    : mBskSig===1 ? "<b>EMA:</b> trend cad (EMA50 &gt; EMA200 M15 + H1/H4) → sicirku EMA 21–50 ayuu dib ugu soo laabtaa → shumac diidmo → basket."
+    : mBskSig===2 ? "<b>LABADA:</b> mid kasta wuu furi karaa → fursado badan. <b>Zone + EMA isku meel</b> = ★★★ (lot buuxa) · mid keliya = ★★."
+    : "Dooro.";
+  if(eh) eh.innerHTML = mBskEnt===1 ? "<b>ISKU MAR:</b> dhammaan trade-yada hal mar ayay furmaan (qiime isku mid ah)."
+    : "<b>LAKAB:</b> #1 = hadda · #2 #3 = zone-ka gudihiisa (qiime ka fiican). 60 daqiiqo gudahood haddii aan la gaadhin → waa la tirtiraa.";
+  segPaint("mBSKSIG","v",mBskSig); segPaint("mBSKENT","v",mBskEnt); segPaint("mBSKTP","v",mBskTP);
+  const tg=$("#rBSKTGT"); if(tg) tg.classList.toggle("off",mBskTP!==1);
+}
+function bskGrpPaint(){ const g=$("#bskGrp"); if(g) g.classList.toggle("off",!swGet("mBSK")); }
+document.querySelectorAll("#mBSKSIG button").forEach(b=>b.addEventListener("click",()=>{ if(b.disabled) return; mBskSig=Number(b.dataset.v); mTouched=true; bskHints(); }));
+document.querySelectorAll("#mBSKENT button").forEach(b=>b.addEventListener("click",()=>{ if(b.disabled) return; mBskEnt=Number(b.dataset.v); mTouched=true; bskHints(); }));
+document.querySelectorAll("#mBSKTP button").forEach(b=>b.addEventListener("click",()=>{ if(b.disabled) return; mBskTP=Number(b.dataset.v); mTouched=true; bskHints(); }));
+function bskStep(id,d,lo,hi){ const e=$("#"+id); if(!e) return; let v=Number(e.textContent)||lo; v=Math.max(lo,Math.min(hi,v+d)); e.textContent=v; mTouched=true; }
+[["mBSKN",2,5],["mBSKDAY",1,10]].forEach(([id,lo,hi])=>{
+  const m=$("#"+id+"m"), p=$("#"+id+"p");
+  if(m) m.addEventListener("click",()=>{ if(!m.disabled) bskStep(id,-1,lo,hi); });
+  if(p) p.addEventListener("click",()=>{ if(!p.disabled) bskStep(id,1,lo,hi); });
+});
+function bskSeed(st){
+  if(!st || st.bsk_on===undefined){ bskHints(); bskGrpPaint(); return; }
+  const set=(id,v)=>{ const e=$("#"+id); if(e && v!==undefined && v!==null) e.value=v; };
+  swSet("mBSK",!!st.bsk_on); swSet("mBSKBE",!!st.bsk_be); swSet("mBSKLOCK",!!st.bsk_lock); swSet("mBSKSES",!!st.bsk_ses); swSet("mBSKBLK",!!st.bsk_blk);
+  set("mBSKRISK",st.bsk_risk); set("mBSKMAX",st.bsk_max); set("mBSKSPR",st.bsk_spr); set("mBSKTGT",st.bsk_tgt);
+  if($("#mBSKN")) $("#mBSKN").textContent=st.bsk_n; if($("#mBSKDAY")) $("#mBSKDAY").textContent=st.bsk_day;
+  mBskSig=Number(st.bsk_sig); mBskEnt=Number(st.bsk_ent); mBskTP=Number(st.bsk_tp);
+  bskHints(); bskGrpPaint();
+}
+function bskCmds(cmds){
+  const num=id=>{ const e=$("#"+id); return e&&e.value!==""?e.value:null; };
+  cmds.push("SET:BSK="+(swGet("mBSK")?1:0));
+  if(mBskSig===0||mBskSig===1||mBskSig===2) cmds.push("SET:BSKSIG="+mBskSig);
+  if(mBskEnt===0||mBskEnt===1) cmds.push("SET:BSKENT="+mBskEnt);
+  if(mBskTP===0||mBskTP===1) cmds.push("SET:BSKTP="+mBskTP);
+  const n=Number(($("#mBSKN")||{}).textContent), dd=Number(($("#mBSKDAY")||{}).textContent);
+  if(n>=2&&n<=5) cmds.push("SET:BSKN="+n);
+  if(dd>=1&&dd<=10) cmds.push("SET:BSKDAY="+dd);
+  const rk=num("mBSKRISK"), mx=num("mBSKMAX"), sp=num("mBSKSPR"), tg=num("mBSKTGT");
+  if(rk!==null) cmds.push("SET:BSKRISK="+rk);
+  if(mx!==null) cmds.push("SET:BSKMAX="+Math.round(Number(mx)));
+  if(sp!==null) cmds.push("SET:BSKSPR="+Math.round(Number(sp)));
+  if(tg!==null) cmds.push("SET:BSKTGT="+Math.round(Number(tg)));
+  cmds.push("SET:BSKBE="+(swGet("mBSKBE")?1:0)); cmds.push("SET:BSKLOCK="+(swGet("mBSKLOCK")?1:0));
+  cmds.push("SET:BSKSES="+(swGet("mBSKSES")?1:0)); cmds.push("SET:BSKBLK="+(swGet("mBSKBLK")?1:0));
+}
+
+/* ---- v12.7: GOLD BASKET (Guud · live) ---- */
+function bskMoney(v){ const n=Number(v)||0; return (n>=0?"+$":"−$")+Math.abs(n).toFixed(2); }
+function paintBasket(b){
+  const c=$("#bskCard"); if(!c) return;
+  if(!b){ c.hidden=true; return; }
+  c.hidden=false;
+  const SIGN=["ZONE","EMA","LABADA"];
+  const st=$("#bskState"), chips=$("#bskChips"), live=$("#bskLive"), idle=$("#bskIdle");
+  const day=b.day||{};
+  $("#bskDay").textContent=(day.n||0)+" / "+(day.max||0)+" basket  ·  "+bskMoney(day.pl)+(day.blk?("  ·  la joojiyay: "+day.blk):"");
+  if(!b.act){
+    $("#bskTitle").textContent=(b.sym||"XAUUSD")+" · GOLD BASKET";
+    st.className="bchip "+(b.on?"wait":"off"); st.textContent=b.on?"● SUGAYA SIGNAL":"DAMMAN";
+    chips.innerHTML='<span class="y">'+esc(SIGN[b.sig]||"LABADA")+'</span>';
+    live.hidden=true; idle.hidden=false;
+    idle.innerHTML=b.on?("Basket ma socdo — bot-ku wuxuu sugayaa signal "+esc(SIGN[b.sig]||"")+" tayo leh."+(b.why?('<br><small style="color:var(--ink3)">Ugu dambeeyay: '+esc(b.why)+'</small>'):""))
+                       :"GOLD BASKET waa damman — Maamul → 5 · GOLD BASKET ka shid.";
+    return;
+  }
+  $("#bskTitle").textContent=(b.sym||"XAUUSD")+" · "+(b.dir||"")+" BASKET";
+  st.className="bchip run"; st.textContent="● SOCDA";
+  const stars="★".repeat(Math.max(1,Math.min(3,b.stars||2)));
+  chips.innerHTML='<span>'+esc(b.src||"")+' '+stars+'</span><span class="y">'+esc(b.ent||"")+' '+(b.fill||0)+'/'+(b.n||0)+'</span>'
+    +(b.be?'<span class="g">SL = BE ✓</span>':(b.tp1?'<span class="g">TP1 ✓</span>':''));
+  live.hidden=false; idle.hidden=true;
+  const pl=Number(b.pl)||0, mx=Math.max(0.01,Number(b.max)||Number(b.risk)||1), tg=Math.max(0.01,Number(b.tgt)||mx);
+  const e=$("#bskPL"); e.textContent=bskMoney(pl); e.className=pl>=0?"pos":"neg";
+  $("#bskSub").textContent="/ bartilmaameed $"+tg.toFixed(0)+" · khasaare ugu badan $"+mx.toFixed(0);
+  const span=mx+tg, pos=Math.max(0,Math.min(1,(pl+mx)/span)), be=mx/span;
+  const bar=$("#bskBar");
+  if(pl>=0){ bar.style.left=(be*100)+"%"; bar.style.width=((pos-be)*100)+"%"; bar.className=""; }
+  else { bar.style.left=(pos*100)+"%"; bar.style.width=((be-pos)*100)+"%"; bar.className="neg"; }
+  $("#bskBE").style.left="calc("+(be*100)+"% - 1px)";
+  $("#bskL").textContent="−$"+mx.toFixed(0)+" (xad)"; $("#bskR").textContent="+$"+tg.toFixed(0)+(b.tpm===1?"":" (3R)");
+  const dg=Number(b.dg)||2, SN={WAIT:"sug",OPEN:"furan",TP:"TP ✓",SL:"SL",BE:"BE",OFF:"—"};
+  $("#bskRows").innerHTML=(b.rows||[]).map(r=>{
+    const p=Number(r.pl)||0, off=(r.st==="OFF"||r.st==="WAIT");
+    return '<div class="btr"'+(r.st==="OFF"?' style="opacity:.45"':'')+'><span class="n">#'+r.k+'</span><span>'+Number(r.px).toFixed(dg)+' · '+Number(r.lot).toFixed(2)
+      +'<span class="s '+esc(r.st)+'">'+esc(SN[r.st]||r.st)+'</span></span><span class="p" style="color:'+(off?"var(--ink3)":(p>=0?"#3ddc84":"#f07a7a"))+'">'+(off?"—":bskMoney(p))+'</span><span class="rr">'+(r.r>0?(Number(r.r).toFixed(1)+"R"):"")+'</span></div>';
+  }).join("");
+  const bb=$("#bskBEBtn"); if(bb && !bb.classList.contains("lockd")) bb.disabled=!!b.be;
 }
 
 function paintSettings(st){
@@ -6065,6 +6320,7 @@ function paintSettings(st){
   mStrat=(st.strat!==undefined && STRAT_I[st.strat]!==undefined)?STRAT_I[st.strat]:null; segPaint("mSTRAT","s",mStrat);
   mStars=(st.stars!==undefined)?Number(st.stars):2; segPaint("mSTARS","v",mStars);
   mProt=prot; protHint();
+  bskSeed(st);   // v12.7
   mSeeded=true;
 }
 function paintLocks(rows){
@@ -6109,6 +6365,7 @@ async function sendSettings(){
   cmds.push("SET:EMAF="+(swGet("mEMAF")?1:0));
   if(mStrat===0||mStrat===1||mStrat===2) cmds.push("SET:STRAT="+mStrat);
   if(mStars>=1&&mStars<=3) cmds.push("SET:STARS="+mStars);
+  bskCmds(cmds);   // v12.7: GOLD BASKET
   const values={}; cmds.forEach(c=>{ const m=/^SET:([A-Z0-9]+)=(.+)$/.exec(c); if(m) values[m[1]]=m[2]; });
   if(PERMS) Object.keys(values).forEach(k=>{ if(!permOK(PERM_OF[k])) delete values[k]; });   // v12: macmiil
   btn.disabled=true; btn.textContent="Kaydinaya…";
