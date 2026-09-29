@@ -2,7 +2,7 @@
 """
 MOHA PRO — Cloud Dashboard v2 (multi-user, MT5 account login)
 =============================================================
-Hal fayl. Flask + SQLite. Render.com diyaar.
+Hal fayl. Flask + SQLite/Postgres. Render.com iyo Railway diyaar.
 
 ENV:
   SECRET_KEY      - random long string (session cookie signing). WAAJIB.
@@ -93,7 +93,8 @@ app.secret_key = SECRET_KEY
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=os.environ.get("RENDER", "") != "" or os.environ.get("FORCE_HTTPS", "") == "1",
+    SESSION_COOKIE_SECURE=(os.environ.get("RENDER", "") != "" or os.environ.get("RAILWAY_ENVIRONMENT", "") != ""
+                           or os.environ.get("RAILWAY_ENVIRONMENT_NAME", "") != "" or os.environ.get("FORCE_HTTPS", "") == "1"),   # v12.5.1: Railway
     PERMANENT_SESSION_LIFETIME=60 * 60 * 12,
     JSON_SORT_KEYS=False,
     MAX_CONTENT_LENGTH=2 * 1024 * 1024,
@@ -101,8 +102,7 @@ app.config.update(
 
 VALID_COMMANDS = [
     "START", "STOP", "CLOSE_ALL", "CLOSE_PROFIT",
-    "STRATEGY:SR", "STRATEGY:BB", "STRATEGY:EMA",
-    "STRATEGY:SMC", "STRATEGY:VSA", "STRATEGY:POC",
+    "STRATEGY:SR", "STRATEGY:SMC", "STRATEGY:BOTH",   # v12.5: BB/EMA/VSA/POC waa la saaray (EA v68.1)
     "SET:RESET",
 ]
 
@@ -129,13 +129,19 @@ SET_LIMITS = {          # key: (min, max, noocaa)
     "SNSLMAX":   (0, 500,  "int"),
     "NEWS":      (0, 1,    "int"),
     "REV":       (0, 2000000000, "int"),
+    # v12.6: maamulka cusub (EA v68.2)
+    "STRAT":     (0, 2,    "int"),   # 0 = SR/SD, 1 = SMC, 2 = LABADA
+    "EMAF":      (0, 1,    "int"),   # EMA filter
+    "STARS":     (1, 3,    "int"),   # ★ ugu yar
+    "LOT2":      (10, 100, "int"),   # lot-ka ★★ (%)
+    "PROT":      (0, 2,    "int"),   # 0 = DAMMAN, 1 = BREAK-EVEN, 2 = TALLAABO
 }
 
 def valid_command(cmd):
     """True + amarka nadiifsan, ama False + sabab."""
     if cmd in VALID_COMMANDS:
         return True, cmd
-    m = re.match(r"^SET:([A-Z]+)=([0-9]+(?:\.[0-9]+)?)$", cmd)
+    m = re.match(r"^SET:([A-Z][A-Z0-9]*)=([0-9]+(?:\.[0-9]+)?)$", cmd)
     if not m:
         return False, None
     key, raw = m.group(1), m.group(2)
@@ -2153,7 +2159,7 @@ PERM_OF = {"RISK": "risk", "LOT": "lot",
            "SNSLMAX": "sltp", "ADAPT": "sltp",
            "SNDAY": "day",
            "NEWS": "prot", "STEPON": "prot", "STEP": "prot", "STEPSTART": "prot",
-           "BE": "prot", "LOCKMODE": "prot"}          # DLOSS, MAXDD, MGMT = admin oo keliya
+           "BE": "prot", "LOCKMODE": "prot", "PROT": "prot"}   # DLOSS, MAXDD, MGMT, STRAT, EMAF, STARS, LOT2 = admin oo keliya
 
 
 def _jload(v, d=None):
@@ -2529,7 +2535,8 @@ def _collapse_cmds(cmds):
 #  GET  /api/ea_config     (EA)   -> marka bot-ku kaco: sitinka kaydsan (qaab amar ah)
 # --------------------------------------------------------------------------
 CFG_KEYS = ("RISK", "DLOSS", "MAXDD", "SNIPER", "SNDAY", "SNRR", "SNSLMAX", "NEWS",
-            "SLTP", "SL", "TP", "LOT", "STEPON", "STEP", "STEPSTART", "BE", "LOCKMODE", "ADAPT", "MGMT")
+            "SLTP", "SL", "TP", "LOT", "STEPON", "STEP", "STEPSTART", "BE", "LOCKMODE", "ADAPT", "MGMT",
+            "STRAT", "EMAF", "STARS", "LOT2", "PROT")   # v12.6
 
 
 def _cfg_cmds(vals, rev):
@@ -4153,6 +4160,26 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
 #mCard .frow>span:last-child{white-space:nowrap;flex:0 0 auto}
 #mCard .frow>span:first-child{flex:1 1 auto;min-width:0;padding-right:8px}
 
+/* ---------- v12.5: xeeladda (SR/SD · SMC · LABADA) + EMA filter ---------- */
+.sg3{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;background:#121211;border:1px solid var(--line);border-radius:13px;padding:4px;margin:6px 0 8px}
+.sg3 button{padding:10px 2px 8px;border:none;border-radius:10px;background:none;color:var(--ink2);font-family:inherit;font-size:14px;font-weight:800;line-height:1.15;cursor:pointer}
+.sg3 button small{display:block;font-size:10.5px;font-weight:600;opacity:.75;margin-top:2px}
+.sg3 button.on{background:linear-gradient(180deg,#f0cf86,#d9ae55);color:#15110a}
+.sg3 button:disabled{opacity:.5;cursor:default}
+.echip{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;font-weight:800;padding:6px 12px;border-radius:14px;border:1px solid;margin-bottom:4px}
+.echip i{width:8px;height:8px;border-radius:50%;background:currentColor;box-shadow:0 0 8px currentColor}
+.echip.up{color:#7fe0ab;background:#0f1a14;border-color:rgba(38,170,110,.6)}
+.echip.dn{color:#f2a3a3;background:#1e1113;border-color:rgba(208,59,59,.6)}
+.echip.mx{color:#f0c070;background:#1e180e;border-color:rgba(224,160,64,.6)}
+.echip.off{color:var(--ink2);background:#171716;border-color:var(--line)}
+
+/* ---------- v12.6: maamulka cusub ---------- */
+.frow-col{display:block;padding:4px 0}
+.seg-s{display:inline-flex;margin:0;width:156px}
+.seg-s button{padding:7px 2px;font-size:12.5px}
+#mSTRAT{margin:4px 0 2px}
+.frow.off{opacity:.4}
+
 /* ---------- v9.3: habka SL/TP ---------- */
 .seg{display:flex;border:1px solid var(--line);border-radius:12px;overflow:hidden;margin:2px 0 8px}
 .seg button{flex:1;padding:11px 4px;background:none;border:none;border-radius:0;border-left:1px solid var(--line);
@@ -4425,16 +4452,6 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
         <button class="act calm" data-cmd="CLOSE_PROFIT" data-perm="close" style="grid-column:span 3;flex-direction:row;gap:9px;padding:13px">
           <svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 7-7"/><path d="M14 8h6v6"/></svg>XIDH FAA'IIDO</button>
       </div>
-      <label for="stratSel" style="margin-top:16px">Beddel xeeladda</label>
-      <select id="stratSel">
-        <option value="">— dooro —</option>
-        <option value="STRATEGY:SR">SR</option>
-        <option value="STRATEGY:BB">Bollinger</option>
-        <option value="STRATEGY:EMA">EMA</option>
-        <option value="STRATEGY:SMC">SMC</option>
-        <option value="STRATEGY:VSA">VSA</option>
-        <option value="STRATEGY:POC">POC</option>
-      </select>
       <div class="note" id="cmdNote">Amarku wuxuu gaadhayaa EA-da 3–5 ilbiriqsi gudahood.</div>
     </div>
 
@@ -4509,41 +4526,43 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
       <div class="savebar" id="mSave"><span class="dt"></span>—</div>
       {% if lic %}<div class="lockband" id="mLockBand"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Waxa quful ah <b>admin-ka ayaa maamula</b> — waad arki kartaa oo keliya.</span></div>{% endif %}
 
-      <div class="grp"><div class="gh">1 · KHATARTA</div>
-        <div class="frow"><span>Risk trade kasta</span><span><input id="mRISK" type="number" min="0.01" max="10" step="0.05"> <i>%</i></span></div>
+      <div class="grp"><div class="gh">1 · KHATARTA &amp; LOT</div>
+        <div class="frow"><span>Risk trade kasta <small>(lot-ka auto ayuu go'aamiyaa)</small></span><span><input id="mRISK" type="number" min="0.01" max="10" step="0.05"> <i>%</i></span></div>
+        <div class="frow"><span>Lot go'an <small>(0 = auto · risk %)</small></span><span><input id="mLOT" type="number" min="0" max="100" step="0.01"> <i>lot</i></span></div>
         <div class="frow"><span>Khasaaraha maalinlaha <small>(kadib wuu joogsadaa maanta)</small></span><span><input id="mDLOSS" type="number" min="0" max="50" step="0.5"> <i>%</i></span></div>
         <div class="frow"><span>Drawdown ugu badan <small>(emergency stop)</small></span><span><input id="mMAXDD" type="number" min="0" max="100" step="1"> <i>%</i></span></div>
       </div>
 
       <div class="grp"><div class="gh">2 · XEELADDA</div>
-        <div class="frow"><span>Sniper <small>(tayo · CHoCH gudaha zone-ka)</small></span><span><button class="sw" id="mSNIPER" type="button" aria-label="Sniper"><i></i></button></span></div>
-        <div class="frow"><span>Trade maalintii <small>(chart-yada oo dhan)</small></span><span class="stp"><button type="button" id="mSNDAYm" aria-label="Ka yaree">−</button><b id="mSNDAY">3</b><button type="button" id="mSNDAYp" aria-label="Ku dar">+</button></span></div>
-        <div class="frow"><span>RR <small>(TP = SL × …)</small></span><span><input id="mSNRR" type="number" min="1" max="10" step="0.5"> <i>R</i></span></div>
-        <div class="frow"><span>SL ugu weyn <small>(ka weyn → trade ma furmo)</small></span><span><input id="mSNSLMAX" type="number" min="0" max="500" step="1"> <i>pip</i></span></div>
+        <div class="frow frow-col" id="rSTRAT"><div class="sg3" id="mSTRAT" role="radiogroup" aria-label="Xeeladda">
+          <button type="button" data-s="0" role="radio">SR/SD<small>zone S&amp;D</small></button>
+          <button type="button" data-s="1" role="radio">SMC<small>Order Block</small></button>
+          <button type="button" data-s="2" role="radio">LABADA<small>2-da</small></button>
+        </div></div>
+        <div class="frow"><span>Sniper <small>(CHoCH M5 gudaha zone / OB)</small></span><span><button class="sw" id="mSNIPER" type="button" aria-label="Sniper"><i></i></button></span></div>
+        <div class="frow"><span>Trade maalintii <small>(SR + SMC wadaag · chart-yada oo dhan)</small></span><span class="stp"><button type="button" id="mSNDAYm" aria-label="Ka yaree">−</button><b id="mSNDAY">3</b><button type="button" id="mSNDAYp" aria-label="Ku dar">+</button></span></div>
+        <div class="frow"><span>EMA filter <small>(H1 + H4 isku raac → jihadaas kaliya)</small></span><span><button class="sw" id="mEMAF" type="button" aria-label="EMA filter"><i></i></button></span></div>
+        <div class="frow frow-col" id="rEMA"><div class="echip" id="emaChip" hidden><i></i><span>EMA</span></div></div>
+        <div class="frow"><span>★ ugu yar</span><span><span class="seg seg-s" id="mSTARS" role="radiogroup" aria-label="★ ugu yar"><button type="button" data-v="1" role="radio">★</button><button type="button" data-v="2" role="radio">★★</button><button type="button" data-v="3" role="radio">★★★</button></span></span></div>
+        <div class="frow"><span>Lot-ka ★★ <small>(★★★ = 100%)</small></span><span><input id="mLOT2" type="number" min="10" max="100" step="5"> <i>%</i></span></div>
         <div class="frow"><span>Filtarka wararka <small>(jooji warka ka hor/kadib)</small></span><span><button class="sw" id="mNEWS" type="button" aria-label="Filtarka wararka"><i></i></button></span></div>
       </div>
 
-      <div class="grp"><div class="gh">3 · SL / TP</div>
-      <div class="seg" id="mSLTP" role="radiogroup" aria-label="Habka SL/TP">
-        <button type="button" data-m="2" role="radio">SNIPER</button>
-        <button type="button" data-m="0" role="radio">FIXED</button>
-        <button type="button" data-m="1" role="radio">ATR</button>
-      </div>
-      <div class="sltph" id="mSLTPHint">—</div>
-      <div class="frow" id="rSL"><span>Stop Loss</span><span><input id="mSL" type="number" min="0" max="5000" step="1"> <i>pip</i></span></div>
-      <div class="frow" id="rTP"><span>Take Profit</span><span><input id="mTP" type="number" min="0" max="5000" step="1"> <i>pip</i></span></div>
-      <div class="frow"><span>Lot <small>(0 = auto risk)</small></span><span><input id="mLOT" type="number" min="0" max="100" step="0.01"> <i>lot</i></span></div>
+      <div class="grp"><div class="gh">3 · SL / TP (SNIPER)</div>
+        <div class="sltph"><b>SL</b> = zone-ka / OB-ga gadaashiisa · <b>TP</b> = SL × RR. Pip go'an ma jiro.</div>
+        <div class="frow"><span>RR <small>(TP = SL × …)</small></span><span><input id="mSNRR" type="number" min="1" max="10" step="0.5"> <i>R</i></span></div>
+        <div class="frow"><span>SL ugu weyn <small>(SR iyo SMC · ka weyn → trade ma furmo)</small></span><span><input id="mSNSLMAX" type="number" min="0" max="500" step="1"> <i>pip</i></span></div>
       </div>
 
-      <div class="grp"><div class="gh">4 · MAAMULKA TRADE-KA FURAN</div>
-      <div class="frow"><span>Step-Lock</span><span><button class="sw" id="mSTEPON" type="button"><i></i></button></span></div>
-      <div id="mWarn"></div>
-      <div class="frow" id="rADAPT"><span>ATR maamulo SL/TP <small>(suuqa ayuu la socdaa · ATR oo keliya)</small></span><span><button class="sw" id="mADAPT" type="button"><i></i></button></span></div>
-      <div class="frow"><span>SL ha joogo break-even <small>(dami = SL kor buu u socdaa)</small></span><span><button class="sw" id="mLOCKMODE" type="button"><i></i></button></span></div>
-      <div class="frow"><span>Break-even</span><span><button class="sw" id="mBE" type="button"><i></i></button></span></div>
-      <div class="frow"><span>Maamulka trade-ka <small>(dami = SL/TP oo keliya)</small></span><span><button class="sw" id="mMGMT" type="button"><i></i></button></span></div>
-      <div class="frow"><span>Tallaabo kasta</span><span><input id="mSTEP" type="number" min="1" max="5000" step="1"> <i>pip</i></span></div>
-      <div class="frow"><span>Bilowga</span><span><input id="mSTEPSTART" type="number" min="1" max="5000" step="1"> <i>pip</i></span></div>
+      <div class="grp"><div class="gh">4 · ILAALINTA FAA'IIDADA</div>
+        <div class="seg" id="mPROT" role="radiogroup" aria-label="Ilaalinta faa'iidada">
+          <button type="button" data-p="0" role="radio">DAMMAN</button>
+          <button type="button" data-p="1" role="radio">BREAK-EVEN</button>
+          <button type="button" data-p="2" role="radio">TALLAABO</button>
+        </div>
+        <div class="sltph" id="mPROTHint">—</div>
+        <div class="frow" id="rSTEPSTART"><span>Bilowga <small>(faa'iidada loo baahan yahay)</small></span><span><input id="mSTEPSTART" type="number" min="1" max="5000" step="1"> <i>pip</i></span></div>
+        <div class="frow" id="rSTEP"><span>Tallaabo kasta <small>(TALLAABO oo keliya)</small></span><span><input id="mSTEP" type="number" min="1" max="5000" step="1"> <i>pip</i></span></div>
       </div>
       <div class="acts" style="margin-top:14px;grid-template-columns:2fr 1fr">
         <button class="act go" id="mSend" style="flex-direction:row;gap:9px;padding:14px">KAYDI &amp; DIR</button>
@@ -5844,11 +5863,11 @@ function paintRaw(x, d){
 }
 
 /* ---- v5: MAAMULKA ---- */
-const MF=["SL","TP","LOT","STEP","STEPSTART"];
+const MF=["LOT","STEP","STEPSTART","RISK","DLOSS","MAXDD","SNRR","SNSLMAX","LOT2"];   // v12.6
 let mTouched=false, mSeeded=false;
 function swSet(id,on){ const e=$("#"+id); if(e) e.classList.toggle("on",!!on); }
 function swGet(id){ const e=$("#"+id); return e && e.classList.contains("on"); }
-["mSTEPON","mBE","mLOCKMODE","mADAPT","mMGMT","mSNIPER","mNEWS"].forEach(id=>{ const e=$("#"+id); if(e) e.addEventListener("click",()=>{ e.classList.toggle("on"); mTouched=true; }); });
+["mSNIPER","mNEWS","mEMAF"].forEach(id=>{ const e=$("#"+id); if(e) e.addEventListener("click",()=>{ if(e.disabled) return; e.classList.toggle("on"); mTouched=true; }); });   // v12.6
 MF.forEach(k=>{ const e=$("#m"+k); if(e) e.addEventListener("input",()=>{ mTouched=true; }); });
 
 /* ---- v12.1/v12.2: MUUQAALKA - midabka app-ka + Colour Matrix (localStorage - telefoon kasta gooni) ---- */
@@ -5923,9 +5942,9 @@ MF.forEach(k=>{ const e=$("#m"+k); if(e) e.addEventListener("input",()=>{ mTouch
 /* ---- v12: laysinka + oggolaanshaha macmiilka ---- */
 const PERMS={{ perms_json|safe }};
 const PERM_OF={RISK:"risk",LOT:"lot",SLTP:"sltp",SL:"sltp",TP:"sltp",SNIPER:"sltp",SNRR:"sltp",SNSLMAX:"sltp",ADAPT:"sltp",
-  SNDAY:"day",NEWS:"prot",STEPON:"prot",STEP:"prot",STEPSTART:"prot",BE:"prot",LOCKMODE:"prot"};
+  SNDAY:"day",NEWS:"prot",STEPON:"prot",STEP:"prot",STEPSTART:"prot",BE:"prot",LOCKMODE:"prot",PROT:"prot"};   // STRAT/EMAF/STARS/LOT2/MGMT = admin
 const PERM_EL={mRISK:"risk",mDLOSS:"",mMAXDD:"",mSNIPER:"sltp",mSNDAYm:"day",mSNRR:"sltp",mSNSLMAX:"sltp",mNEWS:"prot",
-  mSL:"sltp",mTP:"sltp",mLOT:"lot",mSTEPON:"prot",mADAPT:"sltp",mLOCKMODE:"prot",mBE:"prot",mMGMT:"",mSTEP:"prot",mSTEPSTART:"prot"};
+  mLOT:"lot",mSTEP:"prot",mSTEPSTART:"prot",mEMAF:"",mLOT2:"",mSTARS:""};
 let licOK=true;
 const LKSVG='<svg class="lk" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
 function permOK(p){ return !PERMS || (licOK && !!(p && PERMS[p])); }
@@ -5936,9 +5955,11 @@ function applyPerms(){
   if(!PERMS) return;
   Object.keys(PERM_EL).forEach(id=>{ const e=$("#"+id); if(!e) return;
     if(!permOK(PERM_EL[id])) lockEl(e.closest(".frow")); });
-  if(!permOK("sltp")){ const sg=$("#mSLTP"); if(sg){ sg.classList.add("locked"); sg.querySelectorAll("button").forEach(b=>b.disabled=true); } }
+  const segLock=id=>{ const sg=$("#"+id); if(sg){ sg.classList.add("locked"); sg.querySelectorAll("button").forEach(b=>b.disabled=true); } };
+  if(!permOK("prot")) segLock("mPROT");
+  segLock("mSTRAT"); const rs=$("#rSTRAT"); if(rs) rs.classList.add("locked");   // v12.6: xeeladda = admin
   document.querySelectorAll("[data-perm]").forEach(b=>{ if(!permOK(b.dataset.perm)){ b.classList.add("lockd"); b.disabled=true; } });
-  const ss=$("#stratSel"); if(ss){ ss.disabled=true; ss.style.display="none"; const lb=document.querySelector('label[for="stratSel"]'); if(lb) lb.style.display="none"; }
+
   const r=$("#mRISK"); if(r && permOK("risk")){ r.min=PERMS.lo; r.max=PERMS.hi;
     const lab=r.closest(".frow").querySelector("span"); if(lab && !lab.querySelector(".rhint")) lab.insertAdjacentHTML("beforeend",'<small class="rhint">xadka: '+Number(PERMS.lo).toFixed(2)+' – '+Number(PERMS.hi).toFixed(2)+'%</small>'); }
   const any=Object.keys(PERM_OF).some(k=>permOK(PERM_OF[k])); const sb=$("#mSend"); if(sb && !any){ sb.disabled=true; sb.classList.add("lockd"); }
@@ -5992,57 +6013,58 @@ function paintSave(d){
     +(n?('<b>'+got+'/'+n+' chart</b> '+(all?"way qaateen":"ayaa qaatay — kuwa kale way sugayaan")):'chart online ma jiro');
 }
 
-/* ---- v9.3: habka SL/TP (SNIPER / FIXED / ATR) ---- */
-let mMode=null, mRR=3, mSniperOn=true, mModeKnown=false;
-function modeHint(){
-  const h=$("#mSLTPHint"); if(!h) return;
-  const m=mMode;
-  let t="";
-  if(m===2) t=mSniperOn?("<b>SNIPER</b> — SL sweep-ka gadaashiisa ayuu dhigaa · TP = SL × "+mRR+". SL/TP gacanta iyo ATR waa la iska dhaafayaa.")
-                      :"<b>SNIPER</b> — Sniper-ku bot-ka waa ka damman yahay: SL = zone-ka (distal), TP = RR. SL/TP gacanta waa la iska dhaafayaa.";
-  else if(m===0) t="<b>FIXED</b> — SL iyo TP waa pip-ka aad hoos ku qorto. Trade kasta isku mid.";
-  else if(m===1) t="<b>ATR</b> — SL/TP waxaa laga xisaabiyaa dhaqdhaqaaqa suuqa (ATR). Shid <b>ATR maamulo</b> si ay suuqa ula socdaan trade-ka furan.";
-  else t="Dooro habka.";
-  if(!mModeKnown) t+='<div style="margin-top:6px;color:#e0a86a">Bot-ku waa nooc hore — habkan wuxuu u baahan yahay EA v67.3.</div>';
-  h.innerHTML=t;
-  document.querySelectorAll("#mSLTP button").forEach(b=>{ const on=Number(b.dataset.m)===m; b.classList.toggle("on",on); b.setAttribute("aria-checked",on?"true":"false"); });
-  ["rSL","rTP"].forEach(id=>{ const r=$("#"+id); if(r) r.classList.toggle("off",m!==0); });
-  const ra=$("#rADAPT"); if(ra) ra.classList.toggle("off",m!==1);
+/* ---- v12.6: maamulka - xeeladda · ★ · ilaalinta faa'iidada ---- */
+let mStrat=null, mStars=null, mProt=null, mSavedAt=0;
+function segPaint(id,attr,val){ document.querySelectorAll("#"+id+" button").forEach(b=>{ const on=(String(b.dataset[attr])===String(val)); b.classList.toggle("on",on); b.setAttribute("aria-checked",on?"true":"false"); }); }
+function protHint(){
+  const h=$("#mPROTHint"); const st=$("#mSTEPSTART"), sp=$("#mSTEP");
+  const a=st&&st.value?st.value:"15", b=sp&&sp.value?sp.value:"15";
+  if(h) h.innerHTML = mProt===0 ? "<b>DAMMAN</b> — SL meesha uu ku furmay ayuu joogaa ilaa SL ama TP."
+    : mProt===1 ? "<b>BREAK-EVEN</b> — marka +"+esc(a)+" pip la gaadho, SL → gelitaanka. Kadib TP ama BE."
+    : mProt===2 ? "<b>TALLAABO</b> — +"+esc(a)+" pip kadib SL-ku kor buu u socdaa "+esc(b)+" pip kasta."
+    : "Dooro.";
+  const r1=$("#rSTEPSTART"), r2=$("#rSTEP");
+  if(r1) r1.classList.toggle("off",mProt===0);
+  if(r2) r2.classList.toggle("off",mProt!==2);
+  segPaint("mPROT","p",mProt);
 }
-document.querySelectorAll("#mSLTP button").forEach(b=>b.addEventListener("click",()=>{ mMode=Number(b.dataset.m); mTouched=true; modeHint(); }));
-const SLTP_NM=["FIXED","ATR","SNIPER"];
+document.querySelectorAll("#mPROT button").forEach(b=>b.addEventListener("click",()=>{ if(b.disabled) return; mProt=Number(b.dataset.p); mTouched=true; protHint(); }));
+document.querySelectorAll("#mSTRAT button").forEach(b=>b.addEventListener("click",()=>{ if(b.disabled) return; mStrat=Number(b.dataset.s); mTouched=true; segPaint("mSTRAT","s",mStrat); }));
+document.querySelectorAll("#mSTARS button").forEach(b=>b.addEventListener("click",()=>{ if(b.disabled) return; mStars=Number(b.dataset.v); mTouched=true; segPaint("mSTARS","v",mStars); }));
+["mSTEPSTART","mSTEP"].forEach(id=>{ const e=$("#"+id); if(e) e.addEventListener("input",protHint); });
+const STRAT_I={SR:0,SMC:1,BOTH:2};
+function paintEma(st){
+  const ch=$("#emaChip"); if(!ch || !st) return;
+  if(st.ema===undefined){ ch.hidden=true; return; }
+  ch.hidden=false; const e=Number(st.ema), on=(st.ema_on!==false);
+  ch.className="echip "+(!on?"off":(e>0?"up":(e<0?"dn":"mx")));
+  ch.querySelector("span").textContent=!on?"EMA filter: damman":(e>0?"Hadda: EMA ↑ KOR · BUY kaliya":(e<0?"Hadda: EMA ↓ HOOS · SELL kaliya":"Hadda: EMA ⇅ · H1/H4 isma raacsana · ma ganacsado"));
+}
 
 function paintSettings(st){
   if(!st) return;
+  paintEma(st);
   const note=$("#mNote");
-  const em=(st.sltp===undefined||st.sltp===null)?null:Number(st.sltp);
-  const src=em===null?("SL "+(st.sl||0)+"p · TP "+(st.tp||0)+"p")
-    :(em===0?("FIXED "+(st.sl||st.fix_sl||0)+"/"+(st.tp||st.fix_tp||0)+"p")
-      :(em===2?("SNIPER (RR 1:"+(st.rr||3)+")"):"ATR"+(st.adapt_eff?" · suuqa la socda":"")))
-    +(em!==null && Number(st.sltp_src)<0?" (.set)":"");
-  if(note) note.textContent="Bot-ku wuxuu hadda isticmaalayaa:  "+src+"  ·  Lot "
-    +(st.auto_lot?"auto":(st.lot||0))+"  ·  Step-Lock "+(st.steplock?("ON "+(st.step||0)+"p"):"OFF")
-    +"  ·  BE "+(st.be?"ON":"OFF")
-    +"  ·  "+(Number(st.lockmode)===1?"SL break-even":"SL tallaabo")
-    +((em===null && st.adaptive)?"  ·  ATR maamulaya":"");
-  const w=$("#mWarn");
-  if(w) w.innerHTML=st.mgmt_off
-    ? '<div class="nwarn" style="margin-top:10px">MAAMULKU WAA DAMMAN — trade-ku wuxuu ku xidhmayaa SL ama TP oo keliya. Break-even, trailing iyo ATR midna ma shaqeynayaan.</div>'
-    : "";
+  const prot=(st.prot!==undefined)?Number(st.prot):(st.steplock?(Number(st.lockmode)===1?1:2):(st.be?1:0));
+  const PN=["DAMMAN","BREAK-EVEN","TALLAABO"];
+  const SN={SR:"SR/SD",SMC:"SMC",BOTH:"LABADA"};
+  if(note && Date.now()-mSavedAt>8000) note.textContent="Bot-ku wuxuu hadda isticmaalayaa:  "+(st.strat?(SN[st.strat]||st.strat)+"  ·  ":"")
+    +"RR 1:"+(st.rr||3)+"  ·  Lot "+(st.auto_lot?"auto":(st.lot||0))
+    +"  ·  "+PN[prot]+(prot>0?(" +"+(st.stepstart||0)+"p"):"")
+    +(st.ema_on===undefined?"":("  ·  EMA "+(st.ema_on?"ON":"OFF")))
+    +(st.stars===undefined?"":("  ·  ★≥"+st.stars));
   if(mTouched && mSeeded) return;          // qofku wuu wax qorayaa - ha ka qaadin gacanta
   const set=(id,v)=>{ const e=$("#"+id); if(e && v!==undefined && v!==null) e.value=v; };
-  // v9.3: sanduuqyada SL/TP = pip-ka FIXED (xitaa marka habka kale la isticmaalayo - si FIXED loo diyaariyo)
-  set("mSL",(st.fix_sl!==undefined)?st.fix_sl:st.sl); set("mTP",(st.fix_tp!==undefined)?st.fix_tp:st.tp); set("mLOT",st.auto_lot?0:st.lot);
-  mModeKnown=(em!==null); mRR=Number(st.rr||3); mSniperOn=(st.sniper_on!==undefined)?!!st.sniper_on:!!st.sniper;
-  mMode=(em!==null)?em:(st.sniper?2:(Number(st.sl)>0?0:1));
-  modeHint();
+  set("mLOT",st.auto_lot?0:st.lot);
   set("mSTEP",st.step); set("mSTEPSTART",st.stepstart);
-  set("mRISK",st.risk); set("mDLOSS",st.dloss); set("mMAXDD",st.maxdd); set("mSNRR",st.rr); set("mSNSLMAX",st.snslmax);   // v10
+  set("mRISK",st.risk); set("mDLOSS",st.dloss); set("mMAXDD",st.maxdd); set("mSNRR",st.rr); set("mSNSLMAX",st.snslmax);
+  set("mLOT2",(st.lot2!==undefined)?st.lot2:70);
   if(st.snday!==undefined && $("#mSNDAY")) $("#mSNDAY").textContent=st.snday;
   swSet("mSNIPER",(st.sniper_on!==undefined)?!!st.sniper_on:!!st.sniper); swSet("mNEWS",st.news===undefined?true:!!st.news);
-  swSet("mSTEPON",st.steplock); swSet("mBE",st.be);
-  swSet("mLOCKMODE",Number(st.lockmode)===1); swSet("mADAPT",!!st.adaptive);
-  swSet("mMGMT",!st.mgmt_off);            // v7.1: ON = maamulku wuu shaqeynayaa
+  swSet("mEMAF",st.ema_on===undefined?true:!!st.ema_on);
+  mStrat=(st.strat!==undefined && STRAT_I[st.strat]!==undefined)?STRAT_I[st.strat]:null; segPaint("mSTRAT","s",mStrat);
+  mStars=(st.stars!==undefined)?Number(st.stars):2; segPaint("mSTARS","v",mStars);
+  mProt=prot; protHint();
   mSeeded=true;
 }
 function paintLocks(rows){
@@ -6064,32 +6086,30 @@ async function sendSettings(){
   const btn=$("#mSend"); const old=btn.textContent;
   const num=id=>{ const e=$("#"+id); return e&&e.value!==""?e.value:null; };
   const cmds=[];
-  const sl=num("mSL"), tp=num("mTP"), lot=num("mLOT"), stp=num("mSTEP"), sst=num("mSTEPSTART");
-  // v9.3: habka ayaa marka hore. SL/TP pip-ka waxaa la diraa FIXED oo keliya (hore 30/36 ayaa Sniper-ka jebin jiray).
-  if(mMode===0||mMode===1||mMode===2) cmds.push("SET:SLTP="+mMode);
-  if(mMode===0){
-    if(sl!==null && Number(sl)>0) cmds.push("SET:SL="+sl);
-    if(tp!==null && Number(tp)>0) cmds.push("SET:TP="+tp);
-  }
+  // v12.6: SL/TP = SNIPER oo keliya (FIXED/ATR waa la saaray) · maamulku mar walba wuu shaqeeyaa · ATR adaptive = damman
+  cmds.push("SET:SLTP=2"); cmds.push("SET:ADAPT=0"); cmds.push("SET:MGMT=1");
+  const lot=num("mLOT"), stp=num("mSTEP"), sst=num("mSTEPSTART");
   if(lot!==null) cmds.push("SET:LOT="+lot);
   if(stp!==null) cmds.push("SET:STEP="+stp);
   if(sst!==null) cmds.push("SET:STEPSTART="+sst);
-  cmds.push("SET:STEPON="+(swGet("mSTEPON")?1:0));
-  cmds.push("SET:BE="+(swGet("mBE")?1:0));
-  cmds.push("SET:LOCKMODE="+(swGet("mLOCKMODE")?1:0));
-  cmds.push("SET:ADAPT="+(swGet("mADAPT")?1:0));
-  cmds.push("SET:MGMT="+(swGet("mMGMT")?1:0));
-  // v10: sitinka cusub
-  const r2=num("mRISK"), dl=num("mDLOSS"), md=num("mMAXDD"), rr=num("mSNRR"), sm=num("mSNSLMAX");
+  if(mProt===0||mProt===1||mProt===2){
+    cmds.push("SET:PROT="+mProt);
+    cmds.push("SET:STEPON="+(mProt>0?1:0)); cmds.push("SET:LOCKMODE="+(mProt===1?1:0)); cmds.push("SET:BE=0");   // EA hore (v68.1-) sidoo kale
+  }
+  const r2=num("mRISK"), dl=num("mDLOSS"), md=num("mMAXDD"), rr=num("mSNRR"), sm=num("mSNSLMAX"), l2=num("mLOT2");
   if(r2!==null) cmds.push("SET:RISK="+r2);
   if(dl!==null) cmds.push("SET:DLOSS="+dl);
   if(md!==null) cmds.push("SET:MAXDD="+md);
   if(rr!==null) cmds.push("SET:SNRR="+rr);
   if(sm!==null) cmds.push("SET:SNSLMAX="+sm);
+  if(l2!==null) cmds.push("SET:LOT2="+Math.round(Number(l2)));
   cmds.push("SET:SNDAY="+(Number($("#mSNDAY").textContent)||0));
   cmds.push("SET:SNIPER="+(swGet("mSNIPER")?1:0));
   cmds.push("SET:NEWS="+(swGet("mNEWS")?1:0));
-  const values={}; cmds.forEach(c=>{ const m=/^SET:([A-Z]+)=(.+)$/.exec(c); if(m) values[m[1]]=m[2]; });
+  cmds.push("SET:EMAF="+(swGet("mEMAF")?1:0));
+  if(mStrat===0||mStrat===1||mStrat===2) cmds.push("SET:STRAT="+mStrat);
+  if(mStars>=1&&mStars<=3) cmds.push("SET:STARS="+mStars);
+  const values={}; cmds.forEach(c=>{ const m=/^SET:([A-Z0-9]+)=(.+)$/.exec(c); if(m) values[m[1]]=m[2]; });
   if(PERMS) Object.keys(values).forEach(k=>{ if(!permOK(PERM_OF[k])) delete values[k]; });   // v12: macmiil
   btn.disabled=true; btn.textContent="Kaydinaya…";
   let err="";
@@ -6099,7 +6119,7 @@ async function sendSettings(){
     const d=await r.json(); if(!d.ok) err=d.error||"Lama kaydin.";
   }catch(e){ err="Internet ma jiro — lama kaydin."; }
   btn.disabled=false; btn.textContent=old;
-  if(!err) mTouched=false;
+  if(!err){ mTouched=false; mSavedAt=Date.now(); }
   $("#mNote").textContent = err ? err : "La kaydiyay oo la diray. Chart kasta 20 ilbiriqsi gudahood ayuu qaadanayaa.";
   tick();
 }
@@ -6115,8 +6135,7 @@ if($("#mReset")) $("#mReset").addEventListener("click",async ()=>{
 document.querySelectorAll("[data-cmd]").forEach(b=>{
   b.addEventListener("click",()=>send(b.dataset.cmd,b));
 });
-const ss=$("#stratSel");
-if(ss)ss.addEventListener("change",()=>{ if(ss.value){send(ss.value,null); ss.value=""; }});
+
 
 async function send(cmd,btn){
   const note=$("#cmdNote"); if(!note)return;
