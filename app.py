@@ -1,23 +1,3 @@
-
-MOHA PRO app.py
-Dashboard-ka + app-ka la rakibi karo (PWA) · hal fayl
-6,718 sadar
-411 KB
-v12.7 · GOLD BASKET
-#8fce9af1
-
-KOOBI GAREE DHAMMAAN
-GitHub ku shub
-Riix KOOBI GAREE DHAMMAAN ee kor ku yaal.
-Fur repo-ga mohapro-dashboard → faylka app.py → qalinka ✏️ Edit (mobilka: ⋯ → Edit file).
-Qoraalka hore dhammaan dooro (Select all) oo tirtir.
-Paste — kan cusub ku dheji.
-Hubi hoosta faylka: sadarka ugu dambeeya waa inuu noqdaa kan hoose. Haddii kale, paste-ku wuu go'ay — dib u samee.
-Riix Commit changes → Railway si toos ah ayuu u deploy-gareeyaa (1–2 daqiiqo) → Deployments: ACTIVE.
-app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
-Haddii badhanku shaqayn waayo
-Sanduuqa hoose taabo oo hay → Select all → Copy. Waa isla koodka.
-
 # -*- coding: utf-8 -*-
 """
 MOHA PRO — Cloud Dashboard v2 (multi-user, MT5 account login)
@@ -6736,4 +6716,3 @@ T_ADMIN = """<!doctype html><html lang="so"><head><meta charset="utf-8">
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
-
