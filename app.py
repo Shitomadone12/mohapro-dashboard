@@ -2081,6 +2081,38 @@ def _new_key():
     return "MP-" + "-".join("".join(secrets.choice(_KEY_ALPH) for _ in range(4)) for _ in range(3))
 
 
+def _ea_body():
+    """v12.8.1: jidhka JSON ee EA-ga. EA v69.6 (iyo ka hor) wuxuu u diri jiray ANSI (cp1252):
+    xaraf sida '·' ama '–' -> UTF-8 khaldan -> JSON {} -> account la'aan -> 403 been ah (furaha).
+    Hadda: UTF-8 -> cp1252 -> latin-1. Haddii weli la akhriyi waayo: g._ebad=True (400, maaha 403)."""
+    cached = getattr(g, "_ebody", None)
+    if cached is not None:
+        return cached
+    d = request.get_json(silent=True, force=True)
+    bad = False
+    if d is None:
+        raw = request.get_data(cache=True) or b""
+        if raw.strip():
+            for enc in ("utf-8", "cp1252", "latin-1"):
+                try:
+                    d = json.loads(raw.decode(enc))
+                    break
+                except (UnicodeDecodeError, ValueError):
+                    d = None
+            bad = d is None
+    if not isinstance(d, dict):
+        d = {}
+    g._ebody = d
+    g._ebad = bad
+    if bad:
+        log.warning("EA body: JSON lama akhriyi karo (%d bytes) %s", len(request.get_data(cache=True) or b""), request.path)
+    return d
+
+
+def _ea_bad_body():
+    return jsonify(ok=False, error="xogta EA-ga (JSON) lama akhriyi karo"), 400
+
+
 def _presented_token():
     cached = getattr(g, "_ptok", None)          # /update wuu tirtiraa "token" jidhka -> kaydi
     if cached is not None:
@@ -2089,7 +2121,7 @@ def _presented_token():
     if auth.startswith("Bearer ") and auth[7:].strip():
         g._ptok = auth[7:].strip()
         return g._ptok
-    body = request.get_json(silent=True, force=True) or {}
+    body = _ea_body()                                      # v12.8.1
     t = str(body.get("token", "") or "") if isinstance(body, dict) else ""
     t = t or request.args.get("token", "")
     g._ptok = t
@@ -2526,7 +2558,9 @@ def _save_analysis(con, acc, d):
 def ea_update():
     if not token_ok():
         return jsonify(ok=False, error="bad token"), 401
-    d = request.get_json(silent=True, force=True) or {}
+    d = _ea_body()                                         # v12.8.1: UTF-8 / cp1252
+    if getattr(g, "_ebad", False):
+        return _ea_bad_body()
     d.pop("token", None)
 
     acc = clean_account(d.get("account"))
@@ -2575,7 +2609,9 @@ def ea_update():
 def ea_trades():
     if not token_ok():
         return jsonify(ok=False, error="bad token"), 401
-    d = request.get_json(silent=True, force=True) or {}
+    d = _ea_body()                                         # v12.8.1
+    if getattr(g, "_ebad", False):
+        return _ea_bad_body()
     acc = clean_account(d.get("account"))
     if not acc:
         acc = "bot-" + re.sub(r"[^A-Za-z0-9]", "", str(d.get("bot", "")))[:16] or "bot-unknown"
@@ -3301,7 +3337,9 @@ def _f(v, d=0.0):
 def ea_shots():
     if not token_ok():
         return jsonify(ok=False, error="bad token"), 401
-    d = request.get_json(silent=True, force=True) or {}
+    d = _ea_body()                                         # v12.8.1
+    if getattr(g, "_ebad", False):
+        return _ea_bad_body()
     acc = clean_account(d.get("account"))
     if not acc:
         return jsonify(ok=False, error="account"), 400
