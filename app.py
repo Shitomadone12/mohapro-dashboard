@@ -136,6 +136,7 @@ SET_LIMITS = {          # key: (min, max, noocaa)
     "STARS":     (1, 3,    "int"),   # ★ ugu yar
     "LOT2":      (10, 100, "int"),   # lot-ka ★★ (%)
     "PROT":      (0, 2,    "int"),   # 0 = DAMMAN, 1 = BREAK-EVEN, 2 = TALLAABO
+    "SDPROF":    (0, 2,    "int"),   # v12.8 (EA v69.6): heerka zone-ka 0 TAYO · 1 DHEXE · 2 BADAN (admin)
     # v12.7: GOLD BASKET (EA v69.0) - XAUUSD oo keliya
     "BSK":       (0, 1,    "int"),   # 1 = basket ON
     "BSKSIG":    (0, 2,    "int"),   # 0 = ZONE, 1 = EMA, 2 = LABADA
@@ -2418,6 +2419,37 @@ def _bsk_num(v, nd=2, lo=-1e9, hi=1e9):
     return round(max(lo, min(hi, f)), nd)
 
 
+CFGSET_KEYS = ("BSK", "BSKSIG")   # v12.7.1: waxa chart-ku beddeli karo (badhanka toolbar-ka)
+
+
+def _apply_cfgset(con, acc, d):
+    """v12.7.1 (EA v69.1): chart-ka ayaa badhanka 🥇 BASKET / SIGNAL beddelay -> sitinka server-ka ku dar
+    (MT5 dib u kicin -> isla doorashadii). rev-ka lama kordhiyo (amar cusub lama dirayo).
+    Macmiilka (laysin) lagama aqbalo - sitinkiisa admin-ka ayaa maamula."""
+    cs = d.get("cfgset")
+    if not isinstance(cs, dict) or not cs:
+        return
+    if _lic_row(con, acc) is not None:
+        return
+    clean = {}
+    for k in CFGSET_KEYS:
+        if k in cs:
+            ok, c = valid_command("SET:%s=%s" % (k, cs[k]))
+            if ok:
+                clean[k] = c.split("=", 1)[1]
+    if not clean:
+        return
+    r = con.execute("SELECT data,rev FROM ea_config WHERE account=?", (acc,)).fetchone()
+    merged = _jload(r["data"]) if r else {}
+    if not isinstance(merged, dict):
+        merged = {}
+    merged.update(clean)
+    con.execute(
+        "INSERT INTO ea_config(account,data,rev,updated_at) VALUES(?,?,?,?)"
+        " ON CONFLICT(account) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at",
+        (acc, json.dumps(merged), int(r["rev"]) if r else 0, time.time()))
+
+
 def _save_basket(con, acc, d):
     """v12.7 (EA v69.0): GOLD BASKET - chart-ka dahabka ayaa diraa. Chart-yada kale ma dirayaan,
     sidaas darteed xaaladda basket-ka gooni ayaa loo kaydiyaa (kv) si aan loo tirtirin."""
@@ -2430,6 +2462,15 @@ def _save_basket(con, acc, d):
            "day": {"n": int(_bsk_num(day.get("n"), 0, 0, 99)), "max": int(_bsk_num(day.get("max"), 0, 0, 99)),
                    "pl": _bsk_num(day.get("pl")), "blk": str(day.get("blk") or "")[:12]},
            "ts": time.time()}
+    cf = b.get("cfg")                                        # v12.7.1: sitinka basket-ka ee chart-ka dahabka
+    if isinstance(cf, dict):
+        out["cfg"] = {"on": 1 if _bsk_num(cf.get("on"), 0, 0, 1) else 0, "sig": int(_bsk_num(cf.get("sig"), 0, 0, 2)),
+                      "n": int(_bsk_num(cf.get("n"), 0, 2, 5)), "ent": int(_bsk_num(cf.get("ent"), 0, 0, 1)),
+                      "risk": _bsk_num(cf.get("risk"), 2, 0.05, 5), "max": int(_bsk_num(cf.get("max"), 0, 0, 100000)),
+                      "day": int(_bsk_num(cf.get("day"), 0, 1, 10)), "spr": int(_bsk_num(cf.get("spr"), 0, 5, 500)),
+                      "tp": int(_bsk_num(cf.get("tp"), 0, 0, 1)), "tgt": int(_bsk_num(cf.get("tgt"), 0, 1, 100000)),
+                      "be": 1 if _bsk_num(cf.get("be"), 0, 0, 1) else 0, "lock": 1 if _bsk_num(cf.get("lock"), 0, 0, 1) else 0,
+                      "ses": 1 if _bsk_num(cf.get("ses"), 0, 0, 1) else 0, "blk": 1 if _bsk_num(cf.get("blk"), 0, 0, 1) else 0}
     if out["act"]:
         dg = int(_bsk_num(b.get("dg"), 0, 0, 8))
         out.update({"id": int(_bsk_num(b.get("id"), 0, 0, 10**7)), "dir": "SELL" if str(b.get("dir")) == "SELL" else "BUY",
@@ -2507,6 +2548,7 @@ def ea_update():
 
         _save_closed(con, acc, d.get("trades"))
         _save_basket(con, acc, d)            # v12.7: GOLD BASKET (chart-ka dahabka oo keliya)
+        _apply_cfgset(con, acc, d)           # v12.7.1: badhanka 🥇 BASKET ee chart-ka -> sitinka la kaydiyay
         _save_analysis(con, acc, d)          # v7: analiiska live (chart kasta = saf)
         _save_levels(con, acc, d)            # v12.3: heerarka & range
 
@@ -2601,7 +2643,7 @@ def _collapse_cmds(cmds):
 # --------------------------------------------------------------------------
 CFG_KEYS = ("RISK", "DLOSS", "MAXDD", "SNIPER", "SNDAY", "SNRR", "SNSLMAX", "NEWS",
             "SLTP", "SL", "TP", "LOT", "STEPON", "STEP", "STEPSTART", "BE", "LOCKMODE", "ADAPT", "MGMT",
-            "STRAT", "EMAF", "STARS", "LOT2", "PROT") + BSK_KEYS   # v12.6 · v12.7 GOLD BASKET
+            "STRAT", "EMAF", "STARS", "LOT2", "PROT", "SDPROF") + BSK_KEYS   # v12.6 · v12.7 GOLD BASKET · v12.8 SDPROF
 
 
 def _cfg_cmds(vals, rev):
@@ -4139,6 +4181,22 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 .bsub{font-size:10.5px;font-weight:800;letter-spacing:.1em;color:#b89448;padding:12px 0 2px;border-top:1px dashed rgba(217,174,85,.22);margin-top:6px}
 .bskg.off .bsub,.bskg.off .frow,.bskg.off .sltph:not(:first-of-type){opacity:.45}
 .bskc{border-color:rgba(217,174,85,.4)}
+/* v12.8: heerka zone-ka + sababta trade la'aanta */
+.sdtbl{width:100%;border-collapse:collapse;font-size:11.5px;margin:4px 0 2px}
+.sdtbl th,.sdtbl td{padding:5px 4px;border-bottom:1px solid var(--line);text-align:center}
+.sdtbl th{color:var(--ink3);font-weight:700}.sdtbl td:first-child,.sdtbl th:first-child{text-align:left}
+.sdtbl td.on,.sdtbl th.on{color:#f0cf86;font-weight:800;background:rgba(217,174,85,.08)}
+.rsnc .sec-t{margin:0 0 6px}
+.rsnal{background:linear-gradient(180deg,#3a1418,#2a0f12);border:1px solid #7a2a31;border-radius:12px;padding:10px 12px;margin-bottom:12px}
+.rsnal>b{color:#ffb3b3;font-size:13.5px;display:block}.rsnal p b{color:#fff}.rsnal p{font-size:12px;color:#e8c2c2;margin:4px 0 0;line-height:1.45}
+.rsntot{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:0 0 8px}
+.rsntot div{border:1px solid var(--line);border-radius:10px;padding:7px 4px;text-align:center;font-size:10.5px;color:var(--ink3)}
+.rsntot b{display:block;font-size:18px;color:var(--ink)}
+.rsnr{display:grid;grid-template-columns:74px 1fr auto;gap:8px;align-items:center;padding:8px 2px;border-bottom:1px solid var(--line);font-size:12.5px}
+.rsnr:last-child{border-bottom:none}
+.rsnr .sy{font-weight:800}.rsnr .wy{min-width:0;overflow-wrap:anywhere}.rsnr .wy small{display:block;color:var(--ink3);font-size:10.5px}
+.rb{font-size:10px;font-weight:800;padding:3px 7px;border-radius:6px;white-space:nowrap}
+.rb.r{background:#361519;color:#f2a3a3}.rb.a{background:#33280e;color:#f0c070}.rb.g{background:#12301f;color:#7fe0ab}.rb.c{background:rgba(139,143,153,.15);color:#8b8f99}
 .bskh{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .bchip{font-size:11px;font-weight:900;padding:4px 9px;border-radius:8px;background:#26262a;color:var(--ink2);white-space:nowrap}
 .bchip.run{background:#12301f;color:#7fe0ab}.bchip.off{background:#361519;color:#f2a3a3}.bchip.wait{background:#33280e;color:#f0c070}
@@ -4542,6 +4600,14 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
         <span class="licpill" id="licPill">—</span></div>
     </div>
 
+    <!-- v12.8: SABABTA TRADE LA'AANTA (EA v69.6) -->
+    <div class="card rsnc" id="rsnCard" style="margin-bottom:16px" hidden>
+      <div class="rsnal" id="rsnAlert" hidden><b id="rsnAT">—</b><p id="rsnAP">—</p></div>
+      <p class="sec-t">Sababta · hadda</p>
+      <div class="rsntot"><div><b id="rsnSig">0</b>signal</div><div><b id="rsnZn">0</b>zone hadda</div><div><b id="rsnN">0</b>chart</div></div>
+      <div id="rsnRows"></div>
+    </div>
+
     <!-- v12.7: GOLD BASKET - basket-ka hadda socda (EA v69.0) -->
     <div class="card bskc" id="bskCard" style="margin-bottom:16px" hidden>
       <div class="bskh"><span class="gold"><i class="coin"></i><span id="bskTitle">GOLD BASKET</span></span><span class="bchip" id="bskState">—</span></div>
@@ -4663,6 +4729,19 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
           <button type="button" data-s="2" role="radio">LABADA<small>2-da</small></button>
         </div></div>
         <div class="frow"><span>Sniper <small>(CHoCH M5 gudaha zone / OB)</small></span><span><button class="sw" id="mSNIPER" type="button" aria-label="Sniper"><i></i></button></span></div>
+        <!-- v12.8 (EA v69.6): heerka zone-ka -->
+        <div class="frow"><span>Heerka zone-ka <small>inta zone ee la aqbalayo</small></span></div>
+        <div class="frow frow-col" id="rSDPROF"><div class="sg3" id="mSDPROF" role="radiogroup" aria-label="Heerka zone-ka">
+          <button type="button" data-v="0" role="radio">TAYO<small>adag · yar</small></button>
+          <button type="button" data-v="1" role="radio">DHEXE<small>isku dheelli</small></button>
+          <button type="button" data-v="2" role="radio">BADAN<small>trade badan</small></button>
+        </div></div>
+        <table class="sdtbl" id="sdTbl"><tr><th></th><th data-c="0">TAYO</th><th data-c="1">DHEXE</th><th data-c="2">BADAN</th></tr>
+          <tr><td>Impulse ugu yar</td><td data-c="0">25p</td><td data-c="1">20p</td><td data-c="2">15p</td></tr>
+          <tr><td>BOS khasab</td><td data-c="0">✓</td><td data-c="1">✓</td><td data-c="2">✕</td></tr>
+          <tr><td>Taabasho (saac)</td><td data-c="0">6</td><td data-c="1">8</td><td data-c="2">12</td></tr>
+          <tr><td>Gelitaan ≤</td><td data-c="0">8p</td><td data-c="1">10p</td><td data-c="2">12p</td></tr></table>
+        <div class="sltph" id="mSDPROFHint">—</div>
         <div class="frow"><span>Trade maalintii <small>(SR + SMC wadaag · chart-yada oo dhan)</small></span><span class="stp"><button type="button" id="mSNDAYm" aria-label="Ka yaree">−</button><b id="mSNDAY">3</b><button type="button" id="mSNDAYp" aria-label="Ku dar">+</button></span></div>
         <div class="frow"><span>EMA filter <small>(EMA50 H1 + EMA200 H4 · RANGE → ma ganacsado)</small></span><span><button class="sw" id="mEMAF" type="button" aria-label="EMA filter"><i></i></button></span></div>
         <div class="frow frow-col" id="rEMA"><div class="echip" id="emaChip" hidden><i></i><span>EMA</span></div></div>
@@ -4987,6 +5066,7 @@ function paint(d){
   const vv=verOf(d); $("#heroVer").textContent=vv?("v"+vv):"";
   $("#heroAcc").textContent="#"+d.account;
   setBrand(d.brand||"");   // v4.1: madhan -> kii hore ayaa la sii hayaa
+  BSKCFG=(d.bsk && d.bsk.cfg)?d.bsk.cfg:null;       // v12.7.1
   paintSettings(x.settings); paintLocks(x.locks);   // v5
   paintRaw(x, d);                                   // v6
   paintAnalysis(d.analysis);                        // v7
@@ -4996,6 +5076,7 @@ function paint(d){
   paintMyKey(d);                                    // v11
   paintLic(d);                                      // v12
   paintBasket(d.bsk);                               // v12.7
+  paintReasons(d);                                  // v12.8
   $("#st").textContent=d.online?(RS.long+" · "+(d.age||0)+"s ka hor")
     :(d.age==null?"Xog lama helin":"OFFLINE · "+d.age+"s ka hor");
   if(MK.closed){
@@ -5799,6 +5880,44 @@ function verOf(d){
 }
 const FR_NM=["News","Session","Regime/ADX","MTF","EMA200","Correlation","Hal trade/H1","Spread/trade furan","ATR yar","RR yar","SL/TP"];
 
+/* ---- v12.8 (EA v69.6): SABABTA TRADE LA'AANTA ---- */
+const RC_B={ALGO:["ALGO OFF","r"],KEY:["FURAHA","r"],STOP:["DAMMAN","r"],LIC:["LAYSIN","r"],EMER:["EMERGENCY","r"],PAIR:["✕","r"],
+  NEWS:["NEWS","a"],TIME:["WAQTI","c"],MAX:["XAD","a"],ZONE:["ZONE ✕","c"],WAIT:["SUG","a"],SIG:["SIGNAL","g"],BSK:["BASKET","a"]};
+const RC_P={ALGO:0,KEY:1,EMER:2,LIC:3,STOP:4,PAIR:5,SIG:6,BSK:7,WAIT:8,MAX:9,NEWS:10,ZONE:11,TIME:12};
+function rcOf(a){
+  if(a.rc && RC_B[a.rc]) return a.rc;   // EA v69.6+
+  const s=String(a.status||"");
+  if(s==="ALGO_OFF") return "ALGO"; if(s==="LICENSE") return "LIC"; if(s==="STOPPED") return "STOP"; if(s==="EMERGENCY") return "EMER";
+  if(a.st==="NONE") return "ZONE"; if(a.st==="SIGNAL") return "SIG"; if(a.st==="NEWS") return "NEWS";
+  return "WAIT";
+}
+function paintReasons(d){
+  const c=$("#rsnCard"); if(!c) return;
+  const rows=chartRows(d).slice();
+  if(!rows.length){ c.hidden=true; return; }
+  c.hidden=false;
+  rows.sort((a,b)=>(RC_P[rcOf(a)]-RC_P[rcOf(b)])||String(a.sym).localeCompare(String(b.sym)));
+  let sig=0, zn=0, nAlgo=0; const keys=[], lics=[];
+  rows.forEach(a=>{ sig+=Number(a.sig)||0; zn+=Number(a.zn!==undefined?a.zn:a.zones)||0; const k=rcOf(a);
+    if(k==="ALGO") nAlgo++; if(k==="KEY") keys.push(a.sym); if(k==="LIC") lics.push(a.sym); });
+  $("#rsnSig").textContent=sig; $("#rsnZn").textContent=zn; $("#rsnN").textContent=rows.length;
+  const al=$("#rsnAlert"), at=$("#rsnAT"), ap=$("#rsnAP");
+  if(nAlgo){ al.hidden=false; at.textContent="⚠ ALGO TRADING WAA DAMMAN (MT5) · "+nAlgo+"/"+rows.length+" chart";
+    ap.innerHTML="Bot-yadu trade ma furi karaan. MT5 → badhanka <b>Algo Trading</b> shid · Tools → Options → Expert Advisors → ka saar <b>“Disable algorithmic trading when the chart symbol or period has been changed”</b>"; }
+  else if(keys.length){ al.hidden=false; at.textContent="⚠ FURAHA WAA LA DIIDAY · "+keys.join(", ");
+    ap.textContent="Chart-kaas EA-ga ka saar oo dib ugu dar (furaha saxda ah). Trade cusub ma furmayo ilaa furaha la saxo."; }
+  else if(lics.length){ al.hidden=false; at.textContent="⚠ LAYSIN · "+lics.join(", "); ap.textContent="Trade cusub ma furmayo — admin-ka la xiriir."; }
+  else al.hidden=true;
+  $("#rsnRows").innerHTML=rows.map(a=>{
+    const k=rcOf(a), B=RC_B[k]||["—","c"];
+    let t=a.rt||a.why||(AN_LBL[a.st]||"—"), sub="";
+    if(k==="WAIT" && Number(a.dist)>0 && !a.rt) sub="ugu dhow: "+Number(a.dist).toFixed(1)+"p";
+    if(a.ver) sub=(sub?sub+" · ":"")+"v"+a.ver;
+    return '<div class="rsnr"><span class="sy">'+esc(a.sym||"—")+'</span><span class="wy">'+esc(t)+(sub?'<small>'+esc(sub)+'</small>':'')
+      +'</span><span class="rb '+B[1]+'">'+esc(B[0])+'</span></div>';
+  }).join("");
+}
+
 /* ---- v7: ANALIISKA LIVE ---- */
 const AN_LBL={SIGNAL:"SIGNAL DIYAAR",IN:"ZONE GUDIHIISA",NEAR:"U DHOW",
               WAIT:"SUGAYA",NONE:"ZONE MA JIRTO",NEWS:"NEWS — JOOJIN"};
@@ -6118,6 +6237,7 @@ function applyPerms(){
   const segLock=id=>{ const sg=$("#"+id); if(sg){ sg.classList.add("locked"); sg.querySelectorAll("button").forEach(b=>b.disabled=true); } };
   if(!permOK("prot")) segLock("mPROT");
   segLock("mSTRAT"); const rs=$("#rSTRAT"); if(rs) rs.classList.add("locked");   // v12.6: xeeladda = admin
+  segLock("mSDPROF"); const rsd=$("#rSDPROF"); if(rsd) rsd.classList.add("locked");   // v12.8: heerka zone-ka = admin
   ["mBSKSIG","mBSKENT","mBSKTP"].forEach(segLock); const bsw=$("#mBSK"); if(bsw){ bsw.disabled=true; bsw.classList.add("lockd"); }   // v12.7
   document.querySelectorAll("[data-perm]").forEach(b=>{ if(!permOK(b.dataset.perm)){ b.classList.add("lockd"); b.disabled=true; } });
 
@@ -6191,6 +6311,18 @@ function protHint(){
 }
 document.querySelectorAll("#mPROT button").forEach(b=>b.addEventListener("click",()=>{ if(b.disabled) return; mProt=Number(b.dataset.p); mTouched=true; protHint(); }));
 document.querySelectorAll("#mSTRAT button").forEach(b=>b.addEventListener("click",()=>{ if(b.disabled) return; mStrat=Number(b.dataset.s); mTouched=true; segPaint("mSTRAT","s",mStrat); }));
+/* v12.8 (EA v69.6): heerka zone-ka */
+let mSdProf=null;
+function sdPaint(){
+  segPaint("mSDPROF","v",mSdProf);
+  document.querySelectorAll("#sdTbl [data-c]").forEach(c=>c.classList.toggle("on",String(c.dataset.c)===String(mSdProf)));
+  const h=$("#mSDPROFHint"); if(!h) return;
+  h.innerHTML = mSdProf===0 ? "<b>TAYO:</b> zone-yada ugu xoogga badan oo keliya → trade aad u yar."
+    : mSdProf===1 ? "<b>DHEXE:</b> BOS + impulse 20p waa khasab. Warbixinta: zone-yada badankood waa la diiday."
+    : mSdProf===2 ? "<b>BADAN:</b> BOS khasab ma aha · impulse 15p · taabasho 12 saac → fursado badan (Sniper CHoCH weli wuu xaqiijiyaa)."
+    : "EA v69.6 ama ka dambe ayaa loo baahan yahay.";
+}
+document.querySelectorAll("#mSDPROF button").forEach(b=>b.addEventListener("click",()=>{ if(b.disabled) return; mSdProf=Number(b.dataset.v); mTouched=true; sdPaint(); }));
 document.querySelectorAll("#mSTARS button").forEach(b=>b.addEventListener("click",()=>{ if(b.disabled) return; mStars=Number(b.dataset.v); mTouched=true; segPaint("mSTARS","v",mStars); }));
 ["mSTEPSTART","mSTEP"].forEach(id=>{ const e=$("#"+id); if(e) e.addEventListener("input",protHint); });
 const STRAT_I={SR:0,SMC:1,BOTH:2};
@@ -6226,7 +6358,10 @@ function bskStep(id,d,lo,hi){ const e=$("#"+id); if(!e) return; let v=Number(e.t
   if(m) m.addEventListener("click",()=>{ if(!m.disabled) bskStep(id,-1,lo,hi); });
   if(p) p.addEventListener("click",()=>{ if(!p.disabled) bskStep(id,1,lo,hi); });
 });
+let BSKCFG=null;   // v12.7.1: sitinka chart-ka dahabka (chart-yada kale kama duwanaan karaan)
 function bskSeed(st){
+  if(BSKCFG){ const c=BSKCFG; st=Object.assign({},st||{},{bsk_on:!!c.on,bsk_sig:c.sig,bsk_n:c.n,bsk_ent:c.ent,bsk_risk:c.risk,bsk_max:c.max,bsk_day:c.day,
+    bsk_spr:c.spr,bsk_tp:c.tp,bsk_tgt:c.tgt,bsk_be:!!c.be,bsk_lock:!!c.lock,bsk_ses:!!c.ses,bsk_blk:!!c.blk}); }
   if(!st || st.bsk_on===undefined){ bskHints(); bskGrpPaint(); return; }
   const set=(id,v)=>{ const e=$("#"+id); if(e && v!==undefined && v!==null) e.value=v; };
   swSet("mBSK",!!st.bsk_on); swSet("mBSKBE",!!st.bsk_be); swSet("mBSKLOCK",!!st.bsk_lock); swSet("mBSKSES",!!st.bsk_ses); swSet("mBSKBLK",!!st.bsk_blk);
@@ -6319,6 +6454,7 @@ function paintSettings(st){
   swSet("mEMAF",st.ema_on===undefined?true:!!st.ema_on);
   mStrat=(st.strat!==undefined && STRAT_I[st.strat]!==undefined)?STRAT_I[st.strat]:null; segPaint("mSTRAT","s",mStrat);
   mStars=(st.stars!==undefined)?Number(st.stars):2; segPaint("mSTARS","v",mStars);
+  mSdProf=(st.sdprof!==undefined)?Number(st.sdprof):null; sdPaint();   // v12.8
   mProt=prot; protHint();
   bskSeed(st);   // v12.7
   mSeeded=true;
@@ -6365,6 +6501,7 @@ async function sendSettings(){
   cmds.push("SET:EMAF="+(swGet("mEMAF")?1:0));
   if(mStrat===0||mStrat===1||mStrat===2) cmds.push("SET:STRAT="+mStrat);
   if(mStars>=1&&mStars<=3) cmds.push("SET:STARS="+mStars);
+  if(mSdProf===0||mSdProf===1||mSdProf===2) cmds.push("SET:SDPROF="+mSdProf);   // v12.8
   bskCmds(cmds);   // v12.7: GOLD BASKET
   const values={}; cmds.forEach(c=>{ const m=/^SET:([A-Z0-9]+)=(.+)$/.exec(c); if(m) values[m[1]]=m[2]; });
   if(PERMS) Object.keys(values).forEach(k=>{ if(!permOK(PERM_OF[k])) delete values[k]; });   // v12: macmiil
