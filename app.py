@@ -152,9 +152,23 @@ SET_LIMITS = {          # key: (min, max, noocaa)
     "BSKLOCK":   (0, 1,    "int"),   # qufulka faa'iidada
     "BSKSES":    (0, 1,    "int"),   # waqtiga dahabka
     "BSKBLK":    (0, 1,    "int"),   # 2 khasaare -> jihada jooji
+    # v12.9: ASIA BREAKOUT (EA v69.7) - XAUUSD · admin
+    "ASIA":      (0, 1,    "int"),   # 1 = ON
+    "ASIADIR":   (0, 2,    "int"),   # 0 = LABADA, 1 = BUY, 2 = SELL
+    "ASIATR":    (0, 1,    "int"),   # trend H4 filter
+    "ASIAMAXR":  (0, 1000, "int"),   # range ugu weyn $ (0 = off)
+    "ASIASL":    (0, 1,    "int"),   # 0 = bartamaha, 1 = dhinaca kale
+    "ASIATP":    (0.5, 5,  "float"), # TP = N x R
+    "ASIARISK":  (0.05, 5, "float"), # risk %
+    "ASIAMAX":   (0, 100000, "int"), # xad $ adag
+    "ASIAL":     (1, 3,    "int"),   # lakabyada
+    "ASIAWE":    (8, 20,   "int"),   # daaqadda jebinta: dhammaad (GMT)
+    "ASIACL":    (13, 23,  "int"),   # xidh (GMT)
 }
 BSK_KEYS = ("BSK", "BSKSIG", "BSKN", "BSKENT", "BSKRISK", "BSKMAX", "BSKDAY", "BSKSPR",
             "BSKTP", "BSKTGT", "BSKBE", "BSKLOCK", "BSKSES", "BSKBLK")
+ASIA_KEYS = ("ASIA", "ASIADIR", "ASIATR", "ASIAMAXR", "ASIASL", "ASIATP", "ASIARISK", "ASIAMAX",
+             "ASIAL", "ASIAWE", "ASIACL")   # v12.9
 
 def valid_command(cmd):
     """True + amarka nadiifsan, ama False + sabab."""
@@ -2527,6 +2541,46 @@ def _save_basket(con, acc, d):
                 ("bsk:" + acc, json.dumps(out, separators=(",", ":"), ensure_ascii=False)))
 
 
+def _save_asia(con, acc, d):
+    """v12.9 (EA v69.7): ASIA BREAKOUT - chart-ka dahabka ayaa diraa -> kv (chart-yada kale ma tirtiraan)."""
+    a = d.get("asia")
+    if not isinstance(a, dict) or not a.get("gold"):
+        return
+    dg = int(_bsk_num(a.get("dg"), 0, 0, 8))
+    st = str(a.get("st") or "")
+    out = {"sym": str(a.get("sym") or "")[:16], "on": bool(a.get("on")),
+           "st": st if st in ("OFF", "RANGE", "WAIT", "OPEN", "DONE", "SKIP") else "WAIT",
+           "why": str(a.get("why") or "")[:160], "day": int(_bsk_num(a.get("day"), 0, 0, 99999999)), "dg": dg,
+           "hi": _bsk_num(a.get("hi"), dg, 0, 1e7), "lo": _bsk_num(a.get("lo"), dg, 0, 1e7), "px": _bsk_num(a.get("px"), dg, 0, 1e7),
+           "tr": int(_bsk_num(a.get("tr"), 0, -1, 1)), "rs": int(_bsk_num(a.get("rs"), 0, 0, 23)), "re": int(_bsk_num(a.get("re"), 0, 0, 23)),
+           "we": int(_bsk_num(a.get("we"), 0, 0, 23)), "cl": int(_bsk_num(a.get("cl"), 0, 0, 23)),
+           "bal": _bsk_num(a.get("bal"), 2, 0, 1e10), "vpp": _bsk_num(a.get("vpp"), 2, 0, 1e7), "mn": _bsk_num(a.get("mn"), 2, 0, 100),
+           "ts": time.time()}
+    cf = a.get("cfg")
+    if isinstance(cf, dict):
+        out["cfg"] = {"on": 1 if _bsk_num(cf.get("on"), 0, 0, 1) else 0, "dir": int(_bsk_num(cf.get("dir"), 0, 0, 2)),
+                      "tr": 1 if _bsk_num(cf.get("tr"), 0, 0, 1) else 0, "maxr": int(_bsk_num(cf.get("maxr"), 0, 0, 1000)),
+                      "sl": int(_bsk_num(cf.get("sl"), 0, 0, 1)), "tp": _bsk_num(cf.get("tp"), 1, 0.5, 5),
+                      "risk": _bsk_num(cf.get("risk"), 2, 0.05, 5), "max": int(_bsk_num(cf.get("max"), 0, 0, 100000)),
+                      "l": int(_bsk_num(cf.get("l"), 0, 1, 3)), "we": int(_bsk_num(cf.get("we"), 0, 8, 20)),
+                      "cl": int(_bsk_num(cf.get("cl"), 0, 13, 23))}
+    if out["st"] == "OPEN":
+        out.update({"dir": "SELL" if str(a.get("dir")) == "SELL" else "BUY",
+                    "e": _bsk_num(a.get("e"), dg, 0, 1e7), "sl": _bsk_num(a.get("sl"), dg, 0, 1e7), "tp": _bsk_num(a.get("tp"), dg, 0, 1e7),
+                    "lot": _bsk_num(a.get("lot"), 2, 0, 1e4), "n": int(_bsk_num(a.get("n"), 0, 0, 3)),
+                    "fill": int(_bsk_num(a.get("fill"), 0, 0, 3)), "open": int(_bsk_num(a.get("open"), 0, 0, 3)),
+                    "pl": _bsk_num(a.get("pl")), "risk": _bsk_num(a.get("risk")), "t0": int(_bsk_num(a.get("t0"), 0, 0, 4e9))})
+    hist = []
+    for h in (a.get("hist") or [])[:7]:
+        if not isinstance(h, dict):
+            continue
+        hist.append({"d": int(_bsk_num(h.get("d"), 0, 0, 99999999)), "dir": int(_bsk_num(h.get("dir"), 0, -1, 1)),
+                     "pl": _bsk_num(h.get("pl")), "r": _bsk_num(h.get("r"), 2, -50, 50), "x": int(_bsk_num(h.get("x"), 0, 0, 9))})
+    out["hist"] = hist
+    con.execute("INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                ("asia:" + acc, json.dumps(out, separators=(",", ":"), ensure_ascii=False)))
+
+
 def _save_analysis(con, acc, d):
     """v7: EA-du chart kasta wuxuu soo diraa analiiskiisa. Saf kasta = hal symbol."""
     a = d.get("analysis")
@@ -2582,6 +2636,7 @@ def ea_update():
 
         _save_closed(con, acc, d.get("trades"))
         _save_basket(con, acc, d)            # v12.7: GOLD BASKET (chart-ka dahabka oo keliya)
+        _save_asia(con, acc, d)              # v12.9: ASIA BREAKOUT (chart-ka dahabka oo keliya)
         _apply_cfgset(con, acc, d)           # v12.7.1: badhanka 🥇 BASKET ee chart-ka -> sitinka la kaydiyay
         _save_analysis(con, acc, d)          # v7: analiiska live (chart kasta = saf)
         _save_levels(con, acc, d)            # v12.3: heerarka & range
@@ -2679,7 +2734,7 @@ def _collapse_cmds(cmds):
 # --------------------------------------------------------------------------
 CFG_KEYS = ("RISK", "DLOSS", "MAXDD", "SNIPER", "SNDAY", "SNRR", "SNSLMAX", "NEWS",
             "SLTP", "SL", "TP", "LOT", "STEPON", "STEP", "STEPSTART", "BE", "LOCKMODE", "ADAPT", "MGMT",
-            "STRAT", "EMAF", "STARS", "LOT2", "PROT", "SDPROF") + BSK_KEYS   # v12.6 · v12.7 GOLD BASKET · v12.8 SDPROF
+            "STRAT", "EMAF", "STARS", "LOT2", "PROT", "SDPROF") + BSK_KEYS + ASIA_KEYS   # v12.6 · v12.7 GOLD BASKET · v12.8 SDPROF · v12.9 ASIA
 
 
 def _cfg_cmds(vals, rev):
@@ -3115,6 +3170,7 @@ def api_state():
         kseen = con.execute("SELECT last_seen FROM bot_keys WHERE account=?", (acc,)).fetchone()        # v11
         lic = _lic_info(con, acc, now)                                                                     # v12
         bskr = con.execute("SELECT v FROM kv WHERE k=?", ("bsk:" + acc,)).fetchone()                       # v12.7
+        asr = con.execute("SELECT v FROM kv WHERE k=?", ("asia:" + acc,)).fetchone()                       # v12.9
 
     data = json.loads(snap["data"]) if snap else {}
     age = (now - snap["updated_at"]) if snap else None
@@ -3123,6 +3179,11 @@ def api_state():
         bsk["age"] = int(now - float(bsk.get("ts") or 0))
         if bsk["age"] > ANALYSIS_TTL:
             bsk = None
+    asia = _jload(asr["v"]) if asr else None                  # v12.9: ASIA BREAKOUT
+    if isinstance(asia, dict):
+        asia["age"] = int(now - float(asia.get("ts") or 0))
+        if asia["age"] > ANALYSIS_TTL:
+            asia = None
     online = (age is not None and age < STALE_SECONDS)
 
     ct = []
@@ -3162,6 +3223,7 @@ def api_state():
         key_seen_age=(int(now - float(kseen["last_seen"])) if (kseen and kseen["last_seen"]) else None),
         lic=lic,
         bsk=bsk,
+        asia=asia,
     )
 
 
@@ -4219,6 +4281,14 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 .bsub{font-size:10.5px;font-weight:800;letter-spacing:.1em;color:#b89448;padding:12px 0 2px;border-top:1px dashed rgba(217,174,85,.22);margin-top:6px}
 .bskg.off .bsub,.bskg.off .frow,.bskg.off .sltph:not(:first-of-type){opacity:.45}
 .bskc{border-color:rgba(217,174,85,.4)}
+/* v12.9: ASIA BREAKOUT */
+.assvg{width:100%;height:auto;display:block;margin-top:10px;background:#0e110e;border:1px solid var(--line);border-radius:12px}
+.astot{margin-top:10px}.astot b.up{color:#7fe0ab}.astot b.dn{color:#f2a3a3}
+.ashr{display:grid;grid-template-columns:54px 1fr auto;gap:8px;align-items:center;padding:7px 2px;border-bottom:1px solid var(--line);font-size:12.5px}
+.ashr:last-child{border-bottom:none}.ashr .d{color:var(--ink3);font-variant-numeric:tabular-nums}.ashr .p{font-weight:800;font-variant-numeric:tabular-nums}
+.ashr .g{color:#7fe0ab}.ashr .r{color:#f2a3a3}.ashr .m{color:var(--ink3)}
+.aswarn{color:#f0d9a0!important;background:#1a1609;border:1px solid #6b5320;border-radius:10px;padding:8px 10px!important;margin:6px 0}
+.asln{font-size:12.5px;color:var(--ink2);margin-top:8px;line-height:1.5}.asln b{color:var(--ink)}
 /* v12.8: heerka zone-ka + sababta trade la'aanta */
 .sdtbl{width:100%;border-collapse:collapse;font-size:11.5px;margin:4px 0 2px}
 .sdtbl th,.sdtbl td{padding:5px 4px;border-bottom:1px solid var(--line);text-align:center}
@@ -4646,6 +4716,21 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
       <div id="rsnRows"></div>
     </div>
 
+    <!-- v12.9: ASIA BREAKOUT (EA v69.7) -->
+    <div class="card bskc" id="asCard" style="margin-bottom:16px" hidden>
+      <div class="bskh"><span class="gold"><i class="coin"></i><span id="asTitle">ASIA BREAKOUT</span></span><span class="bchip" id="asState">—</span></div>
+      <svg class="assvg" id="asSvg" viewBox="0 0 400 200" role="img" aria-label="Asia range iyo qiimaha hadda"></svg>
+      <div class="rsntot astot"><div><b id="asRng">—</b>range maanta</div><div><b id="asTr">—</b>trend H4</div><div><b id="asCnt">—</b>trade maanta</div></div>
+      <div id="asLive" hidden>
+        <div class="bbig"><b id="asPL">—</b><span id="asSub">—</span></div>
+        <div class="asln" id="asLvl">—</div>
+      </div>
+      <div class="bidle" id="asWhy">—</div>
+      <p class="sec-t" style="margin:14px 0 2px">7-dii maalmood ee u dambeeyay</p>
+      <div id="asHist"></div>
+      <div class="bday"><span>Wadar · ASIA</span><b id="asSum">—</b></div>
+    </div>
+
     <!-- v12.7: GOLD BASKET - basket-ka hadda socda (EA v69.0) -->
     <div class="card bskc" id="bskCard" style="margin-bottom:16px" hidden>
       <div class="bskh"><span class="gold"><i class="coin"></i><span id="bskTitle">GOLD BASKET</span></span><span class="bchip" id="bskState">—</span></div>
@@ -4804,9 +4889,50 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
         <div class="frow" id="rSTEPSTART"><span>Bilowga <small>(faa'iidada loo baahan yahay)</small></span><span><input id="mSTEPSTART" type="number" min="1" max="5000" step="1"> <i>pip</i></span></div>
         <div class="frow" id="rSTEP"><span>Tallaabo kasta <small>(TALLAABO oo keliya)</small></span><span><input id="mSTEP" type="number" min="1" max="5000" step="1"> <i>pip</i></span></div>
       </div>
+      <!-- v12.9: ASIA BREAKOUT (EA v69.7) -->
+      <div class="grp bskg" id="asGrp">
+        <div class="gh bskgh"><span class="gold"><i class="coin"></i>5 · ASIA BREAKOUT <small>XAUUSD</small></span><button class="sw" id="mASIA" type="button" aria-label="ASIA BREAKOUT"><i></i></button></div>
+        <div class="bsub" style="border-top:none;margin-top:0">XEELADDA DAHABKA</div>
+        <div class="frow frow-col" id="rGOLD"><div class="sg3" id="mGOLD" role="radiogroup" aria-label="Xeeladda dahabka">
+          <button type="button" data-v="0" role="radio">EMA BASKET<small>(hore)</small></button>
+          <button type="button" data-v="1" role="radio">ASIA<small>breakout</small></button>
+          <button type="button" data-v="2" role="radio">LABADA<small>mid kasta</small></button>
+        </div></div>
+        <div class="sltph">Asia (00–07 GMT) sare iyo hoos ayaa la calaamadeeyaa → London jebinta ayaa la raacaa. <b>Maalintii 1 trade.</b> Baaritaan 6 bilood: 97 trade · win 50% · <b>+29R</b> · PF 1.67.</div>
+        <div class="bsub">1 · WAQTIGA (GMT)</div>
+        <div class="frow"><span>Asia range <small>sare / hoos laga qaado</small></span><span><b>00 → 07</b></span></div>
+        <div class="frow"><span>Daaqadda jebinta <small>07 → saacaddan · kadib maanta ma furmo</small></span><span class="stp"><button type="button" id="mASIAWEm" aria-label="Ka yaree">−</button><b id="mASIAWE">12</b><button type="button" id="mASIAWEp" aria-label="Ku dar">+</button></span></div>
+        <div class="frow"><span>Xidh maalinta <small>trade furan → la xidhaa · Jimce 20 ugu dambeyn</small></span><span class="stp"><button type="button" id="mASIACLm" aria-label="Ka yaree">−</button><b id="mASIACL">20</b><button type="button" id="mASIACLp" aria-label="Ku dar">+</button></span></div>
+        <div class="bsub">2 · GELITAANKA</div>
+        <div class="frow frow-col" id="rASIADIR"><div class="seg" id="mASIADIR" role="radiogroup" aria-label="Jihada">
+          <button type="button" data-v="0" role="radio">LABADA</button>
+          <button type="button" data-v="1" role="radio">BUY</button>
+          <button type="button" data-v="2" role="radio">SELL</button>
+        </div></div>
+        <div class="frow"><span>Trend H4 (EMA50) <small>jebinta trend-ka raacda oo keliya</small></span><span><button class="sw on" id="mASIATR" type="button" aria-label="Trend H4"><i></i></button></span></div>
+        <div class="frow"><span>Range ugu weyn <small>ka weyn → maanta ma ganacsado · 0 = off</small></span><span><input id="mASIAMAXR" type="number" min="0" max="1000" step="1" value="90"> <i>$</i></span></div>
+        <div class="bsub">3 · SL / TP</div>
+        <div class="frow frow-col" id="rASIASL"><div class="seg" id="mASIASL" role="radiogroup" aria-label="Stop Loss">
+          <button type="button" data-v="0" role="radio">BARTAMAHA RANGE</button>
+          <button type="button" data-v="1" role="radio">DHINACA KALE</button>
+        </div></div>
+        <div class="frow"><span>Take Profit <small>R = masaafada SL-ka</small></span><span class="stp"><button type="button" id="mASIATPm" aria-label="Ka yaree">−</button><b id="mASIATP">2.0</b><button type="button" id="mASIATPp" aria-label="Ku dar">+</button></span></div>
+        <div class="sltph" id="mASIASLHint">—</div>
+        <div class="bsub">4 · KHATARTA</div>
+        <div class="frow"><span>Risk trade kasta <small>% balance · lakabyada oo dhan</small></span><span><input id="mASIARISK" type="number" min="0.05" max="5" step="0.05" value="1"> <i>%</i></span></div>
+        <div class="frow"><span>Khasaaraha ugu badan <small>xad adag — gaadho = xidh · 0 = off</small></span><span><input id="mASIAMAX" type="number" min="0" max="100000" step="1" value="30"> <i>$</i></span></div>
+        <div class="sltph aswarn" id="mASIARiskHint" hidden>—</div>
+        <div class="bsub">5 · BASKET (ikhtiyaari)</div>
+        <div class="frow frow-col" id="rASIAL"><div class="sg3" id="mASIAL" role="radiogroup" aria-label="Lakabyada">
+          <button type="button" data-v="1" role="radio">1<small>hal trade</small></button>
+          <button type="button" data-v="2" role="radio">2<small>lakab</small></button>
+          <button type="button" data-v="3" role="radio">3<small>lakab</small></button>
+        </div></div>
+        <div class="sltph" id="mASIALHint">—</div>
+      </div>
       <!-- v12.7: GOLD BASKET (EA v69.0) -->
       <div class="grp bskg" id="bskGrp">
-        <div class="gh bskgh"><span class="gold"><i class="coin"></i>5 · GOLD BASKET <small>XAUUSD</small></span><button class="sw" id="mBSK" type="button" aria-label="GOLD BASKET"><i></i></button></div>
+        <div class="gh bskgh"><span class="gold"><i class="coin"></i>6 · GOLD BASKET <small>EMA · XAUUSD</small></span><button class="sw" id="mBSK" type="button" aria-label="GOLD BASKET"><i></i></button></div>
         <div class="sltph">Marka ON: <b>XAUUSD</b> signal kasta hal trade halkii, <b>basket</b> ayuu furaa. Lammaanayaasha kale sidooda ayay u shaqeeyaan. Grid / Martingale ma jiraan.</div>
         <div class="bsub">0 · SIGNAL-KA DAHABKA</div>
         <div class="frow frow-col" id="rBSKSIG"><div class="sg3" id="mBSKSIG" role="radiogroup" aria-label="Signal-ka dahabka">
@@ -5105,6 +5231,8 @@ function paint(d){
   $("#heroAcc").textContent="#"+d.account;
   setBrand(d.brand||"");   // v4.1: madhan -> kii hore ayaa la sii hayaa
   BSKCFG=(d.bsk && d.bsk.cfg)?d.bsk.cfg:null;       // v12.7.1
+  ASIACFG=(d.asia && d.asia.cfg)?d.asia.cfg:null;   // v12.9
+  ASIA=d.asia||null;
   paintSettings(x.settings); paintLocks(x.locks);   // v5
   paintRaw(x, d);                                   // v6
   paintAnalysis(d.analysis);                        // v7
@@ -5113,6 +5241,7 @@ function paint(d){
   paintSave(d);                                     // v10
   paintMyKey(d);                                    // v11
   paintLic(d);                                      // v12
+  paintAsia(d.asia);                                // v12.9
   paintBasket(d.bsk);                               // v12.7
   paintReasons(d);                                  // v12.8
   $("#st").textContent=d.online?(RS.long+" · "+(d.age||0)+"s ka hor")
@@ -5920,8 +6049,8 @@ const FR_NM=["News","Session","Regime/ADX","MTF","EMA200","Correlation","Hal tra
 
 /* ---- v12.8 (EA v69.6): SABABTA TRADE LA'AANTA ---- */
 const RC_B={ALGO:["ALGO OFF","r"],KEY:["FURAHA","r"],STOP:["DAMMAN","r"],LIC:["LAYSIN","r"],EMER:["EMERGENCY","r"],PAIR:["✕","r"],
-  NEWS:["NEWS","a"],TIME:["WAQTI","c"],MAX:["XAD","a"],ZONE:["ZONE ✕","c"],WAIT:["SUG","a"],SIG:["SIGNAL","g"],BSK:["BASKET","a"]};
-const RC_P={ALGO:0,KEY:1,EMER:2,LIC:3,STOP:4,PAIR:5,SIG:6,BSK:7,WAIT:8,MAX:9,NEWS:10,ZONE:11,TIME:12};
+  NEWS:["NEWS","a"],TIME:["WAQTI","c"],MAX:["XAD","a"],ZONE:["ZONE ✕","c"],WAIT:["SUG","a"],SIG:["SIGNAL","g"],BSK:["BASKET","a"],ASIA:["ASIA","a"]};
+const RC_P={ALGO:0,KEY:1,EMER:2,LIC:3,STOP:4,PAIR:5,SIG:6,BSK:7,ASIA:7,WAIT:8,MAX:9,NEWS:10,ZONE:11,TIME:12};
 function rcOf(a){
   if(a.rc && RC_B[a.rc]) return a.rc;   // EA v69.6+
   const s=String(a.status||"");
@@ -6261,7 +6390,8 @@ const PERM_OF={RISK:"risk",LOT:"lot",SLTP:"sltp",SL:"sltp",TP:"sltp",SNIPER:"slt
   SNDAY:"day",NEWS:"prot",STEPON:"prot",STEP:"prot",STEPSTART:"prot",BE:"prot",LOCKMODE:"prot",PROT:"prot"};   // STRAT/EMAF/STARS/LOT2/MGMT = admin
 const PERM_EL={mRISK:"risk",mDLOSS:"",mMAXDD:"",mSNIPER:"sltp",mSNDAYm:"day",mSNRR:"sltp",mSNSLMAX:"sltp",mNEWS:"prot",
   mLOT:"lot",mSTEP:"prot",mSTEPSTART:"prot",mEMAF:"",mLOT2:"",mSTARS:"",
-  mBSKDAYm:"",mBSKNm:"",mBSKRISK:"",mBSKMAX:"",mBSKSPR:"",mBSKTGT:"",mBSKBE:"",mBSKLOCK:"",mBSKSES:"",mBSKBLK:""};   // v12.7: GOLD BASKET = admin
+  mBSKDAYm:"",mBSKNm:"",mBSKRISK:"",mBSKMAX:"",mBSKSPR:"",mBSKTGT:"",mBSKBE:"",mBSKLOCK:"",mBSKSES:"",mBSKBLK:"",
+  mASIAWEm:"",mASIACLm:"",mASIATR:"",mASIAMAXR:"",mASIATPm:"",mASIARISK:"",mASIAMAX:""};   // v12.9: ASIA = admin   // v12.7: GOLD BASKET = admin
 let licOK=true;
 const LKSVG='<svg class="lk" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
 function permOK(p){ return !PERMS || (licOK && !!(p && PERMS[p])); }
@@ -6277,6 +6407,7 @@ function applyPerms(){
   segLock("mSTRAT"); const rs=$("#rSTRAT"); if(rs) rs.classList.add("locked");   // v12.6: xeeladda = admin
   segLock("mSDPROF"); const rsd=$("#rSDPROF"); if(rsd) rsd.classList.add("locked");   // v12.8: heerka zone-ka = admin
   ["mBSKSIG","mBSKENT","mBSKTP"].forEach(segLock); const bsw=$("#mBSK"); if(bsw){ bsw.disabled=true; bsw.classList.add("lockd"); }   // v12.7
+  ["mGOLD","mASIADIR","mASIASL","mASIAL"].forEach(segLock); const asw=$("#mASIA"); if(asw){ asw.disabled=true; asw.classList.add("lockd"); }   // v12.9
   document.querySelectorAll("[data-perm]").forEach(b=>{ if(!permOK(b.dataset.perm)){ b.classList.add("lockd"); b.disabled=true; } });
 
   const r=$("#mRISK"); if(r && permOK("risk")){ r.min=PERMS.lo; r.max=PERMS.hi;
@@ -6396,6 +6527,149 @@ function bskStep(id,d,lo,hi){ const e=$("#"+id); if(!e) return; let v=Number(e.t
   if(m) m.addEventListener("click",()=>{ if(!m.disabled) bskStep(id,-1,lo,hi); });
   if(p) p.addEventListener("click",()=>{ if(!p.disabled) bskStep(id,1,lo,hi); });
 });
+/* ---- v12.9: ASIA BREAKOUT (Maamul · admin) ---- */
+let ASIACFG=null, ASIA=null, mAsDir=0, mAsSL=0, mAsL=1, mAsTP=2.0;
+function goldPaint(){
+  const b=swGet("mBSK"), a=swGet("mASIA");
+  segPaint("mGOLD","v",(b&&a)?2:(a?1:(b?0:-1)));
+  const g=$("#asGrp"); if(g) g.classList.toggle("off",!a);
+  bskGrpPaint();
+}
+function asNum(id,d){ const e=$("#"+id); const v=e?Number(e.value):NaN; return isFinite(v)&&e.value!==""?v:d; }
+function asHints(){
+  segPaint("mASIADIR","v",mAsDir); segPaint("mASIASL","v",mAsSL); segPaint("mASIAL","v",mAsL);
+  const tp=$("#mASIATP"); if(tp) tp.textContent=Number(mAsTP).toFixed(1);
+  const A=ASIA||{}, rg=(Number(A.hi)>0&&Number(A.lo)>0)?(A.hi-A.lo):0;
+  const vpp=Number(A.vpp)||100, mn=Number(A.mn)||0.01, bal=Number(A.bal)||0;
+  const slD=rg>0?(mAsSL===0?rg/2:rg):0;
+  const sh=$("#mASIASLHint");
+  if(sh) sh.innerHTML=rg>0
+    ? ("Range-ka maanta <b>$"+rg.toFixed(1)+"</b> → SL ≈ <b>$"+(slD*mn*vpp).toFixed(0)+"</b> · TP ≈ <b>$"+(slD*mAsTP*mn*vpp).toFixed(0)+"</b> ("+mn.toFixed(2)+" lot)")
+    : (mAsSL===0?"<b>BARTAMAHA:</b> SL = kala bar range-ka (≈ $25 marka range-ku $50 yahay · 0.01 lot).":"<b>DHINACA KALE:</b> SL = dhinaca kale ee range-ka (SL weyn, win rate sare).");
+  const rh=$("#mASIARiskHint");
+  if(rh){
+    const risk=asNum("mASIARISK",1), mx=asNum("mASIAMAX",30);
+    if(rg>0 && bal>0){
+      const r1=slD*mn*vpp, want=bal*risk/100, lim=mx>0?mx:want*2;
+      if(r1>lim){ rh.hidden=false; rh.innerHTML="⚠ "+mn.toFixed(2)+" lot khatartiisu <b>$"+r1.toFixed(0)+"</b> &gt; xadka $"+lim.toFixed(0)+" → <b>maanta trade ma furmo</b>. Xadka $ kordhi ama SL BARTAMAHA dooro."; }
+      else if(r1>want){ rh.hidden=false; rh.innerHTML="⚠ Balance $"+bal.toFixed(0)+" · "+risk+"% = $"+want.toFixed(0)+" &lt; SL "+mn.toFixed(2)+" lot ($"+r1.toFixed(0)+") → maanta <b>"+mn.toFixed(2)+" lot (risk $"+r1.toFixed(0)+")</b>. Balance ka weyn ama cent account ayaa ku habboon."; }
+      else rh.hidden=true;
+    } else rh.hidden=true;
+  }
+  const lh=$("#mASIALHint");
+  if(lh) lh.innerHTML=mAsL===1?"<b>1 · HAL TRADE:</b> tijaabada ugu fiican (+29R). La talin."
+    :("<b>"+mAsL+" LAKAB:</b> kuwa kale waxay furmaan <b>retest</b> heerka la jebiyay (2 saac gudahood). Risk-ga guud isma beddelo — lot-ka ayaa la qaybiyaa (account weyn ayuu u baahan yahay).");
+}
+function asSeed(){
+  const c=ASIACFG; if(!c){ goldPaint(); asHints(); return; }
+  swSet("mASIA",!!c.on); swSet("mASIATR",!!c.tr);
+  const set=(id,v)=>{ const e=$("#"+id); if(e && v!==undefined && v!==null) e.value=v; };
+  set("mASIAMAXR",c.maxr); set("mASIARISK",c.risk); set("mASIAMAX",c.max);
+  if($("#mASIAWE")) $("#mASIAWE").textContent=c.we; if($("#mASIACL")) $("#mASIACL").textContent=c.cl;
+  mAsDir=Number(c.dir)||0; mAsSL=Number(c.sl)||0; mAsL=Math.max(1,Math.min(3,Number(c.l)||1)); mAsTP=Number(c.tp)||2;
+  goldPaint(); asHints();
+}
+function asiaCmds(cmds){
+  cmds.push("SET:ASIA="+(swGet("mASIA")?1:0));
+  cmds.push("SET:ASIADIR="+mAsDir); cmds.push("SET:ASIASL="+mAsSL); cmds.push("SET:ASIAL="+mAsL);
+  cmds.push("SET:ASIATR="+(swGet("mASIATR")?1:0));
+  cmds.push("SET:ASIATP="+Number(mAsTP).toFixed(1));
+  const we=Number(($("#mASIAWE")||{}).textContent), cl=Number(($("#mASIACL")||{}).textContent);
+  if(we>=8&&we<=20) cmds.push("SET:ASIAWE="+we);
+  if(cl>=13&&cl<=23) cmds.push("SET:ASIACL="+cl);
+  const mr=$("#mASIAMAXR"), rk=$("#mASIARISK"), mx=$("#mASIAMAX");
+  if(mr && mr.value!=="") cmds.push("SET:ASIAMAXR="+Math.round(Number(mr.value)));
+  if(rk && rk.value!=="") cmds.push("SET:ASIARISK="+rk.value);
+  if(mx && mx.value!=="") cmds.push("SET:ASIAMAX="+Math.round(Number(mx.value)));
+}
+document.querySelectorAll("#mGOLD button").forEach(b=>b.addEventListener("click",()=>{ if(b.disabled) return; const v=Number(b.dataset.v); swSet("mBSK",v!==1); swSet("mASIA",v!==0); mTouched=true; goldPaint(); }));
+["mASIA","mASIATR"].forEach(id=>{ const e=$("#"+id); if(e) e.addEventListener("click",()=>{ if(e.disabled) return; e.classList.toggle("on"); mTouched=true; goldPaint(); }); });
+{ const e=$("#mBSK"); if(e) e.addEventListener("click",()=>goldPaint()); }
+document.querySelectorAll("#mASIADIR button").forEach(b=>b.addEventListener("click",()=>{ if(b.disabled) return; mAsDir=Number(b.dataset.v); mTouched=true; asHints(); }));
+document.querySelectorAll("#mASIASL button").forEach(b=>b.addEventListener("click",()=>{ if(b.disabled) return; mAsSL=Number(b.dataset.v); mTouched=true; asHints(); }));
+document.querySelectorAll("#mASIAL button").forEach(b=>b.addEventListener("click",()=>{ if(b.disabled) return; mAsL=Number(b.dataset.v); mTouched=true; asHints(); }));
+["mASIAMAXR","mASIARISK","mASIAMAX"].forEach(id=>{ const e=$("#"+id); if(e) e.addEventListener("input",()=>{ mTouched=true; asHints(); }); });
+[["mASIAWE",8,20,1],["mASIACL",13,23,1]].forEach(([id,lo,hi,st])=>{
+  const m=$("#"+id+"m"), p=$("#"+id+"p");
+  const go=d=>{ const e=$("#"+id); if(!e) return; let v=Number(e.textContent)||lo; v=Math.max(lo,Math.min(hi,v+d*st)); e.textContent=v;
+    const we=Number(($("#mASIAWE")||{}).textContent)||12, c=$("#mASIACL"); if(c && Number(c.textContent)<we) c.textContent=Math.max(13,we); mTouched=true; };
+  if(m) m.addEventListener("click",()=>{ if(!m.disabled) go(-1); });
+  if(p) p.addEventListener("click",()=>{ if(!p.disabled) go(1); });
+});
+{ const m=$("#mASIATPm"), p=$("#mASIATPp");
+  const go=d=>{ mAsTP=Math.max(0.5,Math.min(5,Math.round((Number(mAsTP)+d*0.5)*10)/10)); mTouched=true; asHints(); };
+  if(m) m.addEventListener("click",()=>{ if(!m.disabled) go(-1); });
+  if(p) p.addEventListener("click",()=>{ if(!p.disabled) go(1); }); }
+
+/* ---- v12.9: ASIA BREAKOUT (Guud · live) ---- */
+const AS_DN=["Axd","Isn","Tal","Arb","Kha","Jim","Sab"], AS_X={1:"TP",2:"SL",3:"20:00",4:"XAD",5:"jebin lama helin",6:"BE",7:"la dhaafay"};
+function asDay(d){ const y=Math.floor(d/10000), m=Math.floor(d/100)%100, dd=d%100; const t=new Date(Date.UTC(y,m-1,dd)); return (AS_DN[t.getUTCDay()]||"")+" "+String(dd).padStart(2,"0"); }
+function asSvg(a){
+  const sv=$("#asSvg"); if(!sv) return;
+  const dg=Number(a.dg)||2, hi=Number(a.hi)||0, lo=Number(a.lo)||0, px=Number(a.px)||0;
+  if(!(hi>0&&lo>0)){ sv.innerHTML='<text x="200" y="104" fill="#8b918b" font-size="13" text-anchor="middle">Asia range waa la dhisayaa ('+String(a.rs||0).padStart(2,"0")+':00–'+String(a.re||7).padStart(2,"0")+':00 GMT)</text>'; return; }
+  const pts=[hi,lo,px]; if(a.st==="OPEN"){ pts.push(Number(a.sl)||lo, Number(a.tp)||hi, Number(a.e)||px); }
+  let mx=Math.max(...pts.filter(v=>v>0)), mn=Math.min(...pts.filter(v=>v>0)); const pad=(mx-mn)*0.12||1; mx+=pad; mn-=pad;
+  const Y=v=>10+(mx-v)/(mx-mn)*180, W=400;
+  const mid=(hi+lo)/2, f=v=>Number(v).toFixed(dg);
+  let h='<rect x="8" y="'+Y(hi)+'" width="170" height="'+Math.max(2,Y(lo)-Y(hi))+'" fill="rgba(240,207,134,.08)" stroke="#7a6230" stroke-dasharray="4 4"/>'
+    +'<rect x="178" y="6" width="140" height="188" fill="rgba(34,197,94,.06)"/>'
+    +'<text x="14" y="'+(Y(hi)-6)+'" fill="#d4a94f" font-size="11" font-weight="700">ASIA '+String(a.rs||0).padStart(2,"0")+'–'+String(a.re||7).padStart(2,"0")+'</text>'
+    +'<text x="184" y="20" fill="#7fe0ab" font-size="11" font-weight="700">JEBINTA '+String(a.re||7).padStart(2,"0")+'–'+String(a.we||12).padStart(2,"0")+'</text>'
+    +'<line x1="8" y1="'+Y(hi)+'" x2="'+(W-8)+'" y2="'+Y(hi)+'" stroke="#22c55e" stroke-width="1.6"/>'
+    +'<line x1="8" y1="'+Y(lo)+'" x2="'+(W-8)+'" y2="'+Y(lo)+'" stroke="#ef4444" stroke-width="1.6"/>'
+    +'<line x1="8" y1="'+Y(mid)+'" x2="'+(W-8)+'" y2="'+Y(mid)+'" stroke="#8b918b" stroke-dasharray="3 5"/>'
+    +'<text x="'+(W-10)+'" y="'+(Y(hi)-5)+'" fill="#7fe0ab" font-size="10.5" text-anchor="end">SARE '+f(hi)+' → BUY</text>'
+    +'<text x="'+(W-10)+'" y="'+(Y(lo)+14)+'" fill="#f2a3a3" font-size="10.5" text-anchor="end">HOOS '+f(lo)+' → SELL</text>'
+    +'<text x="'+(W-10)+'" y="'+(Y(mid)+13)+'" fill="#8b918b" font-size="10" text-anchor="end">bartamaha '+f(mid)+'</text>';
+  if(a.st==="OPEN"){
+    const e=Number(a.e), sl=Number(a.sl), tp=Number(a.tp);
+    h+='<line x1="178" y1="'+Y(e)+'" x2="'+(W-8)+'" y2="'+Y(e)+'" stroke="#3987e5" stroke-width="1.6"/>'
+      +'<line x1="178" y1="'+Y(tp)+'" x2="'+(W-8)+'" y2="'+Y(tp)+'" stroke="#22c55e" stroke-dasharray="6 4"/>'
+      +'<line x1="178" y1="'+Y(sl)+'" x2="'+(W-8)+'" y2="'+Y(sl)+'" stroke="#ef4444" stroke-dasharray="6 4"/>'
+      +'<text x="184" y="'+(Y(tp)-4)+'" fill="#7fe0ab" font-size="10">TP '+f(tp)+'</text>'
+      +'<text x="184" y="'+(Y(sl)+12)+'" fill="#f2a3a3" font-size="10">SL '+f(sl)+'</text>'
+      +'<text x="184" y="'+(Y(e)-4)+'" fill="#9cc3f5" font-size="10">'+esc(a.dir||"")+' '+f(e)+'</text>';
+  }
+  if(px>0) h+='<circle cx="300" cy="'+Y(px)+'" r="4" fill="#fff"/><text x="308" y="'+(Y(px)+4)+'" fill="#e8ece8" font-size="11.5" font-weight="700">HADDA '+f(px)+'</text>';
+  sv.innerHTML=h;
+}
+function paintAsia(a){
+  const c=$("#asCard"); if(!c) return;
+  if(!a){ c.hidden=true; return; }
+  c.hidden=false; ASIA=a;
+  const ST={OFF:["DAMMAN","off"],RANGE:["RANGE LA DHISAYAA","wait"],WAIT:["SUGAYA JEBIN","wait"],OPEN:["● TRADE SOCDA","run"],DONE:["MAANTA WAA LA QAATAY","run"],SKIP:["MAANTA MA JIRO","off"]};
+  const s=ST[a.st]||["—",""]; const st=$("#asState"); st.className="bchip "+s[1]; st.textContent=s[0];
+  $("#asTitle").textContent="ASIA BREAKOUT · "+(a.sym||"XAUUSD");
+  asSvg(a);
+  const rg=(Number(a.hi)>0&&Number(a.lo)>0)?(a.hi-a.lo):0;
+  $("#asRng").textContent=rg>0?("$"+rg.toFixed(1)):"—";
+  const tr=$("#asTr"); tr.textContent=a.tr>0?"↑ KOR":(a.tr<0?"↓ HOOS":"— ma cadda"); tr.className=a.tr>0?"up":(a.tr<0?"dn":"");
+  $("#asCnt").textContent=((a.st==="OPEN"||a.st==="DONE")?1:0)+" / 1";
+  const live=$("#asLive");
+  if(a.st==="OPEN"){
+    live.hidden=false;
+    const pl=Number(a.pl)||0, e=$("#asPL"); e.textContent=bskMoney(pl); e.className=pl>=0?"pos":"neg";
+    const rr=(Number(a.risk)>0)?(pl/a.risk):0;
+    $("#asSub").textContent=(rr>=0?"+":"")+rr.toFixed(2)+"R · risk $"+(Number(a.risk)||0).toFixed(2)+" · "+(a.lot||0)+" lot"+((a.n||1)>1?(" · lakab "+(a.fill||0)+"/"+a.n):"");
+    const dg=Number(a.dg)||2;
+    $("#asLvl").innerHTML="<b>"+esc(a.dir||"")+"</b> @ "+Number(a.e).toFixed(dg)+" · SL "+Number(a.sl).toFixed(dg)+" · TP "+Number(a.tp).toFixed(dg)+" · xidh "+String(a.cl||20).padStart(2,"0")+":00 GMT";
+  } else live.hidden=true;
+  let why=a.why||"";
+  if(!a.on && a.st!=="OPEN") why="ASIA BREAKOUT waa damman — Maamul → 5 · ASIA BREAKOUT ka shid.";
+  else if(a.st==="WAIT" && a.tr!==0){ const d=a.tr>0?"BUY":"SELL"; why=esc(why)+'<br><small style="color:var(--ink3)">Trend-ku waa '+(a.tr>0?"KOR":"HOOS")+' → <b>'+d+' oo keliya</b> marka '+(a.tr>0?"SARE":"HOOS")+' la jebiyo (ilaa '+String(a.we||12).padStart(2,"0")+':00 GMT).</small>'; $("#asWhy").innerHTML=why; why=null; }
+  if(why!==null) $("#asWhy").textContent=why||"—";
+  const H=(a.hist||[]);
+  $("#asHist").innerHTML=H.length?H.map(h=>{
+    const t=Number(h.dir)!==0, p=Number(h.pl)||0;
+    const txt=t?((h.dir>0?"BUY":"SELL")+" · "+(AS_X[h.x]||"")+" "+(Number(h.r)>=0?"+":"")+Number(h.r).toFixed(1)+"R"):(AS_X[h.x]||"—");
+    return '<div class="ashr"><span class="d">'+esc(asDay(h.d))+'</span><span class="'+(t?(p>=0?"g":"r"):"m")+'">'+esc(txt)+'</span><span class="p '+(t?(p>=0?"g":"r"):"m")+'">'+(t?bskMoney(p):"—")+'</span></div>';
+  }).join(""):'<div class="bidle" style="margin-top:6px">Weli trade ma jiro.</div>';
+  const T=H.filter(h=>Number(h.dir)!==0), W=T.filter(h=>Number(h.pl)>0).length, S=T.reduce((x,h)=>x+(Number(h.pl)||0),0), R=T.reduce((x,h)=>x+(Number(h.r)||0),0);
+  $("#asSum").textContent=T.length?(T.length+" trade · win "+Math.round(100*W/T.length)+"% · "+bskMoney(S)+" · "+(R>=0?"+":"")+R.toFixed(1)+"R"):"—";
+  if(!mTouched) asHints();
+}
+
 let BSKCFG=null;   // v12.7.1: sitinka chart-ka dahabka (chart-yada kale kama duwanaan karaan)
 function bskSeed(st){
   if(BSKCFG){ const c=BSKCFG; st=Object.assign({},st||{},{bsk_on:!!c.on,bsk_sig:c.sig,bsk_n:c.n,bsk_ent:c.ent,bsk_risk:c.risk,bsk_max:c.max,bsk_day:c.day,
@@ -6442,7 +6716,7 @@ function paintBasket(b){
     chips.innerHTML='<span class="y">'+esc(SIGN[b.sig]||"LABADA")+'</span>';
     live.hidden=true; idle.hidden=false;
     idle.innerHTML=b.on?("Basket ma socdo — bot-ku wuxuu sugayaa signal "+esc(SIGN[b.sig]||"")+" tayo leh."+(b.why?('<br><small style="color:var(--ink3)">Ugu dambeeyay: '+esc(b.why)+'</small>'):""))
-                       :"GOLD BASKET waa damman — Maamul → 5 · GOLD BASKET ka shid.";
+                       :"GOLD BASKET waa damman — Maamul → 6 · GOLD BASKET ka shid.";
     return;
   }
   $("#bskTitle").textContent=(b.sym||"XAUUSD")+" · "+(b.dir||"")+" BASKET";
@@ -6495,6 +6769,7 @@ function paintSettings(st){
   mSdProf=(st.sdprof!==undefined)?Number(st.sdprof):null; sdPaint();   // v12.8
   mProt=prot; protHint();
   bskSeed(st);   // v12.7
+  asSeed();      // v12.9
   mSeeded=true;
 }
 function paintLocks(rows){
@@ -6541,6 +6816,7 @@ async function sendSettings(){
   if(mStars>=1&&mStars<=3) cmds.push("SET:STARS="+mStars);
   if(mSdProf===0||mSdProf===1||mSdProf===2) cmds.push("SET:SDPROF="+mSdProf);   // v12.8
   bskCmds(cmds);   // v12.7: GOLD BASKET
+  asiaCmds(cmds);  // v12.9: ASIA BREAKOUT
   const values={}; cmds.forEach(c=>{ const m=/^SET:([A-Z0-9]+)=(.+)$/.exec(c); if(m) values[m[1]]=m[2]; });
   if(PERMS) Object.keys(values).forEach(k=>{ if(!permOK(PERM_OF[k])) delete values[k]; });   // v12: macmiil
   btn.disabled=true; btn.textContent="Kaydinaya…";
