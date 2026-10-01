@@ -2615,6 +2615,18 @@ def _save_tick(con, acc, d):
                     "e": n(a.get("e"), dg, 0, 1e7), "vs": n(a.get("vs"), dg, 0, 1e7), "stg": int(n(a.get("stg"), 0, 0, 2)),
                     "fav": n(a.get("fav"), 2, -1e5, 1e5), "lot": n(a.get("lot"), 2, 0, 1e4), "pl": n(a.get("pl")),
                     "t0": int(n(a.get("t0"), 0, 0, 4e9))})
+    sq = str(a.get("seq") or "")[:50]                                   # v12.13 (EA v70.1)
+    out["seq"] = "".join(ch for ch in sq if ch in "UDN")
+    out["srv"] = int(n(a.get("srv"), 0, 0, 4e9))
+    out["sp"] = n(a.get("sp"), 2, 0, 1000)
+    out["lotp"] = n(a.get("lotp"), 2, 0, 1e4)
+    hist = []
+    for h in (a.get("hist") or [])[:10]:
+        if not isinstance(h, dict):
+            continue
+        hist.append({"t": int(n(h.get("t"), 0, 0, 4e9)), "d": 1 if n(h.get("d"), 0, -1, 1) > 0 else -1,
+                     "x": int(n(h.get("x"), 0, 0, 9)), "pl": n(h.get("pl"))})
+    out["hist"] = hist
     con.execute("INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
                 ("tick:" + acc, json.dumps(out, separators=(",", ":"), ensure_ascii=False)))
 
@@ -4388,6 +4400,58 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 .tkbar{height:8px;border-radius:5px;background:#2a1414;position:relative;margin:10px 0 4px;overflow:hidden}
 .tkbar i{position:absolute;top:0;bottom:0}
 .tklg{display:flex;justify-content:space-between;gap:6px;font-size:10.5px;color:var(--ink3);flex-wrap:wrap}
+/* v12.13: kaarka TICK - qaab premium (glass + dahab) */
+.tkc{position:relative;background:linear-gradient(180deg,#1a1c21,#0e0f12);border:1px solid rgba(201,154,63,.55);box-shadow:0 10px 30px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,236,190,.07)}
+.tkc:before{content:"";position:absolute;left:22px;right:22px;top:-1px;height:2px;border-radius:2px;background:linear-gradient(90deg,transparent,#f0cf86,transparent)}
+.tkhd{display:flex;align-items:center;gap:10px}
+.tkbd{width:38px;height:38px;border-radius:12px;background:linear-gradient(180deg,#f3d58f,#c4923a);display:flex;align-items:center;justify-content:center;box-shadow:0 2px 10px rgba(201,154,63,.35);flex:0 0 auto}
+.tkbd svg{width:19px;height:19px;fill:#1a1305}
+.tkhn{flex:1;min-width:0;line-height:1.2}.tkhn b{display:block;font-size:15.5px;font-weight:900;letter-spacing:.06em;color:var(--ink)}.tkhn small{font-size:10.5px;color:#8f96a0;font-weight:700;letter-spacing:.05em}
+.tkpill{font-size:10.5px;font-weight:900;letter-spacing:.08em;padding:5px 10px;border-radius:999px;display:flex;align-items:center;gap:6px;white-space:nowrap;background:#26262a;color:var(--ink2)}
+.tkpill i{width:7px;height:7px;border-radius:50%;background:currentColor}
+.tkpill.run{background:rgba(34,197,94,.14);color:#7fe0ab}.tkpill.run i{box-shadow:0 0 8px #22c55e}
+.tkpill.wait{background:rgba(240,192,112,.13);color:#f0c070}.tkpill.off{background:rgba(239,68,68,.12);color:#f2a3a3}
+.tkwhy{margin-top:11px;font-size:12.5px;color:#f0d9a0;background:rgba(240,192,112,.07);border:1px solid rgba(240,192,112,.22);border-radius:11px;padding:8px 11px;line-height:1.45}
+.tksec{font-size:10px;font-weight:900;letter-spacing:.16em;color:#c99a3f;margin:14px 0 7px}
+.tktt{display:flex;align-items:center;gap:10px}
+.tkdots{display:flex;gap:4px;flex-wrap:wrap}
+.tkdots span{width:21px;height:23px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:900}
+.tkdots .u{background:rgba(34,197,94,.16);color:#4ade80;border:1px solid rgba(34,197,94,.35)}
+.tkdots .d{background:rgba(239,68,68,.14);color:#f87171;border:1px solid rgba(239,68,68,.3)}
+.tkdots .n{background:#17191d;color:#5c626b;border:1px solid #262a31}
+.tkttn{font-size:12px;color:#aab0ba;line-height:1.35}.tkttn b{font-size:14px}.tkttn .g{color:#7fe0ab}.tkttn .r{color:#f2a3a3}
+.tkmv{margin-top:9px}
+.tkmvb{height:7px;border-radius:5px;background:#1e2229;position:relative}
+.tkmvb i{position:absolute;left:0;top:0;bottom:0;border-radius:5px;background:linear-gradient(90deg,#1e7fd6,#38bdf8);max-width:100%}
+.tkmvb em{position:absolute;right:0;top:-4px;bottom:-4px;width:2px;background:#f0cf86;border-radius:1px}
+.tkmvl{display:flex;justify-content:space-between;font-size:10.5px;color:#8f96a0;margin-top:5px}.tkmvl b{color:#7cc8ff}
+.tkc .tkkpi div{background:rgba(255,255,255,.025);border-color:#252a31;font-size:9.5px;letter-spacing:.06em;font-weight:700;text-transform:uppercase}
+.tkc .tkkpi b{font-size:16.5px;letter-spacing:0;text-transform:none}
+.tkc .tkkpi b.y{color:#f0cf86}
+.tkses{margin-top:13px}
+.tksesb{height:6px;border-radius:4px;background:#1b1f25;position:relative}
+.tksesb i{position:absolute;top:0;bottom:0;border-radius:4px;background:linear-gradient(90deg,rgba(201,154,63,.35),#f0cf86)}
+.tksesb em{position:absolute;top:-4px;width:12px;height:14px;margin-left:-6px;border-radius:4px;background:#fff;box-shadow:0 0 0 3px rgba(240,207,134,.35)}
+.tksesl{display:flex;justify-content:space-between;font-size:10px;color:#7a818b;margin-top:6px;letter-spacing:.05em}.tksesl .m{color:#f0cf86}
+.tkchips{display:flex;gap:6px;flex-wrap:wrap;margin-top:11px}
+.tkchips span{font-size:10.5px;font-weight:800;color:#c7ccd4;background:#15181d;border:1px solid #262b33;border-radius:8px;padding:4px 8px}
+.tkchips b{color:#fff}
+.tktr{margin-top:12px;border-radius:14px;padding:10px 11px;background:linear-gradient(180deg,rgba(18,40,26,.85),rgba(14,22,17,.9));border:1px solid rgba(47,107,63,.8)}
+.tktrh{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.tktrh b{font-size:14px;font-weight:900}.tktrh span{font-size:15px;font-weight:900}.tktrh .pos{color:#7fe0ab}.tktrh .neg{color:#f2a3a3}
+.tktrs{font-size:10.5px;color:#8fb59a;margin-top:3px}
+.tkbar2{position:relative;height:10px;border-radius:6px;background:#2a1517;margin:12px 0 6px}
+.tkbar2 .sg{position:absolute;top:0;bottom:0;border-radius:6px}
+.tkbar2 .mk{position:absolute;top:-5px;width:3px;height:20px;border-radius:2px;margin-left:-1px}
+.tkbarl{display:flex;justify-content:space-between;gap:6px;font-size:10px;color:#93a39a;flex-wrap:wrap}.tkbarl .y{color:#f0cf86}
+.tkst{display:flex;gap:6px;margin-top:9px}
+.tkst span{flex:1;text-align:center;font-size:9.5px;font-weight:900;letter-spacing:.05em;padding:5px 3px;border-radius:8px;border:1px solid #2a332d;color:#6f7a73}
+.tkst .done{background:rgba(201,154,63,.16);border-color:rgba(201,154,63,.5);color:#f0cf86}
+.tkst .now{background:#22c55e;border-color:#22c55e;color:#062312}
+.tkhr{display:grid;grid-template-columns:46px 40px 1fr auto;gap:6px;font-size:12px;padding:7px 2px;border-bottom:1px solid #1d2127;color:#c7ccd4}
+.tkhr:last-child{border-bottom:none}.tkhr .t{color:#7a818b;font-variant-numeric:tabular-nums}.tkhr b{font-variant-numeric:tabular-nums}.tkhr .g{color:#7fe0ab}.tkhr .r{color:#f2a3a3}
+.tkft{margin-top:11px;padding-top:9px;border-top:1px solid #20242b;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:10.5px;color:#7a818b}
+.tkft b{color:#c7ccd4}.tkft .g{color:#7fe0ab}.tkft .r{color:#f2a3a3}
 .tkterm{background:#000;border:1px solid #2a2a2a;border-radius:10px;padding:10px 12px;font-family:Consolas,"DejaVu Sans Mono",Menlo,monospace;font-size:11.4px;line-height:1.6;margin-top:12px;white-space:pre-wrap;word-break:break-word}
 .tkterm .y{color:#ffd700}.tkterm .s{color:#c0c0c0}.tkterm .lg{color:#32cd32}.tkterm .o{color:#ffa500}.tkterm .b{color:#00bfff}.tkterm .w{color:#fff}.tkterm .r{color:#ff6347}.tkterm .d{color:#8a8a8a}.tkterm .gr{color:#808080}
 .aswarn{color:#f0d9a0!important;background:#1a1609;border:1px solid #6b5320;border-radius:10px;padding:8px 10px!important;margin:6px 0}
@@ -4829,25 +4893,35 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
     </div>
 
     <!-- v12.12: ⚡ TICK SCALPER (EA v70.0) -->
-    <div class="card bskc" id="tkCard" style="margin-bottom:16px" hidden>
-      <div class="bskh"><span class="gold"><i class="coin"></i><span id="tkTitle">⚡ TICK SCALPER</span></span><span class="bchip" id="tkState">—</span></div>
+    <div class="card tkc" id="tkCard" style="margin-bottom:16px" hidden>
+      <div class="tkhd"><div class="tkbd"><svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></div>
+        <div class="tkhn"><b>TICK SCALPER</b><small id="tkSub">XAUUSD</small></div>
+        <span class="tkpill" id="tkPill"><i></i><span id="tkState">—</span></span></div>
+      <div class="tkwhy" id="tkWhy" hidden>—</div>
+      <div class="tktr" id="tkOpen" hidden>
+        <div class="tktrh"><b id="tkOT">—</b><span id="tkOPL">—</span></div>
+        <div class="tktrs" id="tkTrs">—</div>
+        <div class="tkbar2" id="tkBar"></div>
+        <div class="tkbarl" id="tkLg"></div>
+        <div class="tkst" id="tkSteps"></div>
+      </div>
+      <div class="tksec" id="tkTTh">TICK TRACKER</div>
+      <div class="tktt"><div class="tkdots" id="tkDots"></div><div class="tkttn" id="tkTTn">—</div></div>
+      <div class="tkmv" id="tkMv"><div class="tkmvb"><i id="tkMvI"></i><em></em></div><div class="tkmvl"><span id="tkMvL">—</span><span id="tkMvR">—</span></div></div>
       <div class="tkkpi">
         <div><b id="tkDN">—</b>maanta</div>
         <div><b id="tkDPL">—</b>maanta $</div>
-        <div><b id="tkWR">—</b>guul (wadar)</div>
-        <div><b id="tkPF">—</b>PF wadar</div>
-        <div><b id="tkMDD">—</b>Historical DD</div>
-        <div><b id="tkCL">—</b>khasaare xiga</div>
+        <div><b id="tkWR">—</b>guul</div>
+        <div><b id="tkPF">—</b>PF</div>
+        <div><b id="tkMDD">—</b>hist DD</div>
+        <div><b id="tkCL">—</b>khasaare</div>
       </div>
-      <div class="tkopen" id="tkOpen" hidden>
-        <div class="t"><span id="tkOT">—</span><span id="tkOPL">—</span></div>
-        <div class="tkbar" id="tkBar"></div>
-        <div class="tklg" id="tkLg"></div>
-        <div class="asln" id="tkStage">—</div>
-      </div>
-      <div class="bidle" id="tkWhy">—</div>
-      <div class="tkterm" id="tkTerm" aria-label="Panel-ka chart-ka">—</div>
-      <div class="bday"><span>Wadar</span><b id="tkSum">—</b></div>
+      <div class="tkses" id="tkSes"><div class="tksesb"><i id="tkSesI"></i><em id="tkSesE"></em></div>
+        <div class="tksesl"><span id="tkSesA">—</span><span class="m" id="tkSesM">—</span><span id="tkSesB">—</span></div></div>
+      <div class="tkchips" id="tkChips"></div>
+      <div class="tksec">TRADE-YADII U DAMBEEYAY</div>
+      <div id="tkHist"></div>
+      <div class="tkft"><span id="tkFtL">—</span><span id="tkFtR">—</span></div>
     </div>
 
     <!-- v12.9: ASIA BREAKOUT (EA v69.7) -->
@@ -6780,60 +6854,79 @@ TK_IN.forEach(k=>{ const e=$("#mTK"+k); if(e) e.addEventListener("input",()=>{ m
 /* ---- v12.12: ⚡ TICK SCALPER (Guud · live) - panel-ka chart-ka oo kale ---- */
 const TK_STG=["VIRTUAL SL","BREAK-EVEN","TRAILING"];
 function tkMoney(v){ const n=Number(v)||0; return (n>=0?"+$":"-$")+Math.abs(n).toFixed(2); }
+const TK_X={1:"VIRTUAL TP",2:"VIRTUAL SL",3:"WAQTI",6:"BREAK-EVEN",8:"TRAILING",9:"SL ADAG / GACAN"};
+function tkHM(t){ if(!t) return "—"; const d=new Date(t*1000); return String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0"); }
 function paintTick(a){
   const c=$("#tkCard"); if(!c) return;
   if(!a){ c.hidden=true; return; }
   c.hidden=false; TICK=a;
-  const ST={OFF:["DAMMAN","off"],SEARCH:["● RAADINAYA","run"],PAUSE:["SUGAYA","wait"],OPEN:["● TRADE SOCDA","run"]};
-  const s=ST[a.st]||["—",""]; const st=$("#tkState"); st.className="bchip "+s[1]; st.textContent=s[0];
-  $("#tkTitle").textContent="⚡ TICK SCALPER · "+(a.sym||"XAUUSD");
-  const cf=a.cfg||{}, D=a.day||{}, T=a.tot||{}, dg=Number(a.dg)||2;
-  $("#tkDN").innerHTML=(D.n||0)+'<span style="font-size:12px;color:var(--ink3)">/'+(cf.maxd||"—")+'</span>';
-  const dp=$("#tkDPL"); dp.textContent=tkMoney(D.pl); dp.className=(Number(D.pl)||0)>=0?"up":"dn";
-  $("#tkWR").textContent=(T.n>0)?(Math.round(100*(T.w||0)/T.n)+"%"):"—";
-  $("#tkPF").textContent=(T.n>0)?Number(T.pf||0).toFixed(2):"—";
-  $("#tkMDD").textContent=Number(a.mdd||0).toFixed(2)+"%";
-  $("#tkCL").textContent=(D.cl||0)+" / "+(cf.ml||"—");
+  const cf=a.cfg||{}, D=a.day||{}, T=a.tot||{}, dg=Number(a.dg)||2, tt=a.tt||{};
+  const ST={OFF:["DAMMAN","off"],SEARCH:["RAADINAYA","run"],PAUSE:["SUGAYA","wait"],OPEN:["TRADE SOCDA","run"]};
+  const s=ST[a.st]||["—",""];
+  $("#tkPill").className="tkpill "+s[1]; $("#tkState").textContent=s[0];
+  $("#tkSub").textContent=(a.sym||"XAUUSD")+(cf.only?" · TICK OO KELIYA":"");
+  //--- sababta
+  const wy=$("#tkWhy");
+  if(!a.on && a.st!=="OPEN"){ wy.hidden=false; wy.textContent="⏻ TICK SCALPER waa damman — Maamul → 7 · TICK SCALPER ama badhanka ⚡ TICK ee chart-ka."; }
+  else if(a.st==="PAUSE"){ const w=String(a.why||"sug"); wy.hidden=false; wy.textContent=(/war|news/i.test(w)?"📰 ":(/spread/i.test(w)?"↔ ":(/saac|weekend|Jimce/i.test(w)?"🕐 ":"⏸ ")))+w+" — trade cusub ma furmo"; }
+  else wy.hidden=true;
+  //--- trade furan
   const op=$("#tkOpen");
   if(a.st==="OPEN"){
     op.hidden=false;
-    const buy=(a.dir!=="SELL"), e=Number(a.e)||0, vs=Number(a.vs)||0, vsl=Number(cf.vsl)||2.5, vtp=Number(cf.vtp)||0, fav=Number(a.fav)||0, pl=Number(a.pl)||0;
-    $("#tkOT").textContent=(a.dir||"BUY")+" "+Number(a.lot||0).toFixed(2)+" @ "+e.toFixed(dg);
+    const buy=(a.dir!=="SELL"), e=Number(a.e)||0, vs=Number(a.vs)||0, vsl=Number(cf.vsl)||2.5, vtp=Number(cf.vtp)||0, fav=Number(a.fav)||0, pl=Number(a.pl)||0, stg=Number(a.stg)||0;
+    $("#tkOT").textContent=(a.dir||"BUY")+" "+Number(a.lot||0).toFixed(2)+" · @ "+e.toFixed(dg);
     const o=$("#tkOPL"); o.textContent=tkMoney(pl); o.className=pl>=0?"pos":"neg";
-    const sl0=buy?e-vsl:e+vsl, tp=vtp>0?(buy?e+vtp:e-vtp):(buy?e+Math.max(fav,1):e-Math.max(fav,1));
-    const lo=buy?sl0:tp, hi=buy?tp:sl0, span=Math.max(1e-9,hi-lo), X=v=>Math.max(0,Math.min(100,(v-lo)/span*100));
+    const age=(a.srv&&a.t0)?Math.max(0,a.srv-a.t0):0;
+    $("#tkTrs").textContent=(age>0&&age<86400?(age+"s · "):"")+"peak +$"+fav.toFixed(2)+" · "+(cf.trs>0?(stg>=2?"trailing wuu socdaa":("trailing wuxuu bilaabmayaa +$"+Number(cf.trs).toFixed(2))):"trailing off");
+    const sl0=buy?e-vsl:e+vsl, top=vtp>0?vtp:Math.max(fav,vsl/2), tp=buy?e+top:e-top;
+    const X=v=>Math.max(0,Math.min(100,(buy?(v-sl0):(sl0-v))/(vsl+top)*100));
     const xe=X(e), xv=X(vs), xp=X(buy?e+fav:e-fav);
-    $("#tkBar").innerHTML='<i style="left:0;width:'+Math.min(xe,xv)+'%;background:#7a2a2a"></i>'
-      +'<i style="left:'+Math.min(xe,xv)+'%;width:'+Math.abs(xv-xe)+'%;background:'+(a.stg>0?'#c99a3f':'#7a2a2a')+'"></i>'
-      +'<i style="left:'+Math.min(xe,xp)+'%;width:'+Math.abs(xp-xe)+'%;background:#22c55e;opacity:.85"></i>'
-      +'<i style="left:'+xe+'%;width:2px;background:#e8ece8"></i>';
-    $("#tkLg").innerHTML='<span>SL asal '+sl0.toFixed(dg)+'</span><span>VSL '+vs.toFixed(dg)+' · '+esc(TK_STG[a.stg]||"")+'</span><span>peak +$'+fav.toFixed(2)+'</span>'+(vtp>0?('<span>VTP '+tp.toFixed(dg)+'</span>'):'');
-    const age=a.t0?Math.max(0,Math.round(Date.now()/1000-a.t0)):0;
-    $("#tkStage").innerHTML="Heerka: <b>"+esc(TK_STG[a.stg]||"—")+"</b> · "+(cf.trs>0?(a.stg>=2?"trailing wuu socdaa":("trailing wuxuu bilaabmayaa +$"+Number(cf.trs).toFixed(2))):"trailing off")+(age>0&&age<86400?(" · "+age+"s"):"");
+    $("#tkBar").innerHTML='<div class="sg" style="left:0;width:'+xe+'%;background:linear-gradient(90deg,#7a2a2a,#4a1c1e)"></div>'
+      +(xp>xe?'<div class="sg" style="left:'+xe+'%;width:'+(xp-xe)+'%;background:linear-gradient(90deg,#1f8a4c,#22c55e)"></div>':'')
+      +'<div class="mk" style="left:'+xe+'%;background:#e8ece8"></div><div class="mk" style="left:'+xv+'%;background:'+(stg>0?'#f0cf86':'#ef4444')+'"></div>'
+      +(vtp>0?'<div class="mk" style="left:100%;background:#7fe0ab"></div>':'');
+    $("#tkLg").innerHTML='<span>SL asal '+sl0.toFixed(dg)+'</span><span class="y">VSL → '+vs.toFixed(dg)+'</span>'+(vtp>0?('<span>VTP '+tp.toFixed(dg)+'</span>'):'<span>VTP off</span>');
+    const nm=["① VIRTUAL SL","② BREAK-EVEN","③ TRAILING"];
+    $("#tkSteps").innerHTML=nm.map((t,i)=>'<span class="'+(i<stg?"done":(i===stg?"now":""))+'">'+t+'</span>').join("");
   } else op.hidden=true;
-  const wy=$("#tkWhy"); wy.hidden=(a.st==="OPEN");
-  wy.textContent=(!a.on && a.st!=="OPEN")?"TICK SCALPER waa damman — Maamul → 7 · TICK SCALPER ka shid (ama badhanka ⚡ TICK ee chart-ka).":(a.why||"—");
-  //--- panel-ka chart-ka (sida MT5) ---
-  const tt=a.tt||{}, L=[];
-  const sp=(c,t)=>'<span class="'+c+'">'+esc(t)+'</span>';
-  const stx=(a.st==="OPEN")?"Managing Open Trade":(a.st==="SEARCH"?"Searching for momentum...":(a.st==="OFF"?"OFF":("Paused: "+(a.why||""))));
-  L.push(sp("y","MOHA TICK SCALPER"+(cf.only?" · TICK OO KELIYA":"")));
-  L.push(sp(a.st==="OPEN"?"y":(a.st==="SEARCH"?"lg":"o"),"Status: "+stx));
-  L.push(sp("s","Historical DD: "+Number(a.mdd||0).toFixed(2)+"%   Drawdown: "+Number(a.dd||0).toFixed(2)+"%"));
-  L.push(sp("s","Hours: "+(cf.hs!==undefined?cf.hs:1)+":00 - "+(cf.he||22)+":00   Trades: "+(a.st==="OPEN"?1:0)+"/1   Maanta: "+(D.n||0)+"/"+(cf.maxd||"—")+"  "+tkMoney(D.pl)));
-  L.push(sp("s","Size: "+(a.st==="OPEN"?Number(a.lot||0).toFixed(2):(cf.risk>0?("risk "+Number(cf.risk).toFixed(2)+"%"):Number(cf.lot||0.01).toFixed(2)))+(cf.risk>0?"":"  (go'an)")));
-  L.push(sp("b","Tick Tracker: "+(cf.w||8)+" / "+(cf.k||5)+"   UP "+(tt.up||0)+"  DN "+(tt.dn||0)+"   move $"+Number(tt.mv||0).toFixed(2)+" (>= $"+Number(cf.mv||0).toFixed(2)+")"));
-  if(a.st==="OPEN"){
-    L.push(sp("w","Break Even point: "+Number(a.e).toFixed(dg)+"   "+(a.dir||"")+" · peak +$"+Number(a.fav||0).toFixed(2)));
-    L.push(sp(a.stg>0?"y":"r","Virtual SL: "+Number(a.vs).toFixed(dg)+" ("+(TK_STG[a.stg]||"")+")   Trail: "+(cf.trs>0?(a.stg>=2?"TRAILING":"Waiting for trigger (+$"+Number(cf.trs).toFixed(2)+")"):"off")));
-  } else {
-    L.push(sp("gr","Break Even point: —"));
-    L.push(sp("gr","Virtual SL: Waiting for trigger"));
-  }
-  L.push(sp("s","Wadar: "+(T.n||0)+" trade · guul "+(T.n>0?Math.round(100*(T.w||0)/T.n):0)+"% · PF "+Number(T.pf||0).toFixed(2)+" · "+tkMoney(T.pl)));
-  L.push(sp("d","SL adag (broker): $"+Number(cf.hard||0).toFixed(2)+" · VSL $"+Number(cf.vsl||0).toFixed(2)+" · VTP "+(cf.vtp>0?("$"+Number(cf.vtp).toFixed(2)):"off")+" · BE $"+Number(cf.be||0).toFixed(2)));
-  $("#tkTerm").innerHTML=L.join("\\n");
-  $("#tkSum").textContent=(T.n>0)?(T.n+" trade · guul "+Math.round(100*(T.w||0)/T.n)+"% · PF "+Number(T.pf||0).toFixed(2)+" · "+tkMoney(T.pl)):"—";
+  //--- tick tracker
+  const W=Number(cf.w)||8, K=Number(cf.k)||5, sq=String(a.seq||"");
+  $("#tkTTh").textContent="TICK TRACKER · "+W+" / "+K;
+  let dots=""; for(let i=0;i<W;i++){ const ch=sq.length===W?sq[i]:"N"; dots+='<span class="'+(ch==="U"?"u":(ch==="D"?"d":"n"))+'">'+(ch==="U"?"▲":(ch==="D"?"▼":"·"))+'</span>'; }
+  $("#tkDots").innerHTML=dots;
+  $("#tkTTn").innerHTML='<b class="g">'+(tt.up||0)+'</b> kor · <b class="r">'+(tt.dn||0)+'</b> hoos<br>loo baahan '+K;
+  const mv=Math.abs(Number(tt.mv)||0), need=Number(cf.mv)||0;
+  $("#tkMvI").style.width=(need>0?Math.min(100,mv/need*100):0)+"%";
+  $("#tkMvL").innerHTML='dhaqdhaqaaq <b>$'+mv.toFixed(2)+'</b>'+((Number(tt.mv)||0)<0?' ▼':((Number(tt.mv)||0)>0?' ▲':''));
+  $("#tkMvR").textContent="xadka $"+need.toFixed(2);
+  //--- lambarrada
+  $("#tkDN").innerHTML=(D.n||0)+'<span style="font-size:11px;color:#7a818b">/'+(cf.maxd||"—")+'</span>';
+  const dp=$("#tkDPL"); dp.textContent=tkMoney(D.pl); dp.className=(Number(D.pl)||0)>0?"up":((Number(D.pl)||0)<0?"dn":"");
+  $("#tkWR").textContent=(T.n>0)?(Math.round(100*(T.w||0)/T.n)+"%"):"—";
+  const pf=$("#tkPF"); pf.textContent=(T.n>0)?Number(T.pf||0).toFixed(2):"—"; pf.className=(T.n>0)?"y":"";
+  $("#tkMDD").textContent=Number(a.mdd||0).toFixed(2)+"%";
+  $("#tkCL").textContent=(D.cl||0)+" / "+(cf.ml||"—");
+  //--- saacadaha (waqtiga server-ka)
+  const hs=(cf.hs!==undefined)?Number(cf.hs):1, he=Number(cf.he)||22;
+  const si=$("#tkSesI"); if(hs<he){ si.style.left=(hs/24*100)+"%"; si.style.width=((he-hs)/24*100)+"%"; } else { si.style.left="0"; si.style.width="100%"; }
+  const se=$("#tkSesE");
+  if(a.srv){ const d=new Date(a.srv*1000), h=d.getUTCHours()+d.getUTCMinutes()/60; se.hidden=false; se.style.left=(h/24*100)+"%"; $("#tkSesM").textContent="SAACADAHA · HADDA "+tkHM(a.srv); }
+  else { se.hidden=true; $("#tkSesM").textContent="SAACADAHA (server)"; }
+  $("#tkSesA").textContent=String(hs).padStart(2,"0")+":00"; $("#tkSesB").textContent=String(he).padStart(2,"0")+":00";
+  //--- chips
+  const lot=(a.st==="OPEN")?Number(a.lot||0):(Number(a.lotp)||Number(cf.lot)||0.01);
+  $("#tkChips").innerHTML='<span>LOT <b>'+lot.toFixed(2)+'</b> '+(cf.risk>0?("risk "+Number(cf.risk).toFixed(2)+"%"):"go'an")+'</span>'
+    +(a.sp!==undefined?'<span>SPREAD <b>$'+Number(a.sp).toFixed(2)+'</b></span>':'')
+    +'<span>TRADE <b>'+(a.st==="OPEN"?1:0)+'/1</b></span><span>DD <b>'+Number(a.dd||0).toFixed(2)+'%</b></span>';
+  //--- taariikhda
+  const H=a.hist||[];
+  $("#tkHist").innerHTML=H.length?H.map(h=>{ const p=Number(h.pl)||0;
+      return '<div class="tkhr"><span class="t">'+tkHM(h.t)+'</span><span>'+(h.d>0?"BUY":"SELL")+'</span><span>'+esc(TK_X[h.x]||"—")+'</span><b class="'+(p>0?"g":(p<0?"r":""))+'">'+tkMoney(p)+'</b></div>'; }).join("")
+    :'<div class="bidle" style="margin-top:4px">Weli trade lama xidhin (EA v70.1+).</div>';
+  //--- hoose
+  $("#tkFtL").innerHTML=(T.n||0)+' trade · <b class="'+((Number(T.pl)||0)>=0?"g":"r")+'">'+tkMoney(T.pl)+'</b>';
+  $("#tkFtR").innerHTML='🛡 SL adag <b>$'+Number(cf.hard||0).toFixed(2)+'</b> · VSL <b>$'+Number(cf.vsl||0).toFixed(2)+'</b> · VTP <b>'+(cf.vtp>0?("$"+Number(cf.vtp).toFixed(2)):"off")+'</b> · BE <b>$'+Number(cf.be||0).toFixed(2)+'</b>';
 }
 
 /* ---- v12.9: ASIA BREAKOUT (Maamul · admin) ---- */
