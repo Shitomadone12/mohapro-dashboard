@@ -199,13 +199,16 @@ SET_LIMITS = {          # key: (min, max, noocaa)
     "TKPAUSE":   (1, 1440, "int"),   # hakad (daqiiqo)
     "TKDL":      (0, 50,   "float"), # khasaaraha maalinlaha %
     "TKDT":      (0, 100,  "float"), # bartilmaameed maalinle %
+    "TKSLM":     (0, 1,    "int"),   # v12.14 (EA v70.2): 0 = VIRTUAL SL, 1 = BROKER SL
+    "TKSPM":     (0, 10,   "float"), # filter spread: dhaqdhaqaaq >= X x spread (0 = off)
+    "TKTR":      (0, 1,    "int"),   # filter trend EMA50 M5
 }
 BSK_KEYS = ("BSK", "BSKSIG", "BSKN", "BSKENT", "BSKRISK", "BSKMAX", "BSKDAY", "BSKSPR",
             "BSKTP", "BSKTGT", "BSKBE", "BSKLOCK", "BSKSES", "BSKBLK", "BSKDTOL", "BSKDNECK", "BSKDTP")
 ASIA_KEYS = ("ASIA", "ASIADIR", "ASIATR", "ASIAMAXR", "ASIASL", "ASIATP", "ASIARISK", "ASIAMAX",
              "ASIAL", "ASIAWE", "ASIACL", "ASG", "ASGM", "ASGL", "ASGS", "ASGX")   # v12.9 · v12.10 GRID
 TK_KEYS = ("TK", "TKONLY", "TKW", "TKK", "TKMV", "TKSEC", "TKLOT", "TKRISK", "TKVSL", "TKVTP", "TKBE", "TKBEL",
-           "TKTRS", "TKTRD", "TKHARD", "TKHOLD", "TKHS", "TKHE", "TKSPR", "TKCD", "TKMAXD", "TKML", "TKPAUSE", "TKDL", "TKDT")   # v12.12
+           "TKTRS", "TKTRD", "TKHARD", "TKHOLD", "TKHS", "TKHE", "TKSPR", "TKCD", "TKMAXD", "TKML", "TKPAUSE", "TKDL", "TKDT", "TKSLM", "TKSPM", "TKTR")   # v12.12 · v12.14
 
 def valid_command(cmd):
     """True + amarka nadiifsan, ama False + sabab."""
@@ -2596,9 +2599,11 @@ def _save_tick(con, acc, d):
     out["day"] = {"n": int(n(dy.get("n"), 0, 0, 100000)), "w": int(n(dy.get("w"), 0, 0, 100000)), "pl": n(dy.get("pl")),
                   "cl": int(n(dy.get("cl"), 0, 0, 1000)), "pause": int(n(dy.get("pause"), 0, 0, 4e9))}
     to = a.get("tot") if isinstance(a.get("tot"), dict) else {}
-    out["tot"] = {"n": int(n(to.get("n"), 0, 0, 1e9)), "w": int(n(to.get("w"), 0, 0, 1e9)), "pl": n(to.get("pl")), "pf": n(to.get("pf"), 2, 0, 1000)}
+    out["tot"] = {"n": int(n(to.get("n"), 0, 0, 1e9)), "w": int(n(to.get("w"), 0, 0, 1e9)), "pl": n(to.get("pl")), "pf": n(to.get("pf"), 2, 0, 1000),
+                  "apk": n(to.get("apk"), 2, -1e5, 1e5), "asl": n(to.get("asl"), 2, -1e5, 1e5), "asp": n(to.get("asp"), 2, 0, 1e5),
+                  "sln": int(n(to.get("sln"), 0, 0, 1e9))}   # v12.14
     tt = a.get("tt") if isinstance(a.get("tt"), dict) else {}
-    out["tt"] = {"up": int(n(tt.get("up"), 0, 0, 100)), "dn": int(n(tt.get("dn"), 0, 0, 100)), "mv": n(tt.get("mv"), 2, -1e5, 1e5)}
+    out["tt"] = {"up": int(n(tt.get("up"), 0, 0, 100)), "dn": int(n(tt.get("dn"), 0, 0, 100)), "mv": n(tt.get("mv"), 2, -1e5, 1e5), "need": n(tt.get("need"), 2, 0, 1e5)}
     cf = a.get("cfg")
     if isinstance(cf, dict):
         out["cfg"] = {"on": 1 if n(cf.get("on"), 0, 0, 1) else 0, "only": 1 if n(cf.get("only"), 0, 0, 1) else 0,
@@ -2609,12 +2614,13 @@ def _save_tick(con, acc, d):
                       "hard": n(cf.get("hard"), 2, 0.5, 200), "hold": int(n(cf.get("hold"), 0, 0, 86400)),
                       "hs": int(n(cf.get("hs"), 0, 0, 23)), "he": int(n(cf.get("he"), 0, 1, 24)), "spr": int(n(cf.get("spr"), 0, 5, 500)),
                       "cd": int(n(cf.get("cd"), 0, 0, 3600)), "maxd": int(n(cf.get("maxd"), 0, 1, 1000)), "ml": int(n(cf.get("ml"), 0, 0, 20)),
-                      "pause": int(n(cf.get("pause"), 0, 1, 1440)), "dl": n(cf.get("dl"), 1, 0, 50), "dt": n(cf.get("dt"), 1, 0, 100)}
+                      "pause": int(n(cf.get("pause"), 0, 1, 1440)), "dl": n(cf.get("dl"), 1, 0, 50), "dt": n(cf.get("dt"), 1, 0, 100),
+                      "slm": int(n(cf.get("slm"), 0, 0, 1)), "spm": n(cf.get("spm"), 1, 0, 10), "tr": 1 if n(cf.get("tr"), 0, 0, 1) else 0}   # v12.14
     if out["st"] == "OPEN":
         out.update({"dir": "SELL" if str(a.get("dir")) == "SELL" else "BUY",
                     "e": n(a.get("e"), dg, 0, 1e7), "vs": n(a.get("vs"), dg, 0, 1e7), "stg": int(n(a.get("stg"), 0, 0, 2)),
                     "fav": n(a.get("fav"), 2, -1e5, 1e5), "lot": n(a.get("lot"), 2, 0, 1e4), "pl": n(a.get("pl")),
-                    "t0": int(n(a.get("t0"), 0, 0, 4e9))})
+                    "t0": int(n(a.get("t0"), 0, 0, 4e9)), "bsl": n(a.get("bsl"), dg, 0, 1e7)})
     sq = str(a.get("seq") or "")[:50]                                   # v12.13 (EA v70.1)
     out["seq"] = "".join(ch for ch in sq if ch in "UDN")
     out["srv"] = int(n(a.get("srv"), 0, 0, 4e9))
@@ -2626,6 +2632,9 @@ def _save_tick(con, acc, d):
             continue
         hist.append({"t": int(n(h.get("t"), 0, 0, 4e9)), "d": 1 if n(h.get("d"), 0, -1, 1) > 0 else -1,
                      "x": int(n(h.get("x"), 0, 0, 9)), "pl": n(h.get("pl"))})
+        if "k" in h:   # v12.14 (EA v70.2): peak · slippage · spread · SL broker
+            hist[-1].update({"k": n(h.get("k"), 2, -1e5, 1e5), "s": n(h.get("s"), 2, -1e5, 1e5), "sp": n(h.get("sp"), 2, 0, 1e5),
+                             "b": 1 if n(h.get("b"), 0, 0, 1) else 0})
     out["hist"] = hist
     con.execute("INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
                 ("tick:" + acc, json.dumps(out, separators=(",", ":"), ensure_ascii=False)))
@@ -4452,6 +4461,16 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 .tkhr:last-child{border-bottom:none}.tkhr .t{color:#7a818b;font-variant-numeric:tabular-nums}.tkhr b{font-variant-numeric:tabular-nums}.tkhr .g{color:#7fe0ab}.tkhr .r{color:#f2a3a3}
 .tkft{margin-top:11px;padding-top:9px;border-top:1px solid #20242b;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:10.5px;color:#7a818b}
 .tkft b{color:#c7ccd4}.tkft .g{color:#7fe0ab}.tkft .r{color:#f2a3a3}
+/* v12.14: tayada bixitaanka + SL broker */
+.tkqa{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+.tkqa div{background:rgba(34,197,94,.05);border:1px solid rgba(34,197,94,.22);border-radius:11px;padding:7px 5px;text-align:center;font-size:9.5px;letter-spacing:.06em;color:#8f96a0;font-weight:700;text-transform:uppercase}
+.tkqa b{display:block;font-size:15.5px;color:var(--ink);letter-spacing:0;text-transform:none;font-variant-numeric:tabular-nums}
+.tkqa b.g{color:#7fe0ab}.tkqa b.r{color:#f2a3a3}.tkqa b.y{color:#f0cf86}
+.tkqh{font-size:11.5px;line-height:1.5;color:#c7ccd4;background:#111411;border:1px solid #2a352a;border-radius:10px;padding:8px 10px;margin-top:8px}.tkqh b{color:#fff}
+.tklock{display:inline-flex;align-items:center;gap:3px;font-size:9.5px;font-weight:900;letter-spacing:.05em;color:#7fe0ab;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.35);border-radius:6px;padding:1px 6px;margin-left:5px}
+.tkhr2{border-bottom:1px solid #1d2127;padding:6px 2px}.tkhr2:last-child{border-bottom:none}
+.tkhr2 .tkhr{border:none;padding:0 0 2px}
+.tkhr2 .x{font-size:10px;color:#7a818b;margin-left:52px}.tkhr2 .x b{color:#c7ccd4;font-weight:700}.tkhr2 .x b.r{color:#f2a3a3}
 .tkterm{background:#000;border:1px solid #2a2a2a;border-radius:10px;padding:10px 12px;font-family:Consolas,"DejaVu Sans Mono",Menlo,monospace;font-size:11.4px;line-height:1.6;margin-top:12px;white-space:pre-wrap;word-break:break-word}
 .tkterm .y{color:#ffd700}.tkterm .s{color:#c0c0c0}.tkterm .lg{color:#32cd32}.tkterm .o{color:#ffa500}.tkterm .b{color:#00bfff}.tkterm .w{color:#fff}.tkterm .r{color:#ff6347}.tkterm .d{color:#8a8a8a}.tkterm .gr{color:#808080}
 .aswarn{color:#f0d9a0!important;background:#1a1609;border:1px solid #6b5320;border-radius:10px;padding:8px 10px!important;margin:6px 0}
@@ -4919,6 +4938,11 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
       <div class="tkses" id="tkSes"><div class="tksesb"><i id="tkSesI"></i><em id="tkSesE"></em></div>
         <div class="tksesl"><span id="tkSesA">—</span><span class="m" id="tkSesM">—</span><span id="tkSesB">—</span></div></div>
       <div class="tkchips" id="tkChips"></div>
+      <div id="tkQA" hidden>
+        <div class="tksec">TAYADA BIXITAANKA</div>
+        <div class="tkqa"><div><b id="tkAPK">—</b>peak (celcelis)</div><div><b id="tkASL">—</b>slippage</div><div><b id="tkASP">—</b>spread</div></div>
+        <div class="tkqh" id="tkQH">—</div>
+      </div>
       <div class="tksec">TRADE-YADII U DAMBEEYAY</div>
       <div id="tkHist"></div>
       <div class="tkft"><span id="tkFtL">—</span><span id="tkFtR">—</span></div>
@@ -5205,6 +5229,8 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
         <div class="frow"><span>Jiho isku mid (K) <small>W ka mid · 5 / 8 = momentum</small></span><span class="stp"><button type="button" id="mTKKm" aria-label="Ka yaree">−</button><b id="mTKK">5</b><button type="button" id="mTKKp" aria-label="Ku dar">+</button></span></div>
         <div class="frow"><span>Dhaqdhaqaaq ugu yar <small>window-ka gudihiisa</small></span><span><input id="mTKMV" type="number" min="0" max="20" step="0.05" value="0.4"> <i>$</i></span></div>
         <div class="frow"><span>Xawaare <small>window ≤ X ilbiriqsi · 0 = off</small></span><span><input id="mTKSEC" type="number" min="0" max="300" step="1" value="10"> <i>s</i></span></div>
+        <div class="frow"><span>Filter spread <small>dhaqdhaqaaq ≥ X × spread · 0 = off · EA v70.2+</small></span><span><input id="mTKSPM" type="number" min="0" max="10" step="0.5" value="3"> <i>×</i></span></div>
+        <div class="frow"><span>Filter trend <small>EMA50 M5 · BUY kor oo keliya / SELL hoos</small></span><span><button class="sw" id="mTKTR" type="button" aria-label="Filter trend"><i></i></button></span></div>
         <div class="bsub">2 · LOT</div>
         <div class="frow frow-col" id="rTKLM"><div class="seg" id="mTKLM" role="radiogroup" aria-label="Lot">
           <button type="button" data-v="0" role="radio">GO'AN</button>
@@ -5212,7 +5238,12 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
         </div></div>
         <div class="frow" id="rTKLOT"><span>Lot go'an</span><span><input id="mTKLOT" type="number" min="0.01" max="100" step="0.01" value="0.01"> <i>lot</i></span></div>
         <div class="frow" id="rTKRISK"><span>Risk trade kasta <small>% balance ÷ virtual SL</small></span><span><input id="mTKRISK" type="number" min="0.01" max="5" step="0.05" value="0.25"> <i>%</i></span></div>
-        <div class="bsub">3 · BIXITAAN · VIRTUAL (broker-ka lama tuso)</div>
+        <div class="bsub">3 · BIXITAAN</div>
+        <div class="frow frow-col" id="rTKSLM"><span style="margin-bottom:6px">Stop Loss <small>halka SL-ku ku jiro · EA v70.2+</small></span><div class="seg" id="mTKSLM" role="radiogroup" aria-label="Stop Loss">
+          <button type="button" data-v="0" role="radio">VIRTUAL<small style="display:block;font-size:10px;opacity:.8">bot-ka ayaa xidha</small></button>
+          <button type="button" data-v="1" role="radio">BROKER<small style="display:block;font-size:10px;opacity:.8">server-ka ayaa xidha</small></button>
+        </div></div>
+        <div class="sltph" id="mTKSLMHint">—</div>
         <div class="frow"><span>Virtual SL</span><span><input id="mTKVSL" type="number" min="0.1" max="100" step="0.1" value="2.5"> <i>$</i></span></div>
         <div class="frow"><span>Virtual TP <small>0 = trailing oo keliya</small></span><span><input id="mTKVTP" type="number" min="0" max="100" step="0.1" value="1.5"> <i>$</i></span></div>
         <div class="frow"><span>Break-even <small>faa'iido $X → SL = entry + lock · 0 = off</small></span><span><input id="mTKBE" type="number" min="0" max="100" step="0.05" value="0.6"> <i>$</i></span></div>
@@ -5221,7 +5252,7 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
         <div class="frow"><span>Trailing masaafo</span><span><input id="mTKTRD" type="number" min="0.05" max="50" step="0.05" value="0.5"> <i>$</i></span></div>
         <div class="frow"><span>Waqtiga ugu dheer <small>trade → xidh · 0 = off</small></span><span><input id="mTKHOLD" type="number" min="0" max="86400" step="30" value="900"> <i>s</i></span></div>
         <div class="bsub">4 · 🔒 ILAALIN</div>
-        <div class="frow"><span>SL adag (broker) <small>internet go'a · ugu yaraan VSL + $1</small></span><span><input id="mTKHARD" type="number" min="0.5" max="200" step="0.5" value="6"> <i>$</i></span></div>
+        <div class="frow" id="rTKHARD"><span>SL adag (broker) <small id="mTKHARDs">internet go'a · ugu yaraan VSL + $1</small></span><span><input id="mTKHARD" type="number" min="0.5" max="200" step="0.5" value="6"> <i>$</i></span></div>
         <div class="frow"><span>Saacadaha (server) <small>bilow → dhammaad</small></span><span><input id="mTKHS" type="number" min="0" max="23" step="1" value="1" style="width:56px"> <i>→</i> <input id="mTKHE" type="number" min="1" max="24" step="1" value="22" style="width:56px"></span></div>
         <div class="frow"><span>Spread ugu badan <small>sent · 35 = $0.35</small></span><span><input id="mTKSPR" type="number" min="5" max="500" step="1" value="35"> <i>¢</i></span></div>
         <div class="frow"><span>Cooldown <small>kadib trade kasta</small></span><span><input id="mTKCD" type="number" min="0" max="3600" step="5" value="20"> <i>s</i></span></div>
@@ -6662,7 +6693,7 @@ const PERM_EL={mRISK:"risk",mDLOSS:"",mMAXDD:"",mSNIPER:"sltp",mSNDAYm:"day",mSN
   mASIAWEm:"",mASIACLm:"",mASIATR:"",mASIAMAXR:"",mASIATPm:"",mASIARISK:"",mASIAMAX:"",
   mASGLm:"",mASGSm:"",mASGXm:"",
   mTKONLY:"",mTKWm:"",mTKKm:"",mTKMV:"",mTKSEC:"",mTKLOT:"",mTKRISK:"",mTKVSL:"",mTKVTP:"",mTKBE:"",mTKBEL:"",mTKTRS:"",mTKTRD:"",
-  mTKHOLD:"",mTKHARD:"",mTKHS:"",mTKSPR:"",mTKCD:"",mTKMAXD:"",mTKML:"",mTKDL:"",mTKDT:""};   // v12.12: TICK = admin   // v12.10: GRID = admin   // v12.9: ASIA = admin   // v12.7: GOLD BASKET = admin
+  mTKHOLD:"",mTKHARD:"",mTKHS:"",mTKSPR:"",mTKCD:"",mTKMAXD:"",mTKML:"",mTKDL:"",mTKDT:"",mTKSPM:"",mTKTR:""};   // v12.12: TICK = admin   // v12.10: GRID = admin   // v12.9: ASIA = admin   // v12.7: GOLD BASKET = admin
 let licOK=true;
 const LKSVG='<svg class="lk" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
 function permOK(p){ return !PERMS || (licOK && !!(p && PERMS[p])); }
@@ -6680,7 +6711,7 @@ function applyPerms(){
   ["mBSKSIG","mBSKENT","mBSKTP"].forEach(segLock); const bsw=$("#mBSK"); if(bsw){ bsw.disabled=true; bsw.classList.add("lockd"); }   // v12.7
   ["mGOLD","mASIADIR","mASIASL","mASIAL","mASGM"].forEach(segLock); const asw=$("#mASIA"); if(asw){ asw.disabled=true; asw.classList.add("lockd"); }   // v12.9
   { const gsw=$("#mASG"); if(gsw){ gsw.disabled=true; gsw.classList.add("lockd"); } }   // v12.10
-  segLock("mTKLM"); { const tsw=$("#mTK"); if(tsw){ tsw.disabled=true; tsw.classList.add("lockd"); } }   // v12.12
+  segLock("mTKLM"); segLock("mTKSLM"); { const tsw=$("#mTK"); if(tsw){ tsw.disabled=true; tsw.classList.add("lockd"); } }   // v12.12
   document.querySelectorAll("[data-perm]").forEach(b=>{ if(!permOK(b.dataset.perm)){ b.classList.add("lockd"); b.disabled=true; } });
 
   const r=$("#mRISK"); if(r && permOK("risk")){ r.min=PERMS.lo; r.max=PERMS.hi;
@@ -6803,13 +6834,20 @@ function bskStep(id,d,lo,hi){ const e=$("#"+id); if(!e) return; let v=Number(e.t
   if(p) p.addEventListener("click",()=>{ if(!p.disabled) bskStep(id,1,lo,hi); });
 });
 /* ---- v12.12: ⚡ TICK SCALPER (Maamul · admin) ---- */
-let TKCFG=null, TICK=null, mTkLM=0, mTkTouched=false;
-const TK_IN=["MV","SEC","LOT","RISK","VSL","VTP","BE","BEL","TRS","TRD","HOLD","HARD","HS","HE","SPR","CD","MAXD","ML","PAUSE","DL","DT"];
+let TKCFG=null, TICK=null, mTkLM=0, mTkTouched=false, mTkSLM=1;
+const TK_IN=["SPM","MV","SEC","LOT","RISK","VSL","VTP","BE","BEL","TRS","TRD","HOLD","HARD","HS","HE","SPR","CD","MAXD","ML","PAUSE","DL","DT"];
 function tkVal(k){ const e=$("#mTK"+k); if(!e||e.value==="") return null; const v=Number(e.value); return isFinite(v)?v:null; }
 function tkPaint(){
   const g=$("#tkGrp"); if(g) g.classList.toggle("off",!swGet("mTK"));
   segPaint("mTKLM","v",mTkLM);
   const rl=$("#rTKLOT"), rr=$("#rTKRISK"); if(rl) rl.style.display=(mTkLM!==0)?"none":""; if(rr) rr.style.display=(mTkLM!==1)?"none":"";
+  segPaint("mTKSLM","v",mTkSLM);   // v12.14
+  { const sh=$("#mTKSLMHint"), hr=$("#rTKHARD"), hs=$("#mTKHARDs"), v=tkVal("VSL")||2;
+    if(sh) sh.innerHTML=mTkSLM===1?("<b>BROKER:</b> SL $"+v.toFixed(2)+" wuxuu galayaa server-ka broker-ka → qiimaha marka la gaadho isla markiiba wuu xidhmaa (slippage yar). BE / trailing → bot-ka ayaa SL-ka broker-ka dhaqaajiya.")
+                                   :("<b>VIRTUAL:</b> bot-ka ayaa xidha marka qiimuhu gaadho SL-ka → dhaqdhaqaaq degdeg ah = slippage (demo: −$4.14). SL adag ayaa ilaalin ah.");
+    if(hr) hr.style.opacity=mTkSLM===1?".45":""; if(hs) hs.textContent=mTkSLM===1?"BROKER: lama isticmaalo (SL = VSL)":"internet go'a · ugu yaraan VSL + $1"; }
+  { const sp=(TICK&&TICK.sp!==undefined)?Number(TICK.sp):0, mx=tkVal("SPM"), mv=tkVal("MV")||0, hh=$("#mTKHint");
+    if(hh && sp>0 && mx>0){ hh.dataset.sp="Spread hadda <b>$"+sp.toFixed(2)+"</b> × "+mx+" → dhaqdhaqaaqa loo baahan yahay <b>$"+Math.max(mv,sp*mx).toFixed(2)+"</b>."; } else if(hh) hh.dataset.sp=""; }
   const h=$("#mTKHint"); if(!h) return;
   const vsl=tkVal("VSL")||2.5, vtp=tkVal("VTP"), hard=tkVal("HARD")||6, lot=tkVal("LOT")||0.01, w=Number(($("#mTKW")||{}).textContent)||8, k=Number(($("#mTKK")||{}).textContent)||5;
   const bits=[];
@@ -6817,6 +6855,7 @@ function tkPaint(){
   if(mTkLM===0) bits.push("Lot <b>"+lot.toFixed(2)+"</b> → Virtual SL ≈ <b>$"+(vsl*lot*100).toFixed(2)+"</b>"+(vtp>0?(" · TP ≈ <b>$"+(vtp*lot*100).toFixed(2)+"</b>"):"")+" · SL adag ≈ $"+(Math.max(hard,vsl+1)*lot*100).toFixed(2)+" (XAUUSD · 100 oz).");
   if(hard<vsl+1) bits.push('<span style="color:#f0d9a0">SL adag waa in uu ≥ VSL + $1 → bot-ku wuxuu u dhigayaa $'+(vsl+1).toFixed(2)+'.</span>');
   if(vtp!==null && vtp>0 && vtp<vsl) bits.push("TP &lt; SL → guusha loo baahan yahay ≥ <b>"+Math.round(100*vsl/(vsl+vtp))+"%</b> (spread ka hor).");
+  if(h.dataset.sp) bits.push(h.dataset.sp);   // v12.14
   h.innerHTML=bits.join("<br>");
 }
 function tkSeed(){
@@ -6826,6 +6865,7 @@ function tkSeed(){
   const m={MV:c.mv,SEC:c.sec,LOT:c.lot,RISK:(c.risk>0?c.risk:0.25),VSL:c.vsl,VTP:c.vtp,BE:c.be,BEL:c.bel,TRS:c.trs,TRD:c.trd,HOLD:c.hold,HARD:c.hard,HS:c.hs,HE:c.he,SPR:c.spr,CD:c.cd,MAXD:c.maxd,ML:c.ml,PAUSE:c.pause,DL:c.dl,DT:c.dt};
   Object.keys(m).forEach(k=>{ const e=$("#mTK"+k); if(e && m[k]!==undefined && m[k]!==null) e.value=m[k]; });
   mTkLM=(Number(c.risk)>0)?1:0;
+  mTkSLM=(c.slm===0)?0:1; swSet("mTKTR",!!c.tr); { const e=$("#mTKSPM"); if(e && c.spm!==undefined) e.value=c.spm; }   // v12.14
   tkPaint();
 }
 function tickCmds(cmds){
@@ -6838,9 +6878,15 @@ function tickCmds(cmds){
   Object.keys(L).forEach(key=>{ const v=tkVal(key); if(v===null) return; const c=Math.max(L[key][0],Math.min(L[key][1],v)); cmds.push("SET:TK"+key+"="+c); });
   if(mTkLM===1){ const r=tkVal("RISK"); cmds.push("SET:TKRISK="+Math.max(0.01,Math.min(5,(r===null?0.25:r)))); }
   else cmds.push("SET:TKRISK=0");
+  if(TKCFG && TKCFG.slm!==undefined){   // v12.14: EA v70.2+ oo keliya
+    cmds.push("SET:TKSLM="+mTkSLM); cmds.push("SET:TKTR="+(swGet("mTKTR")?1:0));
+    const sm=tkVal("SPM"); if(sm!==null) cmds.push("SET:TKSPM="+Math.max(0,Math.min(10,sm)));
+  }
 }
 { const e=$("#mTK"); if(e) e.addEventListener("click",()=>{ if(e.disabled) return; e.classList.toggle("on"); mTouched=true; mTkTouched=true; tkPaint(); }); }
 { const e=$("#mTKONLY"); if(e) e.addEventListener("click",()=>{ if(e.disabled) return; e.classList.toggle("on"); mTouched=true; mTkTouched=true; }); }
+document.querySelectorAll("#mTKSLM button").forEach(b=>b.addEventListener("click",()=>{ if(b.disabled) return; mTkSLM=Number(b.dataset.v); mTouched=true; mTkTouched=true; tkPaint(); }));   // v12.14
+{ const e=$("#mTKTR"); if(e) e.addEventListener("click",()=>{ if(e.disabled) return; e.classList.toggle("on"); mTouched=true; mTkTouched=true; }); }
 document.querySelectorAll("#mTKLM button").forEach(b=>b.addEventListener("click",()=>{ if(b.disabled) return; mTkLM=Number(b.dataset.v); mTouched=true; mTkTouched=true; tkPaint(); }));
 TK_IN.forEach(k=>{ const e=$("#mTK"+k); if(e) e.addEventListener("input",()=>{ mTouched=true; mTkTouched=true; tkPaint(); }); });
 [["mTKW",3,50],["mTKK",2,50]].forEach(([id,lo,hi])=>{
@@ -6886,8 +6932,9 @@ function paintTick(a){
       +(xp>xe?'<div class="sg" style="left:'+xe+'%;width:'+(xp-xe)+'%;background:linear-gradient(90deg,#1f8a4c,#22c55e)"></div>':'')
       +'<div class="mk" style="left:'+xe+'%;background:#e8ece8"></div><div class="mk" style="left:'+xv+'%;background:'+(stg>0?'#f0cf86':'#ef4444')+'"></div>'
       +(vtp>0?'<div class="mk" style="left:100%;background:#7fe0ab"></div>':'');
-    $("#tkLg").innerHTML='<span>SL asal '+sl0.toFixed(dg)+'</span><span class="y">VSL → '+vs.toFixed(dg)+'</span>'+(vtp>0?('<span>VTP '+tp.toFixed(dg)+'</span>'):'<span>VTP off</span>');
-    const nm=["① VIRTUAL SL","② BREAK-EVEN","③ TRAILING"];
+    const brk=(cf.slm===1 && Number(a.bsl)>0 && Math.abs(Number(a.bsl)-vs)<Math.pow(10,-dg)*0.6);   // v12.14
+    $("#tkLg").innerHTML='<span>SL asal '+sl0.toFixed(dg)+'</span><span class="y">'+(cf.slm===1?"SL":"VSL")+' → '+vs.toFixed(dg)+(brk?'<span class="tklock">🔒 BROKER</span>':'')+'</span>'+(vtp>0?('<span>VTP '+tp.toFixed(dg)+'</span>'):'<span>VTP off</span>');
+    const nm=[(cf.slm===1?"① STOP LOSS":"① VIRTUAL SL"),"② BREAK-EVEN","③ TRAILING"];
     $("#tkSteps").innerHTML=nm.map((t,i)=>'<span class="'+(i<stg?"done":(i===stg?"now":""))+'">'+t+'</span>').join("");
   } else op.hidden=true;
   //--- tick tracker
@@ -6896,7 +6943,7 @@ function paintTick(a){
   let dots=""; for(let i=0;i<W;i++){ const ch=sq.length===W?sq[i]:"N"; dots+='<span class="'+(ch==="U"?"u":(ch==="D"?"d":"n"))+'">'+(ch==="U"?"▲":(ch==="D"?"▼":"·"))+'</span>'; }
   $("#tkDots").innerHTML=dots;
   $("#tkTTn").innerHTML='<b class="g">'+(tt.up||0)+'</b> kor · <b class="r">'+(tt.dn||0)+'</b> hoos<br>loo baahan '+K;
-  const mv=Math.abs(Number(tt.mv)||0), need=Number(cf.mv)||0;
+  const mv=Math.abs(Number(tt.mv)||0), need=Number(tt.need)||Number(cf.mv)||0;   // v12.14: xadka + filter spread
   $("#tkMvI").style.width=(need>0?Math.min(100,mv/need*100):0)+"%";
   $("#tkMvL").innerHTML='dhaqdhaqaaq <b>$'+mv.toFixed(2)+'</b>'+((Number(tt.mv)||0)<0?' ▼':((Number(tt.mv)||0)>0?' ▲':''));
   $("#tkMvR").textContent="xadka $"+need.toFixed(2);
@@ -6922,8 +6969,24 @@ function paintTick(a){
   //--- taariikhda
   const H=a.hist||[];
   $("#tkHist").innerHTML=H.length?H.map(h=>{ const p=Number(h.pl)||0;
-      return '<div class="tkhr"><span class="t">'+tkHM(h.t)+'</span><span>'+(h.d>0?"BUY":"SELL")+'</span><span>'+esc(TK_X[h.x]||"—")+'</span><b class="'+(p>0?"g":(p<0?"r":""))+'">'+tkMoney(p)+'</b></div>'; }).join("")
+      const nm=(h.b && h.x===2)?"STOP LOSS":(TK_X[h.x]||"—"), ex=(h.k!==undefined);
+      const sl=Number(h.s)||0;
+      return '<div class="tkhr2"><div class="tkhr"><span class="t">'+tkHM(h.t)+'</span><span>'+(h.d>0?"BUY":"SELL")+'</span><span>'+esc(nm)+(h.b?' 🔒':'')+'</span><b class="'+(p>0?"g":(p<0?"r":""))+'">'+tkMoney(p)+'</b></div>'
+        +(ex?('<div class="x">peak <b>+$'+Number(h.k||0).toFixed(2)+'</b> · slip <b class="'+(sl>0.3?"r":"")+'">$'+sl.toFixed(2)+'</b> · spread <b>$'+Number(h.sp||0).toFixed(2)+'</b></div>'):'')+'</div>'; }).join("")
     :'<div class="bidle" style="margin-top:4px">Weli trade lama xidhin (EA v70.1+).</div>';
+  //--- v12.14: tayada bixitaanka (EA v70.2+)
+  const qa=$("#tkQA");
+  if(T.apk!==undefined && T.n>0){
+    qa.hidden=false;
+    const apk=Number(T.apk)||0, asl=Number(T.asl)||0, asp=Number(T.asp)||0, vtp=Number(cf.vtp)||0;
+    const e1=$("#tkAPK"); e1.textContent="+$"+apk.toFixed(2); e1.className=(vtp>0&&apk>=vtp)?"g":"y";
+    const e2=$("#tkASL"); e2.textContent=(T.sln>0)?("$"+asl.toFixed(2)):"—"; e2.className=(asl>0.3)?"r":"g";
+    $("#tkASP").textContent="$"+asp.toFixed(2);
+    const q=[];
+    if(vtp>0) q.push(apk<vtp?("Peak <b>$"+apk.toFixed(2)+" &lt; TP $"+vtp.toFixed(2)+"</b> → trade-yadu inta badan TP ma gaadhaan · TP ≈ $"+Math.max(0.5,apk*0.9).toFixed(2)+" tijaabi."):("Peak <b>$"+apk.toFixed(2)+" ≥ TP</b> → TP-gu waa macquul."));
+    if(T.sln>0) q.push(asl>0.3?("Slippage <b>$"+asl.toFixed(2)+"</b> weyn → SL BROKER isticmaal / broker kale."):("Slippage <b>$"+asl.toFixed(2)+"</b> → SL-ku si sax ah ayuu u shaqeeyaa."));
+    $("#tkQH").innerHTML=q.join("<br>")||"—";
+  } else qa.hidden=true;
   //--- hoose
   $("#tkFtL").innerHTML=(T.n||0)+' trade · <b class="'+((Number(T.pl)||0)>=0?"g":"r")+'">'+tkMoney(T.pl)+'</b>';
   $("#tkFtR").innerHTML='🛡 SL adag <b>$'+Number(cf.hard||0).toFixed(2)+'</b> · VSL <b>$'+Number(cf.vsl||0).toFixed(2)+'</b> · VTP <b>'+(cf.vtp>0?("$"+Number(cf.vtp).toFixed(2)):"off")+'</b> · BE <b>$'+Number(cf.be||0).toFixed(2)+'</b>';
