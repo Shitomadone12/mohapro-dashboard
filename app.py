@@ -200,6 +200,7 @@ SET_LIMITS = {          # key: (min, max, noocaa)
     "TKDL":      (0, 50,   "float"), # khasaaraha maalinlaha %
     "TKDT":      (0, 100,  "float"), # bartilmaameed maalinle %
     "TKSLM":     (0, 1,    "int"),   # v12.14 (EA v70.2): 0 = VIRTUAL SL, 1 = BROKER SL
+    "TKTPM":     (0, 1,    "int"),   # v12.15 (EA v70.3): 0 = VIRTUAL TP, 1 = BROKER TP
     "TKSPM":     (0, 10,   "float"), # filter spread: dhaqdhaqaaq >= X x spread (0 = off)
     "TKTR":      (0, 1,    "int"),   # filter trend EMA50 M5
 }
@@ -208,7 +209,7 @@ BSK_KEYS = ("BSK", "BSKSIG", "BSKN", "BSKENT", "BSKRISK", "BSKMAX", "BSKDAY", "B
 ASIA_KEYS = ("ASIA", "ASIADIR", "ASIATR", "ASIAMAXR", "ASIASL", "ASIATP", "ASIARISK", "ASIAMAX",
              "ASIAL", "ASIAWE", "ASIACL", "ASG", "ASGM", "ASGL", "ASGS", "ASGX")   # v12.9 · v12.10 GRID
 TK_KEYS = ("TK", "TKONLY", "TKW", "TKK", "TKMV", "TKSEC", "TKLOT", "TKRISK", "TKVSL", "TKVTP", "TKBE", "TKBEL",
-           "TKTRS", "TKTRD", "TKHARD", "TKHOLD", "TKHS", "TKHE", "TKSPR", "TKCD", "TKMAXD", "TKML", "TKPAUSE", "TKDL", "TKDT", "TKSLM", "TKSPM", "TKTR")   # v12.12 · v12.14
+           "TKTRS", "TKTRD", "TKHARD", "TKHOLD", "TKHS", "TKHE", "TKSPR", "TKCD", "TKMAXD", "TKML", "TKPAUSE", "TKDL", "TKDT", "TKSLM", "TKSPM", "TKTR", "TKTPM")   # v12.12 · v12.14 · v12.15
 
 def valid_command(cmd):
     """True + amarka nadiifsan, ama False + sabab."""
@@ -2615,12 +2616,13 @@ def _save_tick(con, acc, d):
                       "hs": int(n(cf.get("hs"), 0, 0, 23)), "he": int(n(cf.get("he"), 0, 1, 24)), "spr": int(n(cf.get("spr"), 0, 5, 500)),
                       "cd": int(n(cf.get("cd"), 0, 0, 3600)), "maxd": int(n(cf.get("maxd"), 0, 1, 1000)), "ml": int(n(cf.get("ml"), 0, 0, 20)),
                       "pause": int(n(cf.get("pause"), 0, 1, 1440)), "dl": n(cf.get("dl"), 1, 0, 50), "dt": n(cf.get("dt"), 1, 0, 100),
+                      "tpm": int(n(cf.get("tpm"), 0, 0, 1)) if "tpm" in cf else None,   # v12.15
                       "slm": int(n(cf.get("slm"), 0, 0, 1)), "spm": n(cf.get("spm"), 1, 0, 10), "tr": 1 if n(cf.get("tr"), 0, 0, 1) else 0}   # v12.14
     if out["st"] == "OPEN":
         out.update({"dir": "SELL" if str(a.get("dir")) == "SELL" else "BUY",
                     "e": n(a.get("e"), dg, 0, 1e7), "vs": n(a.get("vs"), dg, 0, 1e7), "stg": int(n(a.get("stg"), 0, 0, 2)),
                     "fav": n(a.get("fav"), 2, -1e5, 1e5), "lot": n(a.get("lot"), 2, 0, 1e4), "pl": n(a.get("pl")),
-                    "t0": int(n(a.get("t0"), 0, 0, 4e9)), "bsl": n(a.get("bsl"), dg, 0, 1e7)})
+                    "t0": int(n(a.get("t0"), 0, 0, 4e9)), "bsl": n(a.get("bsl"), dg, 0, 1e7), "btp": n(a.get("btp"), dg, 0, 1e7)})
     sq = str(a.get("seq") or "")[:50]                                   # v12.13 (EA v70.1)
     out["seq"] = "".join(ch for ch in sq if ch in "UDN")
     out["srv"] = int(n(a.get("srv"), 0, 0, 4e9))
@@ -2634,7 +2636,7 @@ def _save_tick(con, acc, d):
                      "x": int(n(h.get("x"), 0, 0, 9)), "pl": n(h.get("pl"))})
         if "k" in h:   # v12.14 (EA v70.2): peak · slippage · spread · SL broker
             hist[-1].update({"k": n(h.get("k"), 2, -1e5, 1e5), "s": n(h.get("s"), 2, -1e5, 1e5), "sp": n(h.get("sp"), 2, 0, 1e5),
-                             "b": 1 if n(h.get("b"), 0, 0, 1) else 0})
+                             "b": int(n(h.get("b"), 0, 0, 2))})   # 1 = SL broker · 2 = TP broker (v12.15)
     out["hist"] = hist
     con.execute("INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
                 ("tick:" + acc, json.dumps(out, separators=(",", ":"), ensure_ascii=False)))
@@ -5244,6 +5246,11 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
           <button type="button" data-v="1" role="radio">BROKER<small style="display:block;font-size:10px;opacity:.8">server-ka ayaa xidha</small></button>
         </div></div>
         <div class="sltph" id="mTKSLMHint">—</div>
+        <div class="frow frow-col" id="rTKTPM" style="margin-top:8px"><span style="margin-bottom:6px">Take Profit <small>halka TP-gu ku jiro · EA v70.3+</small></span><div class="seg" id="mTKTPM" role="radiogroup" aria-label="Take Profit">
+          <button type="button" data-v="0" role="radio">VIRTUAL<small style="display:block;font-size:10px;opacity:.8">bot-ka ayaa xidha</small></button>
+          <button type="button" data-v="1" role="radio">BROKER<small style="display:block;font-size:10px;opacity:.8">server-ka ayaa xidha</small></button>
+        </div></div>
+        <div class="sltph" id="mTKTPMHint">—</div>
         <div class="frow"><span>Virtual SL</span><span><input id="mTKVSL" type="number" min="0.1" max="100" step="0.1" value="2.5"> <i>$</i></span></div>
         <div class="frow"><span>Virtual TP <small>0 = trailing oo keliya</small></span><span><input id="mTKVTP" type="number" min="0" max="100" step="0.1" value="1.5"> <i>$</i></span></div>
         <div class="frow"><span>Break-even <small>faa'iido $X → SL = entry + lock · 0 = off</small></span><span><input id="mTKBE" type="number" min="0" max="100" step="0.05" value="0.6"> <i>$</i></span></div>
@@ -6711,7 +6718,7 @@ function applyPerms(){
   ["mBSKSIG","mBSKENT","mBSKTP"].forEach(segLock); const bsw=$("#mBSK"); if(bsw){ bsw.disabled=true; bsw.classList.add("lockd"); }   // v12.7
   ["mGOLD","mASIADIR","mASIASL","mASIAL","mASGM"].forEach(segLock); const asw=$("#mASIA"); if(asw){ asw.disabled=true; asw.classList.add("lockd"); }   // v12.9
   { const gsw=$("#mASG"); if(gsw){ gsw.disabled=true; gsw.classList.add("lockd"); } }   // v12.10
-  segLock("mTKLM"); segLock("mTKSLM"); { const tsw=$("#mTK"); if(tsw){ tsw.disabled=true; tsw.classList.add("lockd"); } }   // v12.12
+  segLock("mTKLM"); segLock("mTKSLM"); segLock("mTKTPM"); { const tsw=$("#mTK"); if(tsw){ tsw.disabled=true; tsw.classList.add("lockd"); } }   // v12.12
   document.querySelectorAll("[data-perm]").forEach(b=>{ if(!permOK(b.dataset.perm)){ b.classList.add("lockd"); b.disabled=true; } });
 
   const r=$("#mRISK"); if(r && permOK("risk")){ r.min=PERMS.lo; r.max=PERMS.hi;
@@ -6834,7 +6841,7 @@ function bskStep(id,d,lo,hi){ const e=$("#"+id); if(!e) return; let v=Number(e.t
   if(p) p.addEventListener("click",()=>{ if(!p.disabled) bskStep(id,1,lo,hi); });
 });
 /* ---- v12.12: ⚡ TICK SCALPER (Maamul · admin) ---- */
-let TKCFG=null, TICK=null, mTkLM=0, mTkTouched=false, mTkSLM=1;
+let TKCFG=null, TICK=null, mTkLM=0, mTkTouched=false, mTkSLM=1, mTkTPM=1;
 const TK_IN=["SPM","MV","SEC","LOT","RISK","VSL","VTP","BE","BEL","TRS","TRD","HOLD","HARD","HS","HE","SPR","CD","MAXD","ML","PAUSE","DL","DT"];
 function tkVal(k){ const e=$("#mTK"+k); if(!e||e.value==="") return null; const v=Number(e.value); return isFinite(v)?v:null; }
 function tkPaint(){
@@ -6842,6 +6849,12 @@ function tkPaint(){
   segPaint("mTKLM","v",mTkLM);
   const rl=$("#rTKLOT"), rr=$("#rTKRISK"); if(rl) rl.style.display=(mTkLM!==0)?"none":""; if(rr) rr.style.display=(mTkLM!==1)?"none":"";
   segPaint("mTKSLM","v",mTkSLM);   // v12.14
+  segPaint("mTKTPM","v",mTkTPM);   // v12.15
+  { const th=$("#mTKTPMHint"), vt=tkVal("VTP")||0, has=!!(TKCFG && TKCFG.tpm!==undefined && TKCFG.tpm!==null), r=$("#rTKTPM");
+    if(r) r.style.opacity=(TKCFG && !has)?".45":"";
+    if(th) th.innerHTML=(TKCFG && !has)?"Bot-ka chart-ka wuxuu u baahan yahay <b>EA v70.3</b> si TP broker u shaqeeyo."
+      :(mTkTPM===1?("<b>BROKER:</b> TP $"+vt.toFixed(2)+" wuxuu galayaa tiirka <b>T/P</b> ee MT5 → broker-ka ayaa ku xidha qiimaha TP-ga, xitaa marka internet-ku go'o. Trailing-ku wuu sii shaqaynayaa (SL-ka ayuu dhaqaajiyaa).")
+                   :("<b>VIRTUAL:</b> bot-ka ayaa xidha marka faa'iidadu gaadho $"+vt.toFixed(2)+" · T/P-ga MT5 = 0.00.")); }
   { const sh=$("#mTKSLMHint"), hr=$("#rTKHARD"), hs=$("#mTKHARDs"), v=tkVal("VSL")||2;
     if(sh) sh.innerHTML=mTkSLM===1?("<b>BROKER:</b> SL $"+v.toFixed(2)+" wuxuu galayaa server-ka broker-ka → qiimaha marka la gaadho isla markiiba wuu xidhmaa (slippage yar). BE / trailing → bot-ka ayaa SL-ka broker-ka dhaqaajiya.")
                                    :("<b>VIRTUAL:</b> bot-ka ayaa xidha marka qiimuhu gaadho SL-ka → dhaqdhaqaaq degdeg ah = slippage (demo: −$4.14). SL adag ayaa ilaalin ah.");
@@ -6865,6 +6878,7 @@ function tkSeed(){
   const m={MV:c.mv,SEC:c.sec,LOT:c.lot,RISK:(c.risk>0?c.risk:0.25),VSL:c.vsl,VTP:c.vtp,BE:c.be,BEL:c.bel,TRS:c.trs,TRD:c.trd,HOLD:c.hold,HARD:c.hard,HS:c.hs,HE:c.he,SPR:c.spr,CD:c.cd,MAXD:c.maxd,ML:c.ml,PAUSE:c.pause,DL:c.dl,DT:c.dt};
   Object.keys(m).forEach(k=>{ const e=$("#mTK"+k); if(e && m[k]!==undefined && m[k]!==null) e.value=m[k]; });
   mTkLM=(Number(c.risk)>0)?1:0;
+  mTkTPM=(c.tpm===0)?0:1;   // v12.15
   mTkSLM=(c.slm===0)?0:1; swSet("mTKTR",!!c.tr); { const e=$("#mTKSPM"); if(e && c.spm!==undefined) e.value=c.spm; }   // v12.14
   tkPaint();
 }
@@ -6879,12 +6893,14 @@ function tickCmds(cmds){
   if(mTkLM===1){ const r=tkVal("RISK"); cmds.push("SET:TKRISK="+Math.max(0.01,Math.min(5,(r===null?0.25:r)))); }
   else cmds.push("SET:TKRISK=0");
   if(TKCFG && TKCFG.slm!==undefined){   // v12.14: EA v70.2+ oo keliya
+    if(TKCFG.tpm!==undefined && TKCFG.tpm!==null) cmds.push("SET:TKTPM="+mTkTPM);   // v12.15: EA v70.3+
     cmds.push("SET:TKSLM="+mTkSLM); cmds.push("SET:TKTR="+(swGet("mTKTR")?1:0));
     const sm=tkVal("SPM"); if(sm!==null) cmds.push("SET:TKSPM="+Math.max(0,Math.min(10,sm)));
   }
 }
 { const e=$("#mTK"); if(e) e.addEventListener("click",()=>{ if(e.disabled) return; e.classList.toggle("on"); mTouched=true; mTkTouched=true; tkPaint(); }); }
 { const e=$("#mTKONLY"); if(e) e.addEventListener("click",()=>{ if(e.disabled) return; e.classList.toggle("on"); mTouched=true; mTkTouched=true; }); }
+document.querySelectorAll("#mTKTPM button").forEach(b=>b.addEventListener("click",()=>{ if(b.disabled) return; mTkTPM=Number(b.dataset.v); mTouched=true; mTkTouched=true; tkPaint(); }));   // v12.15
 document.querySelectorAll("#mTKSLM button").forEach(b=>b.addEventListener("click",()=>{ if(b.disabled) return; mTkSLM=Number(b.dataset.v); mTouched=true; mTkTouched=true; tkPaint(); }));   // v12.14
 { const e=$("#mTKTR"); if(e) e.addEventListener("click",()=>{ if(e.disabled) return; e.classList.toggle("on"); mTouched=true; mTkTouched=true; }); }
 document.querySelectorAll("#mTKLM button").forEach(b=>b.addEventListener("click",()=>{ if(b.disabled) return; mTkLM=Number(b.dataset.v); mTouched=true; mTkTouched=true; tkPaint(); }));
@@ -6933,7 +6949,8 @@ function paintTick(a){
       +'<div class="mk" style="left:'+xe+'%;background:#e8ece8"></div><div class="mk" style="left:'+xv+'%;background:'+(stg>0?'#f0cf86':'#ef4444')+'"></div>'
       +(vtp>0?'<div class="mk" style="left:100%;background:#7fe0ab"></div>':'');
     const brk=(cf.slm===1 && Number(a.bsl)>0 && Math.abs(Number(a.bsl)-vs)<Math.pow(10,-dg)*0.6);   // v12.14
-    $("#tkLg").innerHTML='<span>SL asal '+sl0.toFixed(dg)+'</span><span class="y">'+(cf.slm===1?"SL":"VSL")+' → '+vs.toFixed(dg)+(brk?'<span class="tklock">🔒 BROKER</span>':'')+'</span>'+(vtp>0?('<span>VTP '+tp.toFixed(dg)+'</span>'):'<span>VTP off</span>');
+    const btp=Number(a.btp)>0, tpShow=btp?Number(a.btp):tp;   // v12.15: TP broker
+    $("#tkLg").innerHTML='<span>SL asal '+sl0.toFixed(dg)+'</span><span class="y">'+(cf.slm===1?"SL":"VSL")+' → '+vs.toFixed(dg)+(brk?('<span class="tklock">🔒'+(btp?'':' BROKER')+'</span>'):'')+'</span>'+(vtp>0?(btp?('<span style="color:#7fe0ab">TP '+tpShow.toFixed(dg)+'<span class="tklock">🔒 BROKER</span></span>'):('<span>VTP '+tp.toFixed(dg)+'</span>')):'<span>VTP off</span>');
     const nm=[(cf.slm===1?"① STOP LOSS":"① VIRTUAL SL"),"② BREAK-EVEN","③ TRAILING"];
     $("#tkSteps").innerHTML=nm.map((t,i)=>'<span class="'+(i<stg?"done":(i===stg?"now":""))+'">'+t+'</span>').join("");
   } else op.hidden=true;
@@ -6969,7 +6986,7 @@ function paintTick(a){
   //--- taariikhda
   const H=a.hist||[];
   $("#tkHist").innerHTML=H.length?H.map(h=>{ const p=Number(h.pl)||0;
-      const nm=(h.b && h.x===2)?"STOP LOSS":(TK_X[h.x]||"—"), ex=(h.k!==undefined);
+      const nm=(h.b===1 && h.x===2)?"STOP LOSS":((h.b===2 && h.x===1)?"TAKE PROFIT":(TK_X[h.x]||"—")), ex=(h.k!==undefined);   // v12.15
       const sl=Number(h.s)||0;
       return '<div class="tkhr2"><div class="tkhr"><span class="t">'+tkHM(h.t)+'</span><span>'+(h.d>0?"BUY":"SELL")+'</span><span>'+esc(nm)+(h.b?' 🔒':'')+'</span><b class="'+(p>0?"g":(p<0?"r":""))+'">'+tkMoney(p)+'</b></div>'
         +(ex?('<div class="x">peak <b>+$'+Number(h.k||0).toFixed(2)+'</b> · slip <b class="'+(sl>0.3?"r":"")+'">$'+sl.toFixed(2)+'</b> · spread <b>$'+Number(h.sp||0).toFixed(2)+'</b></div>'):'')+'</div>'; }).join("")
