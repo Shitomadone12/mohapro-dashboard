@@ -201,6 +201,18 @@ SET_LIMITS = {          # key: (min, max, noocaa)
     "TKDT":      (0, 100,  "float"), # bartilmaameed maalinle %
     "TKSLM":     (0, 1,    "int"),   # v12.14 (EA v70.2): 0 = VIRTUAL SL, 1 = BROKER SL
     "TKTPM":     (0, 1,    "int"),   # v12.15 (EA v70.3): 0 = VIRTUAL TP, 1 = BROKER TP
+    "TKBON":     (0, 1,    "int"),   # v12.16 (EA v70.4): TICK BASKET (0 = HAL TRADE)
+    "TKBN":      (2, 5,    "int"),   # trade-yada basket-ka
+    "TKBENT":    (0, 1,    "int"),   # 0 = ISKU MAR, 1 = SIGNAL KASTA
+    "TKBEX":     (0, 1,    "int"),   # 0 = TP KASTA, 1 = WADAJIR
+    "TKBTGT":    (0, 10000, "float"), # bartilmaameed WADAJIR ($)
+    "TKBBE":     (0, 10000, "float"), # BE basket ($ · 0 = off)
+    "TKBLP":     (0, 1000000, "int"), # 0.01 lot $X balance kasta (0 = off)
+    "TKTRON":    (0, 1,    "int"),   # v12.17 (EA v70.5): TP RAAC (0 = off)
+    "TKTRST":    (50, 95,  "float"), # TP RAAC bilow: faa'iido >= X% TP-ga
+    "TKTRLK":    (10, 90,  "float"), # TP RAAC qufulka SL: X% TP-ga
+    "TKTRSTEP":  (0.1, 50, "float"), # TP RAAC: TP u dheeree $X raac kasta
+    "TKTRMAX":   (1, 10,   "int"),   # TP RAAC: raac ugu badan
     "TKSPM":     (0, 10,   "float"), # filter spread: dhaqdhaqaaq >= X x spread (0 = off)
     "TKTR":      (0, 1,    "int"),   # filter trend EMA50 M5
 }
@@ -209,12 +221,67 @@ BSK_KEYS = ("BSK", "BSKSIG", "BSKN", "BSKENT", "BSKRISK", "BSKMAX", "BSKDAY", "B
 ASIA_KEYS = ("ASIA", "ASIADIR", "ASIATR", "ASIAMAXR", "ASIASL", "ASIATP", "ASIARISK", "ASIAMAX",
              "ASIAL", "ASIAWE", "ASIACL", "ASG", "ASGM", "ASGL", "ASGS", "ASGX")   # v12.9 · v12.10 GRID
 TK_KEYS = ("TK", "TKONLY", "TKW", "TKK", "TKMV", "TKSEC", "TKLOT", "TKRISK", "TKVSL", "TKVTP", "TKBE", "TKBEL",
-           "TKTRS", "TKTRD", "TKHARD", "TKHOLD", "TKHS", "TKHE", "TKSPR", "TKCD", "TKMAXD", "TKML", "TKPAUSE", "TKDL", "TKDT", "TKSLM", "TKSPM", "TKTR", "TKTPM")   # v12.12 · v12.14 · v12.15
+           "TKTRS", "TKTRD", "TKHARD", "TKHOLD", "TKHS", "TKHE", "TKSPR", "TKCD", "TKMAXD", "TKML", "TKPAUSE", "TKDL", "TKDT", "TKSLM", "TKSPM", "TKTR", "TKTPM",
+           "TKBON", "TKBN", "TKBENT", "TKBEX", "TKBTGT", "TKBBE", "TKBLP",
+           "TKTRON", "TKTRST", "TKTRLK", "TKTRSTEP", "TKTRMAX")   # v12.12 · v12.14 · v12.15 · v12.16 · v12.17
+
+# v12.18 (EA v70.6): ⚙️ INPUT - dhammaan input-yada EA-ga (p34.py ayaa soo saaray · EA-ga iyo app-ka isku hash)
+INP_SCHEMA_JSON = r'''{"h":"20818ced","ver":"70.6","n":369,"groups":[{"name":"0 · TIJAABO (v65.3)","cat":"SYS"},{"name":"0c · ATR ADAPTIVE (v66.5 - SL/TP suuqa ayuu la socdaa)","cat":"MAIN"},{"name":"0a · STEP-LOCK (v66.2 - faa'iido xidhid tallaabo tallaabo)","cat":"MAIN"},{"name":"0b · SNIPER MODE (v66)","cat":"MAIN"},{"name":"🥇 GOLD BASKET (v69.0 · XAUUSD oo keliya)","cat":"GOLD"},{"name":"🥇 ASIA BREAKOUT · XAUUSD (v69.7)","cat":"ASIA"},{"name":"⚡ TICK SCALPER · XAUUSD (v70.0)","cat":"TICK"},{"name":"1 · SHATI & AMMAAN","cat":"SYS"},{"name":"2 · XEELAD - DOORASHO","cat":"MAIN"},{"name":"3 · XADKA TIRADA TRADE-KA (is-dul-saarid)","cat":"PROT"},{"name":"4 · KHATAR & LOT","cat":"PROT"},{"name":"5 · XADKA AMMAANKA (khasaare / faa'iido)","cat":"PROT"},{"name":"6 · SL / TP (aasaaska)","cat":"MAIN"},{"name":"7 · BREAK-EVEN & TRAILING","cat":"MAIN"},{"name":"8 · QAYB-XIRID (Partial / ScaleOut / TP-Ladder)","cat":"MAIN"},{"name":"9 · XIRITAAN HORE","cat":"MAIN"},{"name":"10 · FILTER - XAALADDA SUUQA","cat":"FILT"},{"name":"11 · FILTER - EMA (JIHADA · H1 + H4)","cat":"FILT"},{"name":"12 · FILTER - TREND FOLLOW","cat":"FILT"},{"name":"13 · FILTER - KALE","cat":"FILT"},{"name":"14 · WAQTI & SESSION","cat":"FILT"},{"name":"15 · WARARKA (NEWS)","cat":"PROT"},{"name":"16 · XEELAD: SR (Support / Resistance)","cat":"MAIN"},{"name":"19 · XEELAD: SMC (Smart Money)","cat":"MAIN"},{"name":"19b · ★ SCORING & LOT (v68.1)","cat":"MAIN"},{"name":"22 · HABKA FULINTA","cat":"SYS"},{"name":"23 · PROP FIRM","cat":"PROT"},{"name":"24 · TELEGRAM","cat":"SYS"},{"name":"25 · CLOUD DASHBOARD","cat":"SYS"},{"name":"26 · MUUQAALKA CHART-KA","cat":"SYS"},{"name":"21b · SUPPLY & DEMAND (v61 - mishiin cusub)","cat":"MAIN"},{"name":"27 · DIIWAAN & DEBUG","cat":"SYS"}],"items":[{"n":"Disable_All_Management","l":"Disable All Management","g":0,"k":1,"t":"b"},{"n":"Test_Loose_Filters","l":"TRUE = fitarada AAN zone-ka ahayn waa la dabciyay (News/Session/Cooldown/Regime-ADX/MTF/EMA200/Correlation/H1-","g":0,"k":0,"t":"b","x":0,"r":0,"m":0},{"n":"Adaptive_SLTP","l":"TRUE = SL/TP shumac kasta dib ayaa loo xisaabiyaa ATR-ka HADDA (marxaladda suuqa). Hore: hal mar oo keliya fur","g":1,"k":1,"t":"b"},{"n":"Adaptive_TF","l":"TF-ka ATR-ka","g":1,"k":0,"t":"e","x":1,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"Adaptive_SL_Mult","l":"SL = ATR x tan","g":1,"k":0,"t":"d","x":2,"r":0,"m":0},{"n":"Adaptive_TP_Mult","l":"TP = ATR x tan","g":1,"k":0,"t":"d","x":3,"r":0,"m":0},{"n":"Adaptive_Max_R","l":"xadka sare - SL/TP ha ka ballaadhan tan x kii asalka ahaa (0 = xad ma jiro)","g":1,"k":0,"t":"d","x":4,"r":0,"m":0},{"n":"Adaptive_Min_R","l":"xadka hoose - ha ka yaraan tan x kii asalka ahaa (0 = xad ma jiro)","g":1,"k":0,"t":"d","x":5,"r":0,"m":0},{"n":"Adaptive_Log","l":"qor beddel kasta","g":1,"k":0,"t":"b","x":6,"r":0,"m":0},{"n":"Lock_Mode","l":"BE_ONLY = SL wuxuu ku sii jiraa BREAK-EVEN (trade-ku meel bannaan buu helayaa) | STEP = SL tallaabo tallaabo k","g":2,"k":1,"t":"e","o":[[0,"STEP"],[1,"BE_ONLY"]]},{"n":"Lock_BE_Buffer_Pips","l":"BE_ONLY - SL = entry + intan pip (0 = entry sax ah)","g":2,"k":0,"t":"d","x":7,"r":0,"m":0},{"n":"Step_Lock_Enable","l":"TRUE = SL tallaabo tallaabo kor buu u socdaa (faa'iidada waa la xidhaa). Trade WELIGIIS lama xidho - kaliya SL","g":2,"k":1,"t":"b"},{"n":"Step_Lock_Pips","l":"tallaabo kasta (pip). SL-ku wuxuu ka dambeeyaa sicirka intaas","g":2,"k":1,"t":"d"},{"n":"Step_Lock_Start_Pips","l":"faa'iidada ugu horraysa ee SL-ku dhaqaaqo (pip). 15 -> +15 = SL break-even","g":2,"k":1,"t":"d"},{"n":"Step_Lock_Log","l":"qor tallaabo kasta (Experts log)","g":2,"k":0,"t":"b","x":8,"r":0,"m":0},{"n":"Inp_Sniper_Mode","l":"SNIPER - zone WEYN (M30) + xaqiijin yar (CHoCH M5) gudaha zone-ka -> SL cidhiidhi, RR sare. false = mishiinkii","g":3,"k":1,"t":"b"},{"n":"Sniper_LTF","l":"timeframe-ka yar ee xaqiijinta (CHoCH)","g":3,"k":0,"t":"e","x":9,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"Inp_Sniper_Touch_Bars","l":"6 saac - taabashadu waa inay dhowdahay","g":3,"k":0,"t":"i","x":10,"r":0,"m":8},{"n":"Sniper_Swing_Len","l":"xoogga swing-ka LTF (shumac dhinac kasta)","g":3,"k":0,"t":"i","x":11,"r":0,"m":0},{"n":"Sniper_SL_Buffer_Pips","l":"SL = hooseynta/sarreynta sweep-ka + inta pip","g":3,"k":0,"t":"d","x":12,"r":0,"m":0},{"n":"Sniper_SL_Min_Pips","l":"SL ugu yar (pip) - ka yar -> waa la ballaadhinayaa ilaa tan","g":3,"k":0,"t":"d","x":13,"r":0,"m":0},{"n":"Sniper_SL_ATR_TF","l":"ATR-ka SL-ka sniper-ka (JPY/GBP ayuu la qabsadaa)","g":3,"k":0,"t":"e","x":14,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"Sniper_SL_Min_ATR","l":"SL ugu yar = N x ATR (0 = off, pip-ka oo keliya)","g":3,"k":0,"t":"d","x":15,"r":0,"m":0},{"n":"Sniper_SL_Buf_ATR","l":"buffer-ka gadaasha sweep-ka = max(pip, N x ATR)","g":3,"k":0,"t":"d","x":16,"r":0,"m":0},{"n":"Sniper_SL_Spread_Mult","l":"SL ugu yar = N x spread","g":3,"k":0,"t":"d","x":17,"r":0,"m":0},{"n":"Sniper_SL_Max_ATR","l":"SL ugu weyn = max(SNSLMAX, N x ATR) (0 = SNSLMAX oo keliya)","g":3,"k":0,"t":"d","x":18,"r":0,"m":0},{"n":"Inp_Sniper_SL_Max_Pips","l":"Sniper SL Max Pips","g":3,"k":1,"t":"d"},{"n":"Inp_Sniper_RR","l":"TP = SL x tan","g":3,"k":1,"t":"d"},{"n":"Inp_Sniper_Max_Trades_Day","l":"trade ugu badan MAALINTII - DHAMMAAN lammaanayaasha/chart-yada (magic-ga MOHA). 0 = xad ma jiro","g":3,"k":1,"t":"i"},{"n":"Sniper_Symbols","l":"lammaanayaasha la ogol yahay (madhan = dhammaan). XAUUSD pip-kiisu waa ka duwan yahay - gooni u tijaabi","g":3,"k":0,"t":"s","x":19,"r":0,"m":0},{"n":"Sniper_Session_Only","l":"kaliya London + New York","g":3,"k":0,"t":"b","x":20,"r":0,"m":0},{"n":"Sniper_GMT_Start","l":"London ka hor","g":3,"k":0,"t":"i","x":21,"r":0,"m":0},{"n":"Sniper_GMT_End","l":"NY dhammaadka","g":3,"k":0,"t":"i","x":22,"r":0,"m":0},{"n":"Inp_BSK_On","l":"default ON (DOUBLE) · v69.7: OFF (ASIA ayaa beddelay) · v69.0 GOLD BASKET: XAUUSD signal kasta -> basket (lamm","g":4,"k":1,"t":"b"},{"n":"Inp_BSK_Signal","l":"signal-ka dahabka: ZONE (demand/supply) · EMA pullback · LABADA · DOUBLE (v69.9: top/bottom salka + EMA)","g":4,"k":1,"t":"e","o":[[0,"ZONE"],[1,"EMA"],[2,"BOTH"],[3,"DBL"]]},{"n":"Inp_BSK_Trades","l":"trade-yada basket-ka (2-5)","g":4,"k":1,"t":"i"},{"n":"Inp_BSK_Entry","l":"LAKAB: #1 hadda, inta kale zone-ka gudihiisa · ISKU MAR: dhammaan hadda","g":4,"k":1,"t":"e","o":[[0,"LAKAB"],[1,"ISKUMAR"]]},{"n":"Inp_BSK_Risk_Pct","l":"risk basket-ka OO DHAN (% balance) - trade-yada ayaa loo qaybiyaa, ma labanlaabmo (v69.5: 0.5-1%)","g":4,"k":1,"t":"d"},{"n":"Inp_BSK_MaxLoss_USD","l":"xad adag ($) SAQAF: xadka dhabta ah = MIN(kan, 1.2 x risk $) · 0 = auto (1.2 x risk) oo keliya","g":4,"k":1,"t":"d"},{"n":"Inp_BSK_Max_Day","l":"basket maalintii (ugu badnaan) · v69.5: 2 (3 hore)","g":4,"k":1,"t":"i"},{"n":"Inp_BSK_Max_Spread","l":"spread ugu badan (sent: 35 = $0.35)","g":4,"k":1,"t":"i"},{"n":"Inp_BSK_TP_Mode","l":"TP: JARANJAR (1R · 2R · 3R) · WADAJIR ($ bartilmaameed -> xidh dhammaan)","g":4,"k":1,"t":"e","o":[[0,"JARANJAR"],[1,"WADAJIR"]]},{"n":"Inp_BSK_Target_USD","l":"WADAJIR: bartilmaameedka faa'iidada ($)","g":4,"k":1,"t":"d"},{"n":"Inp_BSK_BE_TP1","l":"TP1 kadib -> inta kale SL = break-even (basket-ku ma khasaari karo)","g":4,"k":1,"t":"b"},{"n":"Inp_BSK_Lock","l":"qufulka faa'iidada: faa'iidada ugu sarreysa 50% ha lumin","g":4,"k":1,"t":"b"},{"n":"Inp_BSK_Session","l":"waqtiga dahabka oo keliya (London + NY, GMT hoose)","g":4,"k":1,"t":"b"},{"n":"Inp_BSK_Dir_Block","l":"2 basket oo isku jiho ah oo khasaara -> jihadaas maanta waa la joojiyaa","g":4,"k":1,"t":"b"},{"n":"BSK_GMT_Start","l":"waqtiga dahabka: bilow (GMT)","g":4,"k":0,"t":"i","x":23,"r":0,"m":0},{"n":"BSK_GMT_End","l":"waqtiga dahabka: dhammaad (GMT)","g":4,"k":0,"t":"i","x":24,"r":0,"m":0},{"n":"BSK_Layer_Expire_Min","l":"LAKAB: lakabyada aan buuxsamin X daqiiqo kadib waa la tirtiraa","g":4,"k":0,"t":"i","x":25,"r":0,"m":0},{"n":"BSK_Cooldown_Min","l":"basket xidhmay kadib - sug (daqiiqo)","g":4,"k":0,"t":"i","x":26,"r":0,"m":0},{"n":"BSK_Lock_Start_Pct","l":"qufulku wuxuu bilaabmaa marka faa'iidadu = X% risk-ka ($)","g":4,"k":0,"t":"d","x":27,"r":0,"m":0},{"n":"BSK_Lock_Keep_Pct","l":"... kadib X% faa'iidada ugu sarreysa waa la ilaaliyaa","g":4,"k":0,"t":"d","x":28,"r":0,"m":0},{"n":"BSK_MaxLoss_Mult","l":"v69.5 · xadka khasaaraha = N x risk-ga $ ee basket-ka (1.05-3)","g":4,"k":0,"t":"d","x":29,"r":0,"m":0},{"n":"BSK_Step_Lock","l":"v69.5 · TP2 kadib -> trade-yada hadhay SL = TP1 (ugu yaraan +2R)","g":4,"k":0,"t":"b","x":30,"r":0,"m":0},{"n":"BSK_EMA_Fast","l":"EMA pullback: EMA degdeg (M5)","g":4,"k":0,"t":"i","x":31,"r":1,"m":0},{"n":"BSK_EMA_Mid","l":"EMA pullback: EMA dhexe (M5 + trend TF)","g":4,"k":0,"t":"i","x":32,"r":1,"m":0},{"n":"BSK_EMA_Slow","l":"EMA pullback: EMA gaabis (trend TF)","g":4,"k":0,"t":"i","x":33,"r":1,"m":0},{"n":"BSK_Trend_TF","l":"EMA pullback: timeframe-ka trend-ka","g":4,"k":0,"t":"e","x":34,"r":1,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"BSK_Entry_TF","l":"EMA pullback: timeframe-ka gelitaanka","g":4,"k":0,"t":"e","x":35,"r":1,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"BSK_Pull_Tol_ATR","l":"EMA pullback: dulqaadka band-ka EMA (x ATR)","g":4,"k":0,"t":"d","x":36,"r":0,"m":0},{"n":"BSK_Symbols","l":"lammaanayaasha basket-ka (magaca ku jira)","g":4,"k":0,"t":"s","x":37,"r":0,"m":0},{"n":"BSK_Trend_Sep_ATR","l":"v69.4 · trend: EMA50/EMA200 (M15) kala fogaan >= N x ATR (range -> ma ganacsado)","g":4,"k":0,"t":"d","x":38,"r":0,"m":0},{"n":"BSK_Trend_Slope_ATR","l":"v69.4 · trend: EMA50 M15 janjeer (8 shumac) >= N x ATR","g":4,"k":0,"t":"d","x":39,"r":0,"m":0},{"n":"BSK_Chop_Bars","l":"v69.4 · chop: shumacyada M5 ee la eegayo","g":4,"k":0,"t":"i","x":40,"r":0,"m":0},{"n":"BSK_Chop_Max","l":"v69.4 · chop: gudbidda EMA50 ugu badan (ka badan -> ma ganacsado)","g":4,"k":0,"t":"i","x":41,"r":0,"m":0},{"n":"BSK_Need_Structure","l":"v69.4 · qaab-dhismeed M15: BUY = HH/HL · SELL = LH/LL","g":4,"k":0,"t":"b","x":42,"r":0,"m":0},{"n":"BSK_Flip_Hours","l":"v69.4 · basket kadib jihada lidka ah lama furo X saac","g":4,"k":0,"t":"i","x":43,"r":0,"m":0},{"n":"BSK_Dbl_TF","l":"timeframe-ka (M15 ayaa la tijaabiyay · M5 ma shaqeyn)","g":4,"k":0,"t":"e","x":44,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"Inp_BSK_Dbl_Tol","l":"labada sal / top kala fogaanshaha ugu badan (x ATR)","g":4,"k":1,"t":"d"},{"n":"Inp_BSK_Dbl_Neck","l":"neckline ugu yar (x ATR) salka ka sarreeya","g":4,"k":1,"t":"d"},{"n":"Inp_BSK_Dbl_TP_R","l":"TP lakab kasta (x R)","g":4,"k":1,"t":"d"},{"n":"BSK_Dbl_GapMin","l":"shumacyada u dhexeeya labada sal (ugu yar)","g":4,"k":0,"t":"i","x":45,"r":0,"m":0},{"n":"BSK_Dbl_GapMax","l":"... (ugu badan)","g":4,"k":0,"t":"i","x":46,"r":0,"m":0},{"n":"Inp_ASIA_On","l":"default OFF (DOUBLE) · v69.7: Asia range (00-07 GMT) -> jebinta London (07-12) -> 1 trade maalintii","g":5,"k":1,"t":"b"},{"n":"ASIA_Range_Start","l":"Asia range: bilow (saac GMT)","g":5,"k":0,"t":"i","x":47,"r":0,"m":0},{"n":"ASIA_Range_End","l":"Asia range: dhammaad (saac GMT) = bilowga jebinta","g":5,"k":1,"t":"i"},{"n":"Inp_ASIA_Win_End","l":"daaqadda jebinta: dhammaad (GMT) - kadib maanta trade ma furmo","g":5,"k":1,"t":"i"},{"n":"Inp_ASIA_Close_Hour","l":"trade furan -> la xidhaa (GMT) · Jimce: 20 ugu dambeyn","g":5,"k":1,"t":"i"},{"n":"Inp_ASIA_Dir","l":"jihada: LABADA · BUY · SELL","g":5,"k":1,"t":"e","o":[[0,"BOTH"],[1,"BUY"],[2,"SELL"]]},{"n":"Inp_ASIA_Trend","l":"trend H4 (EMA50): jebinta trend-ka raacda oo keliya","g":5,"k":1,"t":"b"},{"n":"Inp_ASIA_MaxRange","l":"range ugu weyn ($ qiime) - ka weyn -> maanta ma ganacsado (0 = off)","g":5,"k":1,"t":"d"},{"n":"Inp_ASIA_SL_Mode","l":"SL: bartamaha range-ka · dhinaca kale","g":5,"k":1,"t":"e","o":[[0,"MID"],[1,"OPP"]]},{"n":"Inp_ASIA_TP_R","l":"TP = N x R (0.5-5)","g":5,"k":1,"t":"d"},{"n":"Inp_ASIA_Risk_Pct","l":"risk (% balance) - lakabyada oo dhan","g":5,"k":1,"t":"d"},{"n":"Inp_ASIA_Max_USD","l":"xad adag $: lot-ka ugu yar khatartiisu ha dhaafin · floating <= -xad -> xidh (0 = off)","g":5,"k":1,"t":"d"},{"n":"Inp_ASIA_Layers","l":"lakabyada: 1 = hal trade · 2-3 = retest heerka la jebiyay (2 saac)","g":5,"k":1,"t":"i"},{"n":"ASIA_Max_Spread","l":"spread ugu badan (sent: 60 = $0.60)","g":5,"k":0,"t":"i","x":48,"r":0,"m":2},{"n":"Inp_ASG_On","l":"v69.8 GRID / MARTINGALE ilaalin leh: lakabyo marka qiimuhu soo laabto · SL wadaag · risk guud = risk %","g":5,"k":1,"t":"b"},{"n":"Inp_ASG_Mode","l":"GRID = lot isku mid · MARTINGALE = lot kordha","g":5,"k":1,"t":"e","o":[[0,"GRID"],[1,"MARTI"]]},{"n":"Inp_ASG_Levels","l":"lakabyada oo dhan (#1 + kuwa kale) 2-5","g":5,"k":1,"t":"i"},{"n":"Inp_ASG_Step_R","l":"masaafada lakabyada (x R = entry -> SL) 0.15-0.33","g":5,"k":1,"t":"d"},{"n":"Inp_ASG_Mult","l":"MARTINGALE: lot kordhin lakab kasta (1.0-2.0)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_On","l":"Momentum tick scalper (tijaabo: \"Every tick based on real ticks\")","g":6,"k":1,"t":"b"},{"n":"Inp_TK_Only","l":"TICK OO KELIYA: marka TICK shidan yahay, main / basket / asia lammaanahan ma furaan","g":6,"k":1,"t":"b"},{"n":"Inp_TK_Window","l":"TICK TRACKER: W = isbeddelada qiimaha ee la eegayo (3-50)","g":6,"k":1,"t":"i"},{"n":"Inp_TK_Need","l":"TICK TRACKER: K = inta jiho isku mid ah loo baahan yahay (W ka mid)","g":6,"k":1,"t":"i"},{"n":"Inp_TK_MinMove","l":"dhaqdhaqaaqa ugu yar ee window-ka ($ qiime)","g":6,"k":1,"t":"d"},{"n":"Inp_TK_MaxSec","l":"xawaare: window-ku ha ku dhammaado X ilbiriqsi (0 = off)","g":6,"k":1,"t":"i"},{"n":"Inp_TK_Lot","l":"lot go'an (marka Risk = 0)","g":6,"k":1,"t":"d"},{"n":"Inp_TK_Risk_Pct","l":"> 0: lot = risk % / Virtual SL (0 = lot go'an)","g":6,"k":1,"t":"d"},{"n":"Inp_TK_VSL","l":"VIRTUAL SL ($ qiime · broker-ka lama tuso)","g":6,"k":1,"t":"d"},{"n":"Inp_TK_VTP","l":"VIRTUAL TP ($ qiime · 0 = trailing oo keliya)","g":6,"k":1,"t":"d"},{"n":"Inp_TK_BE_Trig","l":"BREAK-EVEN: faa'iido $X -> SL = entry + lock (0 = off)","g":6,"k":1,"t":"d"},{"n":"Inp_TK_BE_Lock","l":"BREAK-EVEN: lock ($ qiime)","g":6,"k":1,"t":"d"},{"n":"Inp_TK_Trail_Start","l":"TRAILING virtual: bilow ($ faa'iido · 0 = off)","g":6,"k":1,"t":"d"},{"n":"Inp_TK_Trail_Dist","l":"TRAILING virtual: masaafada heerka ugu sarreeya ($)","g":6,"k":1,"t":"d"},{"n":"Inp_TK_Hard_SL","l":"SL ADAG broker-ka ($ · ilaalin internet go'a · ugu yaraan VSL + $1)","g":6,"k":1,"t":"d"},{"n":"Inp_TK_Max_Hold","l":"trade ugu dheer (ilbiriqsi) -> xidh (0 = off)","g":6,"k":1,"t":"i"},{"n":"Inp_TK_Hour_Start","l":"saacadaha (waqtiga SERVER-ka): bilow","g":6,"k":1,"t":"i"},{"n":"Inp_TK_Hour_End","l":"saacadaha (waqtiga SERVER-ka): dhammaad","g":6,"k":1,"t":"i"},{"n":"Inp_TK_Max_Spread","l":"spread ugu badan (sent: 35 = $0.35)","g":6,"k":1,"t":"i"},{"n":"Inp_TK_Cooldown","l":"sug X ilbiriqsi kadib trade kasta","g":6,"k":1,"t":"i"},{"n":"Inp_TK_Max_Day","l":"trade maalintii ugu badan","g":6,"k":1,"t":"i"},{"n":"Inp_TK_Max_Losses","l":"khasaare isku xiga -> hakad (0 = off)","g":6,"k":1,"t":"i"},{"n":"Inp_TK_Pause_Min","l":"hakadka (daqiiqo)","g":6,"k":1,"t":"i"},{"n":"Inp_TK_Day_Loss_Pct","l":"khasaaraha maalinlaha TICK (% balance) -> maanta jooji (0 = off)","g":6,"k":1,"t":"d"},{"n":"Inp_TK_Day_Target_Pct","l":"faa'iidada maalinlaha (% balance) -> maanta jooji (0 = off)","g":6,"k":1,"t":"d"},{"n":"Inp_TK_Basket","l":"BASKET (trade-yo badan) · false = HAL TRADE","g":6,"k":1,"t":"b"},{"n":"Inp_TK_Bsk_Trades","l":"trade-yada (2-5)","g":6,"k":1,"t":"i"},{"n":"Inp_TK_Bsk_Entry","l":"lakabyada: ISKU MAR · SIGNAL KASTA","g":6,"k":1,"t":"e","o":[[0,"ALL"],[1,"SIG"]]},{"n":"Inp_TK_Bsk_Exit","l":"xidhitaan: TP KASTA · WADAJIR ($)","g":6,"k":1,"t":"e","o":[[0,"EACH"],[1,"SUM"]]},{"n":"Inp_TK_Bsk_Target","l":"bartilmaameed WADAJIR ($ faa'iidada guud)","g":6,"k":1,"t":"d"},{"n":"Inp_TK_Bsk_BE","l":"faa'iido guud $X -> SL wadaag = celceliska entry (0 = off)","g":6,"k":1,"t":"d"},{"n":"Inp_TK_Bsk_LotPer","l":"0.01 lot $X balance kasta (compounding · 0 = off)","g":6,"k":1,"t":"d"},{"n":"Inp_TK_TPR_On","l":"TP RAAC - qiimuhu TP-ga marka uu u dhawaado -> TP-ga fogee + SL quful","g":6,"k":1,"t":"b"},{"n":"Inp_TK_TPR_Start","l":"bilow marka faa'iidadu gaadho X% masaafada TP-ga (50-95)","g":6,"k":1,"t":"d"},{"n":"Inp_TK_TPR_Lock","l":"SL-ka ku quful X% masaafada TP-ga (10-90 · < Bilow)","g":6,"k":1,"t":"d"},{"n":"Inp_TK_TPR_Step","l":"TP-ga u dheeree $X (qiime) raac kasta","g":6,"k":1,"t":"d"},{"n":"Inp_TK_TPR_Max","l":"raac ugu badan trade kasta (1-10)","g":6,"k":1,"t":"i"},{"n":"Inp_TK_TP_Mode","l":"TAKE PROFIT: VIRTUAL (bot-ka ayaa xidha) · BROKER (T/P-ga MT5)","g":6,"k":1,"t":"e","o":[[0,"VIRTUAL"],[1,"BROKER"]]},{"n":"Inp_TK_SL_Mode","l":"STOP LOSS: VIRTUAL (bot-ka ayaa xidha) · BROKER (server-ka · slippage yar)","g":6,"k":1,"t":"e","o":[[0,"VIRTUAL"],[1,"BROKER"]]},{"n":"Inp_TK_Spread_Mult","l":"filter spread: dhaqdhaqaaq >= X x spread (0 = off)","g":6,"k":1,"t":"d"},{"n":"Inp_TK_Trend","l":"filter trend EMA50 M5 (BUY kor oo keliya · SELL hoos oo keliya)","g":6,"k":1,"t":"b"},{"n":"Inp_TK_Panel","l":"panel qoraal ah chart-ka (default OFF - xogtu app-ka ayey ku jirtaa · tester-ka mar walba waa la tusaa)","g":6,"k":0,"t":"b","x":49,"r":0,"m":0},{"n":"License_Key","l":"Furaha shatiga (license key)","g":7,"k":2,"t":"s"},{"n":"Enable_AccountLock","l":"Ku xir account gaar ah (on/off)","g":7,"k":2,"t":"b"},{"n":"Licensed_Account","l":"Lambarka account-ka la ogolaaday (0 = mid kasta)","g":7,"k":2,"t":"i"},{"n":"Expiry_Date","l":"Taariikhda uu shatigu dhacayo","g":7,"k":2,"t":"s"},{"n":"Cloud_Auth_Token","l":"Furaha ammaanka - waa la dejiyay (v59.8). HA LA WADAAGIN FAYLKA.","g":7,"k":2,"t":"s"},{"n":"MohaPro_Key","l":"FURAHAAGA BOT-KA (app-ka ka koobi garee: Maamul/Guud). Account-kan OO KELIYA ayuu u shaqeeyaa. Madhan = furihi","g":7,"k":2,"t":"s"},{"n":"Require_Signed_Commands","l":"Require Signed Commands","g":7,"k":2,"t":"b"},{"n":"Panel_Stats_Period","l":"Panel WinRate/PF - muddo (TODAY/WEEK/MONTH/ALL)","g":7,"k":0,"t":"e","x":50,"r":0,"m":0,"o":[[0,"TODAY"],[1,"WEEK"],[2,"MONTH"],[3,"ALL"]]},{"n":"Panel_Stats_This_Symbol_Only","l":"tirakoobku lammaanahan oo keliya (false = account oo dhan)","g":7,"k":0,"t":"b","x":51,"r":0,"m":0},{"n":"Strategy_Mode","l":"Xeeladda: SR/SD · SMC · LABADA (EMA = filter kaliya)","g":8,"k":0,"t":"e","x":52,"r":1,"m":0,"o":[[0,"SRSD"],[1,"SMC"],[2,"BOTH"]]},{"n":"Trade_Timeframe","l":"Timeframe-ka ganacsiga (M1 ama M5)","g":8,"k":0,"t":"e","x":53,"r":0,"m":0,"o":[[1,"M1"],[5,"M5"]]},{"n":"One_Trade_Per_Symbol","l":"Hal trade lammaanahiiba (xeeladuhu ha isku raran)","g":9,"k":0,"t":"b","x":54,"r":0,"m":0},{"n":"Enable_Conflict_Guard","l":"Ka hortag BUY & SELL isku mar","g":9,"k":0,"t":"b","x":55,"r":0,"m":0},{"n":"Max_Open_Trades","l":"One_Trade_Per_Symbol horeba 1 buu ogolaa - hadda waa run","g":9,"k":0,"t":"i","x":56,"r":0,"m":0},{"n":"Inp_Max_Trades_Per_Day","l":"Max Trades Per Day","g":9,"k":1,"t":"i"},{"n":"MinMinutesBetweenTrades","l":"MinMinutesBetweenTrades","g":9,"k":0,"t":"i","x":57,"r":0,"m":0},{"n":"One_Trade_Per_Zone","l":"1 ZONE = 1 TRADE kaliya weligiis (SR/S&D) - marka zone la ganacsado, mar dambe lama isticmaali doono","g":9,"k":0,"t":"b","x":58,"r":0,"m":0},{"n":"Avoid_Reentry_Near_Loss","l":"ka fogow dib-u-gelid meesha khasaaraha ugu dambeeyay (zone-chop/whipsaw ka hortag)","g":9,"k":0,"t":"b","x":59,"r":0,"m":0},{"n":"Reentry_Avoid_ATR","l":"fogaanta (ATR x) khasaaraha ugu dambeeyay ee la ilaalinayo","g":9,"k":0,"t":"d","x":60,"r":0,"m":0},{"n":"Reentry_Avoid_Minutes","l":"Reentry Avoid Minutes","g":9,"k":0,"t":"i","x":61,"r":0,"m":0},{"n":"AllowMultiplePerBar","l":"Ogolow trade badan shumac kasta (false = hal trade shumacii)","g":9,"k":0,"t":"b","x":62,"r":0,"m":0},{"n":"One_Trade_Per_H1_Bar","l":"Hal trade saacaddii (H1)","g":9,"k":0,"t":"b","x":63,"r":0,"m":0},{"n":"Enable_NewBar_Only","l":"Signal kaliya marka shumac cusub furmo","g":9,"k":0,"t":"b","x":64,"r":0,"m":0},{"n":"Inp_Risk_Percent","l":"Khatarta trade kasta (% haraaga)","g":10,"k":1,"t":"d"},{"n":"Auto_Lot","l":"Lot toos ah oo ka yimaada khatarta % (on/off)","g":10,"k":0,"t":"b","x":65,"r":0,"m":0},{"n":"InitialLot","l":"Lot-ka bilowga (marka Auto Lot damman yahay)","g":10,"k":0,"t":"d","x":66,"r":0,"m":0},{"n":"Enable_Dynamic_Risk","l":"Enable Dynamic Risk","g":10,"k":0,"t":"b","x":67,"r":0,"m":0},{"n":"DynRisk_Loss_Trigger","l":"Immisa khasaare kadib ayaa khatarta la yareeyaa","g":10,"k":0,"t":"i","x":68,"r":0,"m":0},{"n":"DynRisk_Reduced_Pct","l":"Khatarta la yareeyay (%)","g":10,"k":0,"t":"d","x":69,"r":0,"m":0},{"n":"MagicNumber","l":"Magic number - aqoonsiga bot-ka","g":10,"k":2,"t":"i"},{"n":"Inp_Daily_Loss_Limit_Percent","l":"Xadka khasaaraha maalinlaha (%)","g":11,"k":1,"t":"d"},{"n":"Max_Losses_Per_Day","l":"Khasaare ugu badan maalintii","g":11,"k":0,"t":"i","x":70,"r":0,"m":0},{"n":"Max_Consecutive_Losses","l":"Khasaare isku xigta oo ugu badan","g":11,"k":0,"t":"i","x":71,"r":0,"m":0},{"n":"Max_True_Consecutive_Losses","l":"shabaqa ammaanka DHABTA ah","g":11,"k":0,"t":"i","x":72,"r":0,"m":0},{"n":"Inp_Max_Total_Drawdown_Pct","l":"Drawdown-ka guud ee ugu badan (%)","g":11,"k":1,"t":"d"},{"n":"Enable_ExtraSafety","l":"Ammaan dheeraad ah (on/off)","g":11,"k":0,"t":"b","x":73,"r":1,"m":0},{"n":"Daily_Profit_Target_Pct","l":"Bartilmaameedka faa'iidada maalinlaha (%)","g":11,"k":0,"t":"d","x":74,"r":0,"m":0},{"n":"Weekly_Profit_Target_Pct","l":"Bartilmaameedka faa'iidada usbuucle (%)","g":11,"k":0,"t":"d","x":75,"r":0,"m":0},{"n":"Enable_Daily_Profit_Lock","l":"Enable Daily Profit Lock","g":11,"k":0,"t":"b","x":76,"r":0,"m":0},{"n":"Enable_Weekly_Profit_Lock","l":"Enable Weekly Profit Lock","g":11,"k":0,"t":"b","x":77,"r":0,"m":0},{"n":"Enable_PortfolioMgmt","l":"Maareynta portfolio (on/off)","g":11,"k":0,"t":"b","x":78,"r":0,"m":0},{"n":"Max_Portfolio_Risk","l":"Khatarta guud ee ugu badan (%)","g":11,"k":0,"t":"d","x":79,"r":0,"m":0},{"n":"Equity_Protection_Pct","l":"Ilaalinta equity-ga (%)","g":11,"k":0,"t":"d","x":80,"r":0,"m":0},{"n":"SLTP_Mode","l":"Halka SL/TP laga qaato: FIXED (pips go'an) / ATR / SMC_PRO","g":12,"k":0,"t":"e","x":81,"r":0,"m":0,"o":[[0,"FIXED"],[1,"ATR"],[2,"SMC_PRO"]]},{"n":"StopLoss_Pips_Fixed","l":"SL: fogaanta (pips) - habka FIXED","g":12,"k":0,"t":"i","x":82,"r":0,"m":0},{"n":"TakeProfit_Pips_Fixed","l":"TP: fogaanta (pips) - habka FIXED","g":12,"k":0,"t":"i","x":83,"r":0,"m":0},{"n":"ATR_Period_Core","l":"Muddada ATR-ka aasaasiga ah","g":12,"k":0,"t":"i","x":84,"r":0,"m":0},{"n":"Safety_Buffer_Pips","l":"Buffer-ka ammaanka (pips)","g":12,"k":0,"t":"i","x":85,"r":0,"m":0},{"n":"Enforce_Min_RR","l":"Khasab ka dhig RR-ga ugu yar (on/off)","g":12,"k":0,"t":"b","x":86,"r":0,"m":0},{"n":"Min_SL_ATR_Floor","l":"SL-ka UGU YAR (x ATR)","g":12,"k":0,"t":"d","x":87,"r":0,"m":0},{"n":"Min_SL_Spread_Mult","l":"SL-ku waa inuu >= N x spread noqdaa","g":12,"k":0,"t":"d","x":88,"r":0,"m":0},{"n":"Debug_SLTP_Log","l":"qor RAAC-RAACA SL/TP talaabo kasta (Experts log)","g":12,"k":0,"t":"b","x":89,"r":0,"m":0},{"n":"Skip_If_SL_Clamped","l":"haddii SL la ballaadhiyo -> KA TAG (halkii la sii wado)","g":12,"k":0,"t":"b","x":90,"r":0,"m":0},{"n":"Zone_SL_Min_ATR","l":"SD-gu SL-kiisa DISTAL+0.35ATR buu leeyahay","g":12,"k":0,"t":"d","x":91,"r":0,"m":0},{"n":"RR_Skip_If_Short","l":"Haddii bartilmaameedku ku filneyn -> KA TAG (halkii TP la riixi lahaa)","g":12,"k":0,"t":"b","x":92,"r":0,"m":0},{"n":"Force_RR_From_SL","l":"TP = SL x Min_RR_Ratio (RR 1.3 KHASAB - xeelad kastaa)","g":12,"k":0,"t":"b","x":93,"r":0,"m":0},{"n":"Min_RR_Ratio","l":"Min RR Ratio","g":12,"k":0,"t":"d","x":94,"r":0,"m":0},{"n":"TargetProfitUSD","l":"Bartilmaameedka faa'iidada ($) - 0 = damman","g":12,"k":0,"t":"d","x":95,"r":0,"m":0},{"n":"Rev_Structural_SL","l":"Rogmasho: SL ku saleysan qaab-dhismeedka (on/off)","g":12,"k":0,"t":"b","x":96,"r":0,"m":0},{"n":"Rev_SL_Lookback","l":"Rogmasho SL: immisa shumac dib loo eegayo","g":12,"k":0,"t":"i","x":97,"r":0,"m":0},{"n":"Rev_SL_Max_ATR","l":"Rogmasho SL: fogaanta ugu badan (x ATR)","g":12,"k":0,"t":"d","x":98,"r":0,"m":0},{"n":"SMC_SL_Max_ATR","l":"SMC: SL-ga ugu fog (x ATR)","g":12,"k":0,"t":"d","x":99,"r":0,"m":0},{"n":"Liquidity_TP_Min_R","l":"Liquidity TP: R-ga ugu yar","g":12,"k":0,"t":"d","x":100,"r":0,"m":0},{"n":"EnableBreakEven","l":"BE - TP-ga ha jarin","g":13,"k":1,"t":"b"},{"n":"BE_Trigger_R","l":"TP=3R. 2.0R = 2/3 jidka. Haddii BE la shido, ka hor ma jarayo.","g":13,"k":0,"t":"d","x":101,"r":0,"m":0},{"n":"BE_Lock_R","l":"BE Lock R","g":13,"k":0,"t":"d","x":102,"r":0,"m":0},{"n":"Enable_FastBE","l":"FAST BE - kaliya TP Ladder la isticmaalo - HA SHIDIN","g":13,"k":0,"t":"b","x":103,"r":0,"m":0},{"n":"FastBE_Trigger_R","l":"Fast BE: immisa R faa'iido kadib","g":13,"k":0,"t":"d","x":104,"r":0,"m":0},{"n":"FastBE_Lock_R","l":"Fast BE: faa'iidada la xidhayo (R)","g":13,"k":0,"t":"d","x":105,"r":0,"m":0},{"n":"Enable_ATR_Trailing","l":"Enable ATR Trailing","g":13,"k":0,"t":"b","x":106,"r":1,"m":0},{"n":"ATR_Trail_Start_Mult","l":"ATR: multiplier-ka bilowga trail-ka","g":13,"k":0,"t":"d","x":107,"r":0,"m":0},{"n":"ATR_Trail_Step_Mult","l":"ATR: multiplier-ka tallaabada trail-ka","g":13,"k":0,"t":"d","x":108,"r":0,"m":0},{"n":"EnableTrailingStop","l":"Trailing stop - SL sicirka raaca (on/off)","g":13,"k":0,"t":"b","x":109,"r":1,"m":0},{"n":"Trail_Start_R","l":"Trail: R-ga bilowga","g":13,"k":0,"t":"d","x":110,"r":0,"m":0},{"n":"Trail_Step_R","l":"Trail: R-ga tallaabada","g":13,"k":0,"t":"d","x":111,"r":0,"m":0},{"n":"TrailingStartPips","l":"Trailing: pips-ka bilowga","g":13,"k":0,"t":"i","x":112,"r":0,"m":0},{"n":"TrailingStepPips","l":"Trailing: pips-ka tallaabada","g":13,"k":0,"t":"i","x":113,"r":0,"m":0},{"n":"EnablePartialClose","l":"Xidh qayb ka mid ah trade-ka (on/off)","g":14,"k":0,"t":"b","x":114,"r":1,"m":0},{"n":"PartialClosePips","l":"Qayb-xidhid: pips","g":14,"k":0,"t":"i","x":115,"r":0,"m":0},{"n":"PartialClosePercent","l":"Qayb-xidhid: boqolkiiba","g":14,"k":0,"t":"i","x":116,"r":0,"m":0},{"n":"Enable_ScaleOut","l":"Enable ScaleOut","g":14,"k":0,"t":"b","x":117,"r":1,"m":0},{"n":"ScaleOut_R1_Pct","l":"Scale out +1R: boqolkiiba la xidhayo","g":14,"k":0,"t":"i","x":118,"r":0,"m":0},{"n":"ScaleOut_R2_Pct","l":"Scale out +2R: boqolkiiba la xidhayo","g":14,"k":0,"t":"i","x":119,"r":0,"m":0},{"n":"Prop_Scale_Out","l":"Prop Scale Out","g":14,"k":0,"t":"b","x":120,"r":0,"m":0},{"n":"Enable_TP_Ladder","l":"TP Ladder - TP qaybsan + SL tallaabo (on/off) - HA SHIDIN","g":14,"k":0,"t":"b","x":121,"r":1,"m":0},{"n":"TPL_TP1_R","l":"TP Ladder: TP1 immisa R (xidh 50%, SL breakeven)","g":14,"k":0,"t":"d","x":122,"r":1,"m":0},{"n":"TPL_TP2_R","l":"TP Ladder: TP2 immisa R (xidh 25%)","g":14,"k":0,"t":"d","x":123,"r":1,"m":0},{"n":"TPL_TP3_R","l":"TP Ladder: TP3 immisa R (xidh inta hadhay)","g":14,"k":0,"t":"d","x":124,"r":1,"m":0},{"n":"TPL_TP4_R","l":"TP Ladder: TP4 immisa R","g":14,"k":0,"t":"d","x":125,"r":1,"m":0},{"n":"TPL_TP1_Pct","l":"TP Ladder: TP1 boqolkiiba","g":14,"k":0,"t":"i","x":126,"r":1,"m":0},{"n":"TPL_TP2_Pct","l":"TP Ladder: TP2 boqolkiiba","g":14,"k":0,"t":"i","x":127,"r":1,"m":0},{"n":"TPL_TP3_Pct","l":"TP Ladder: TP3 boqolkiiba","g":14,"k":0,"t":"i","x":128,"r":1,"m":0},{"n":"TPL_TP4_Pct","l":"TP Ladder: TP4 boqolkiiba","g":14,"k":0,"t":"i","x":129,"r":1,"m":0},{"n":"TPL_Trail_Final","l":"TP Ladder: trail qaybta u dambaysa (on/off)","g":14,"k":0,"t":"b","x":130,"r":0,"m":0},{"n":"TPL_Trail_Step_R","l":"TP Ladder: tallaabada trail-ka (R)","g":14,"k":0,"t":"d","x":131,"r":0,"m":0},{"n":"Enable_USD_ProfitLock","l":"Enable USD ProfitLock","g":14,"k":0,"t":"b","x":132,"r":1,"m":0},{"n":"LockProfit_USD","l":"Faa'iidada ($) ee la xidhayo","g":14,"k":0,"t":"d","x":133,"r":0,"m":0},{"n":"LockProfit_KeepPct","l":"Faa'iidada: boqolkiiba la haynayo","g":14,"k":0,"t":"d","x":134,"r":0,"m":0},{"n":"LockProfit_Trigger_R","l":"Faa'iidada: R-ga shaqaynaya","g":14,"k":0,"t":"d","x":135,"r":0,"m":0},{"n":"Enable_Stagnant_Exit","l":"Xidh trade aan waxba qabanayn N shumac kadib (on/off)","g":15,"k":0,"t":"b","x":136,"r":1,"m":0},{"n":"Stagnant_Bars","l":"Immisa shumac trade-ku furan yahay ka hor hubinta","g":15,"k":0,"t":"i","x":137,"r":0,"m":0},{"n":"Stagnant_Max_R","l":"Xidh haddii faa'iidadu u dhaxayso -R iyo +R (trade taagan)","g":15,"k":0,"t":"d","x":138,"r":0,"m":0},{"n":"Close_Profit_Before_News","l":"Xidh trade faa'iido leh warka ka hor (on/off)","g":15,"k":0,"t":"b","x":139,"r":0,"m":0},{"n":"News_Exit_Minutes","l":"Daqiiqado warka ka hor oo la xidhayo","g":15,"k":0,"t":"i","x":140,"r":0,"m":0},{"n":"News_Exit_Min_Profit_USD","l":"Kaliya xidh haddii faa'iidadu ka badan tahay ($) - 0 = mid kasta","g":15,"k":0,"t":"d","x":141,"r":0,"m":0},{"n":"News_Exit_High_Only","l":"Kaliya wararka WEYN (false = Weyn + Dhexe)","g":15,"k":0,"t":"b","x":142,"r":0,"m":0},{"n":"News_Exit_Close_Losers","l":"Sidoo kale xidh trade khasaare leh (on/off)","g":15,"k":0,"t":"b","x":143,"r":0,"m":0},{"n":"CloseWeekend","l":"Xidh trade-yada dhammaadka usbuuca (on/off)","g":15,"k":0,"t":"b","x":144,"r":0,"m":0},{"n":"Enable_Market_Regime","l":"Kaliya ganacso xaaladda suuqa ee saxda ah (on/off)","g":16,"k":0,"t":"b","x":145,"r":0,"m":0},{"n":"Regime_Lookback","l":"Xaaladda suuqa: immisa shumac dib loo eegayo","g":16,"k":0,"t":"i","x":146,"r":0,"m":0},{"n":"Filter2_ADX_Strong","l":"ADX filter","g":16,"k":0,"t":"b","x":147,"r":0,"m":0},{"n":"Filter2_ADX_MinLevel","l":"ADX ugu yar (20 = trend caadi, sare = adag)","g":16,"k":0,"t":"d","x":148,"r":0,"m":0},{"n":"Filter2_ADX_Period","l":"Muddada ADX-ga filter-ka","g":16,"k":0,"t":"i","x":149,"r":0,"m":0},{"n":"Filter_Low_Volatility","l":"ha ganacsan suuq aan dhaqaaqayn","g":16,"k":0,"t":"b","x":150,"r":0,"m":0},{"n":"Min_ATR_Pips","l":"ATR ugu yar (pips)","g":16,"k":0,"t":"d","x":151,"r":0,"m":0},{"n":"MaxSpread","l":"Spread ugu badan (points)","g":16,"k":0,"t":"i","x":152,"r":0,"m":0},{"n":"Enable_Dynamic_Spread","l":"xadka spread-ka oo ATR raaca","g":16,"k":0,"t":"b","x":153,"r":0,"m":0},{"n":"DynSpread_ATR_Mult","l":"Spread firfircoon: multiplier ATR","g":16,"k":0,"t":"d","x":154,"r":0,"m":0},{"n":"DynSpread_Min_Cap","l":"Spread firfircoon: xadka ugu hooseeya","g":16,"k":0,"t":"i","x":155,"r":0,"m":0},{"n":"DynSpread_Max_Cap","l":"Spread firfircoon: xadka ugu sarreeya","g":16,"k":0,"t":"i","x":156,"r":0,"m":0},{"n":"Enable_Extension_Guard","l":"ha eryin spike (sicirka aad uga fog EMA50)","g":16,"k":0,"t":"b","x":157,"r":0,"m":0},{"n":"Max_Extension_ATR","l":"Fogaanta ugu badan EMA50 (x ATR) - hoos = adag","g":16,"k":0,"t":"d","x":158,"r":0,"m":0},{"n":"EMA_Filter_On","l":"EMA = FILTER jihada (trade ma furo) · on/off","g":17,"k":1,"t":"b"},{"n":"EMA_F_H1_Period","l":"EMA-ga H1 (dahab)","g":17,"k":0,"t":"i","x":159,"r":1,"m":0},{"n":"EMA_F_H4_Period","l":"EMA-ga H4 (buluug)","g":17,"k":0,"t":"i","x":160,"r":1,"m":0},{"n":"EMA_F_Strict","l":"true = EMA50 H1 + EMA200 H4 isku hagaagsan · false = H4 kaliya","g":17,"k":0,"t":"b","x":161,"r":0,"m":0},{"n":"EMA_Range_Guard","l":"RANGE (suuqu isku fadhiyo) -> ha ganacsan","g":17,"k":0,"t":"b","x":162,"r":1,"m":0},{"n":"EMA_Range_Bars","l":"RANGE - H1 shumacyada la eegayo (24 = 1 maalin)","g":17,"k":0,"t":"i","x":163,"r":0,"m":0},{"n":"EMA_Range_Crosses","l":"range adag oo keliya","g":17,"k":0,"t":"i","x":164,"r":0,"m":0},{"n":"EMA_Range_Slope_ATR","l":"EMA50 H1 isbeddelka 6 saac < x ATR H1 -> siman","g":17,"k":0,"t":"d","x":165,"r":0,"m":0},{"n":"Enable_TrendFollow","l":"Raac trendka - albaabka xeeladaha trend (on/off)","g":18,"k":0,"t":"b","x":166,"r":0,"m":0},{"n":"TF_Require_Volume","l":"TF Require Volume","g":18,"k":0,"t":"b","x":167,"r":0,"m":0},{"n":"TF_Volume_Ratio","l":"Trend: saamiga volume-ka loo baahan yahay","g":18,"k":0,"t":"d","x":168,"r":0,"m":0},{"n":"TF_Require_MACD","l":"TF Require MACD","g":18,"k":0,"t":"b","x":169,"r":0,"m":0},{"n":"MACD_Fast","l":"MACD degdeg (fast)","g":18,"k":0,"t":"i","x":170,"r":0,"m":0},{"n":"MACD_Slow","l":"MACD gaabis (slow)","g":18,"k":0,"t":"i","x":171,"r":0,"m":0},{"n":"MACD_Signal","l":"MACD signal","g":18,"k":0,"t":"i","x":172,"r":0,"m":0},{"n":"Max_Same_Currency_Exposure","l":"Trade ugu badan oo isku lacag ku sharad ah (0 = damman)","g":19,"k":0,"t":"i","x":173,"r":0,"m":0},{"n":"Enable_Correlation_Filter","l":"Filter lammaanayaal isku xidhan (on/off)","g":19,"k":0,"t":"b","x":174,"r":0,"m":0},{"n":"Correlation_Groups","l":"Kooxaha lammaanayaasha isku xidhan ( | kala saar kooxaha )","g":19,"k":0,"t":"s","x":175,"r":0,"m":0},{"n":"Max_Correlated_Same_Dir","l":"Trade isku jiho ah oo ugu badan lammaanayaal isku xidhan","g":19,"k":0,"t":"i","x":176,"r":0,"m":0},{"n":"Require_Pattern_Confirm","l":"Kaliya ganacso marka qaab chart uu xaqiijiyo (on/off)","g":19,"k":0,"t":"b","x":177,"r":0,"m":0},{"n":"Pattern_Tol_ATR","l":"Qaab: dulqaadka Double Top / Bottom (x ATR)","g":19,"k":0,"t":"d","x":178,"r":0,"m":0},{"n":"Pattern_Lookback","l":"Qaab: immisa shumac la baadhayo","g":19,"k":0,"t":"i","x":179,"r":0,"m":0},{"n":"Use_Zone_Filter_For_Entry","l":"FILTER MEEL: kaliya gal zone SR (BUY support / SELL resistance) (on/off)","g":19,"k":0,"t":"b","x":180,"r":0,"m":0},{"n":"Enable_Session_Filter","l":"Filter-ka session-ka suuqa (on/off)","g":20,"k":0,"t":"b","x":181,"r":0,"m":0},{"n":"Trade_Asian","l":"Ganacso session-ka Aasiya","g":20,"k":0,"t":"b","x":182,"r":0,"m":0},{"n":"Trade_London","l":"Ganacso session-ka London (on/off)","g":20,"k":0,"t":"b","x":183,"r":0,"m":0},{"n":"Trade_NewYork","l":"Ganacso session-ka New York (on/off)","g":20,"k":0,"t":"b","x":184,"r":0,"m":0},{"n":"Trade_Overlap_Only","l":"Kaliya waqtiga London & New York isku dhacaan (on/off)","g":20,"k":0,"t":"b","x":185,"r":0,"m":0},{"n":"Use_Time_Filter","l":"Kaliya ganacso saacadaha aad dooratay (on/off)","g":20,"k":0,"t":"b","x":186,"r":0,"m":0},{"n":"Start_Hour","l":"Saacadda bilowga (waqtiga broker-ka)","g":20,"k":0,"t":"i","x":187,"r":0,"m":0},{"n":"End_Hour","l":"Saacadda dhammaadka (waqtiga broker-ka)","g":20,"k":0,"t":"i","x":188,"r":0,"m":0},{"n":"Session_Broker_GMT_Offset","l":"GMT+3 (DST) - broker-kaagu GMT+3 ayuu yahay","g":20,"k":0,"t":"i","x":189,"r":0,"m":0},{"n":"Auto_GMT_Offset","l":"farqiga GMT tooska u hel (DST) - la talo siiyay true","g":20,"k":0,"t":"b","x":190,"r":0,"m":0},{"n":"Enable_Candle_Sync","l":"Ku xir shaqada bilowga shumaca cusub (on/off)","g":20,"k":0,"t":"b","x":191,"r":0,"m":0},{"n":"Sync_TF","l":"Timeframe-ka sync-ga shumaca","g":20,"k":0,"t":"e","x":192,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"Inp_EnableNewsFilter","l":"jooji ganacsiga waqtiga wararka (tester kuma shaqeeyo)","g":21,"k":1,"t":"b"},{"n":"News_Calendar_URL","l":"URL-ka kalandarka wararka","g":21,"k":2,"t":"s"},{"n":"News_Broker_GMT_Offset","l":"GMT+3 (DST) - waqtiga wararka","g":21,"k":0,"t":"i","x":193,"r":0,"m":0},{"n":"News_Refresh_Minutes","l":"Daqiiqado la cusboonaysiiyo wararka","g":21,"k":0,"t":"i","x":194,"r":0,"m":0},{"n":"News_Filter_High","l":"Xannib wararka saameyn WEYN leh (on/off)","g":21,"k":0,"t":"b","x":195,"r":0,"m":0},{"n":"News_Filter_Medium","l":"Xannib wararka saameyn DHEXE leh (on/off)","g":21,"k":0,"t":"b","x":196,"r":0,"m":0},{"n":"News_Filter_Low","l":"Xannib wararka saameyn YAR leh (on/off)","g":21,"k":0,"t":"b","x":197,"r":0,"m":0},{"n":"MinutesBeforeNews","l":"Daqiiqado warka ka hor oo la joojinayo","g":21,"k":0,"t":"i","x":198,"r":0,"m":0},{"n":"MinutesAfterNews","l":"Daqiiqado warka ka dib oo la joojinayo","g":21,"k":0,"t":"i","x":199,"r":0,"m":0},{"n":"News_Block_If_Fetch_Fails","l":"Xannib haddii wararka la soo dejin waayo (on/off)","g":21,"k":0,"t":"b","x":200,"r":0,"m":0},{"n":"SR_Zone_TF","l":"SR: timeframe-ka zone-yada","g":22,"k":0,"t":"e","x":201,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"SR_Lookback","l":"SR: immisa shumac dib loo eegayo (HTF)","g":22,"k":0,"t":"i","x":202,"r":0,"m":0},{"n":"SR_Swing_Len","l":"SR: dhererka fractal-ka zone-yada","g":22,"k":0,"t":"i","x":203,"r":0,"m":0},{"n":"SR_Zone_ATR_Mult","l":"SR: ballaca zone-ka (x ATR HTF)","g":22,"k":0,"t":"d","x":204,"r":0,"m":0},{"n":"SR_StrengthBuffer","l":"SR: ballaca ugu yar (pips) - ATR ayaa badiyaa","g":22,"k":0,"t":"d","x":205,"r":0,"m":0},{"n":"SR_MinTouches","l":"SR: taabasho DHAB ah ugu yar","g":22,"k":0,"t":"i","x":206,"r":0,"m":0},{"n":"SR_Min_Zone_Age","l":"SR Min Zone Age","g":22,"k":0,"t":"i","x":207,"r":0,"m":0},{"n":"SR_Mode","l":"SR: habka (BOUNCE / BREAK-RETEST / LABADABA)","g":22,"k":0,"t":"e","x":208,"r":0,"m":0,"o":[[0,"BOUNCE"],[1,"BREAK_RETEST"],[2,"BOTH"]]},{"n":"SR_Use_Flip","l":"SR: zone jabay -> door beddel (R<->S) (on/off)","g":22,"k":0,"t":"b","x":209,"r":0,"m":0},{"n":"SR_Break_Buf_ATR","l":"SR: jabku waa inuu ka fog yahay (x ATR HTF)","g":22,"k":0,"t":"d","x":210,"r":0,"m":0},{"n":"SR_Max_Dist_ATR","l":"SR: fogaanta ugu badan sicir->zone (x ATR)","g":22,"k":0,"t":"d","x":211,"r":0,"m":0},{"n":"SR_Max_Penetration_ATR","l":"SR: intee shumacu zone-ka ka dhex geli karo (x ATR)","g":22,"k":0,"t":"d","x":212,"r":0,"m":0},{"n":"SR_Require_Rejection","l":"SR: u baahan diidmo shumac (rejection) (on/off)","g":22,"k":0,"t":"b","x":213,"r":0,"m":0},{"n":"SR_Rej_Wick_Pct","l":"SR: dabada shumaca / range (0.40 = 40%)","g":22,"k":0,"t":"d","x":214,"r":0,"m":0},{"n":"SR_Rej_Wick_Body","l":"SR: dabada / jidhka shumaca","g":22,"k":0,"t":"d","x":215,"r":0,"m":0},{"n":"SR_Rej_ClosePos","l":"SR: meesha close-ku ku yaal shumaca (0..1)","g":22,"k":0,"t":"d","x":216,"r":0,"m":0},{"n":"SR_Require_Volume","l":"SR: u baahan volume (on/off)","g":22,"k":0,"t":"b","x":217,"r":0,"m":0},{"n":"SR_Vol_Ratio","l":"SR: saamiga volume (marka kor la shido)","g":22,"k":0,"t":"d","x":218,"r":0,"m":0},{"n":"SR_Cooldown_Bars","l":"SR: shumac u dhexeeya laba trade oo isku zone ah","g":22,"k":0,"t":"i","x":219,"r":0,"m":0},{"n":"SR_SL_Buffer_ATR","l":"SL-ku intee buu darafka zone-ka ka baxsanaadaa (x ATR). Hore: 0.25 go'an","g":22,"k":0,"t":"d","x":220,"r":0,"m":0},{"n":"SR_SL_Multiplier","l":"SR: SL (x ATR) - marka zone la waayo","g":22,"k":0,"t":"d","x":221,"r":0,"m":0},{"n":"SR_TP_Multiplier","l":"SR: TP (x ATR) - marka zone la waayo","g":22,"k":0,"t":"d","x":222,"r":0,"m":0},{"n":"SR_Zone_TP","l":"SR: TP = zone-ka ka soo horjeeda (on/off)","g":22,"k":0,"t":"b","x":223,"r":0,"m":0},{"n":"SR_Debug","l":"SR: qor sabab kasta oo diidmo ah","g":22,"k":0,"t":"b","x":224,"r":0,"m":0},{"n":"SMC_Require_CHoCH","l":"CHoCH iyo EMA trend way is diidayeen - BOS OB (trend) ayaa ugu fiican","g":23,"k":0,"t":"b","x":225,"r":0,"m":0},{"n":"SMC_Require_FVG","l":"SMC Require FVG","g":23,"k":0,"t":"b","x":226,"r":0,"m":0},{"n":"SMC_Require_Sweep","l":"SMC Require Sweep","g":23,"k":0,"t":"b","x":227,"r":0,"m":0},{"n":"SMC_Require_PremDisc","l":"BUY discount / SELL premium kaliya - dhexda ma jirto","g":23,"k":0,"t":"b","x":228,"r":0,"m":0},{"n":"SMC_Require_LTF_CHoCH","l":"SMC Require LTF CHoCH","g":23,"k":0,"t":"b","x":229,"r":0,"m":0},{"n":"SMC_Use_HTF_Bias","l":"EMA filter-ka ayaa jihada qabta","g":23,"k":0,"t":"b","x":230,"r":0,"m":0},{"n":"SMC_MinTouches","l":"SMC: immisa jeer heerka la taabtay","g":23,"k":0,"t":"i","x":231,"r":0,"m":0},{"n":"OB_Mitigation_Perc","l":"Order Block: boqolkiiba la buuxiyay (%)","g":23,"k":0,"t":"d","x":232,"r":0,"m":0},{"n":"SMC_Lookback","l":"SMC: immisa shumac dib loo eegayo","g":23,"k":0,"t":"i","x":233,"r":0,"m":0},{"n":"SMC_StrengthBuffer","l":"SMC: xoogga ugu yar (buffer)","g":23,"k":0,"t":"d","x":234,"r":0,"m":0},{"n":"SMC_SL_Multiplier","l":"SMC: SL (x ATR)","g":23,"k":0,"t":"d","x":235,"r":0,"m":0},{"n":"SMC_TP_Multiplier","l":"SMC: TP (x ATR)","g":23,"k":0,"t":"d","x":236,"r":0,"m":0},{"n":"SMC_SwingLen","l":"SMC: dhererka swing-ga","g":23,"k":0,"t":"i","x":237,"r":0,"m":0},{"n":"SMC_Equilibrium_Pct","l":"SMC: dhexda (equilibrium) %","g":23,"k":0,"t":"d","x":238,"r":0,"m":0},{"n":"SMC_Impulse_ATR","l":"SMC Impulse ATR","g":23,"k":0,"t":"d","x":239,"r":0,"m":0},{"n":"SMC_Impulse_MaxBars","l":"SMC: shumac ugu badan OB -> jab","g":23,"k":0,"t":"i","x":240,"r":0,"m":0},{"n":"SMC_BOS_MaxAge","l":"30 shumac M5 = 2.5 saac kaliya -> 8 saac","g":23,"k":0,"t":"i","x":241,"r":0,"m":0},{"n":"SMC_OB_BodyOnly","l":"SMC: zone-ka OB = jidhka kaliya (false = shumaca oo dhan)","g":23,"k":0,"t":"b","x":242,"r":0,"m":0},{"n":"SMC_Sweep_Lookback","l":"SMC: sweep - shumac dib loo eegayo","g":23,"k":0,"t":"i","x":243,"r":0,"m":0},{"n":"SMC_Max_Dist_ATR","l":"SMC Max Dist ATR","g":23,"k":0,"t":"d","x":244,"r":0,"m":0},{"n":"SMC_Entry_Buf_ATR","l":"SMC: dulqaadka gelitaanka (x ATR)","g":23,"k":0,"t":"d","x":245,"r":0,"m":0},{"n":"SMC_Require_Rejection","l":"SMC: u baahan diidmo shumac (on/off)","g":23,"k":0,"t":"b","x":246,"r":0,"m":0},{"n":"SMC_Rej_Wick_Pct","l":"SMC: dabada shumaca / range","g":23,"k":0,"t":"d","x":247,"r":0,"m":0},{"n":"SMC_Cooldown_Bars","l":"SMC: shumac u dhexeeya laba trade oo isku OB ah","g":23,"k":0,"t":"i","x":248,"r":0,"m":0},{"n":"SMC_Zone_TP","l":"SMC: TP = liquidity-ga xiga (on/off)","g":23,"k":0,"t":"b","x":249,"r":0,"m":0},{"n":"SMC_Debug","l":"SMC: qor sabab kasta oo diidmo ah","g":23,"k":0,"t":"b","x":250,"r":0,"m":0},{"n":"SMC_HTF_TF","l":"SMC: timeframe-ka sare","g":23,"k":0,"t":"e","x":251,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"SMC_HTF_EMA","l":"SMC: EMA-ga timeframe-ka sare","g":23,"k":0,"t":"i","x":252,"r":0,"m":0},{"n":"SMC_Structural_SL","l":"SMC: SL ku saleysan qaab-dhismeedka (on/off)","g":23,"k":0,"t":"b","x":253,"r":0,"m":0},{"n":"SMC_LTF","l":"SMC: timeframe-ka hoose","g":23,"k":0,"t":"e","x":254,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"SMC_Sniper_CHoCH","l":"Sniper -> sug CHoCH M5 ka hor gelitaanka (on/off)","g":23,"k":0,"t":"b","x":255,"r":0,"m":0},{"n":"SMC_Touch_Bars","l":"Sniper - OB-ga waa inuu la taabtay shumacyadan gudahood (12 x M5 = 1 saac)","g":23,"k":0,"t":"i","x":256,"r":0,"m":0},{"n":"Inp_Entry_Max_Dist_Pips","l":"Entry Max Dist Pips","g":23,"k":0,"t":"d","x":257,"r":0,"m":8},{"n":"SMC_Extreme_Bars","l":"OB-gu waa inuu yahay salka/dusha shumacyadan (48 x M5 = 4 saac) - 0 = damman","g":23,"k":0,"t":"i","x":258,"r":0,"m":0},{"n":"SMC_Extreme_Tol_ATR","l":"dulqaadka cidhifka OB-ga (x ATR)","g":23,"k":0,"t":"d","x":259,"r":0,"m":0},{"n":"Stars_Enable","l":"★ scoring (on/off)","g":24,"k":0,"t":"b","x":260,"r":0,"m":0},{"n":"Stars_Min","l":"★ ugu yar: 2 = ★ ka tag · 1 = dhammaan","g":24,"k":1,"t":"i"},{"n":"Lot_Pct_2Star","l":"★★ = lot-ka boqolkiisa (★★★ = 100%)","g":24,"k":1,"t":"d"},{"n":"ExecMode","l":"Habka fulinta MARKET order-ka (SMART / MARKET). v66.1: pending order (LIMIT) gebi ahaanba waa la saaray - EXEC","g":25,"k":0,"t":"e","x":261,"r":0,"m":0,"o":[[0,"INSTANT"],[1,"SMART"],[2,"LIMIT"]]},{"n":"Enable_ECN_StopFallback","l":"ECN: SL/TP kadib dir haddii la diido (on/off)","g":25,"k":0,"t":"b","x":262,"r":0,"m":0},{"n":"MaxRetries","l":"Isku day mar kale oo ugu badan","g":25,"k":0,"t":"i","x":263,"r":0,"m":0},{"n":"RetryDelayMs","l":"Daahitaanka isku dayga (ms)","g":25,"k":0,"t":"i","x":264,"r":0,"m":0},{"n":"MaxSlippagePips","l":"Slippage ugu badan (pips)","g":25,"k":0,"t":"i","x":265,"r":0,"m":0},{"n":"UseVirtualOrders","l":"Amaro virtual ah - SL/TP xasuusta ku hay (on/off)","g":25,"k":0,"t":"b","x":266,"r":0,"m":0},{"n":"Enable_Stealth_Mode","l":"Hab qarsoodi - broker-ku SL/TP ha arkin (on/off)","g":25,"k":0,"t":"b","x":267,"r":0,"m":0},{"n":"Loose_Entry_Mode","l":"HAB DEBECSAN: trade badan, filter yar (on/off)","g":25,"k":0,"t":"b","x":268,"r":0,"m":0},{"n":"Simple_Mode","l":"HAB FUDUD: SL/TP go'an, maamul automatic ah ma jiro (on/off)","g":25,"k":0,"t":"b","x":269,"r":0,"m":0},{"n":"PropMode","l":"Habka Prop Firm (NONE = damman)","g":26,"k":0,"t":"e","x":270,"r":0,"m":0,"o":[[0,"NONE"],[1,"FTMO"],[2,"MFF"],[3,"CUSTOM"]]},{"n":"Prop_Max_Daily_DD","l":"Prop: drawdown maalinle ugu badan (%)","g":26,"k":0,"t":"d","x":271,"r":0,"m":0},{"n":"Prop_Max_Total_DD","l":"Prop: drawdown guud ugu badan (%)","g":26,"k":0,"t":"d","x":272,"r":0,"m":0},{"n":"Prop_Min_Trading_Days","l":"Prop: maalmo ganacsi ugu yar","g":26,"k":0,"t":"d","x":273,"r":0,"m":0},{"n":"Prop_No_Weekend","l":"Prop: ha ganacsan dhammaadka usbuuca (on/off)","g":26,"k":0,"t":"b","x":274,"r":0,"m":0},{"n":"Prop_No_News","l":"Prop: ha ganacsan waqtiga wararka (on/off)","g":26,"k":0,"t":"b","x":275,"r":0,"m":0},{"n":"Prop_Consistency_Max","l":"Prop: xeerka is-waafaqidda ugu badan (%)","g":26,"k":0,"t":"d","x":276,"r":0,"m":0},{"n":"EnableTelegram","l":"Dir digniinaha Telegram (on/off)","g":27,"k":0,"t":"b","x":277,"r":0,"m":0},{"n":"TG_BotToken","l":"Telegram: token-ka bot-ka (GELI halkan)","g":27,"k":2,"t":"s"},{"n":"TG_ChatID","l":"Telegram: Chat ID (GELI halkan)","g":27,"k":2,"t":"s"},{"n":"TG_DailySummary","l":"Telegram: soo koobid maalinle (on/off)","g":27,"k":0,"t":"b","x":278,"r":0,"m":0},{"n":"TG_WeeklySummary","l":"Telegram: soo koobid usbuucle (on/off)","g":27,"k":0,"t":"b","x":279,"r":0,"m":0},{"n":"TG_DrawdownAlert","l":"Telegram: digniin drawdown (on/off)","g":27,"k":0,"t":"b","x":280,"r":0,"m":0},{"n":"TG_DrawdownAlertPct","l":"Telegram: boqolkiiba drawdown-ka digniinta","g":27,"k":0,"t":"d","x":281,"r":0,"m":0},{"n":"TG_TradeDetails","l":"Telegram: faahfaahinta trade-ka (on/off)","g":27,"k":0,"t":"b","x":282,"r":0,"m":0},{"n":"TG_ErrorAlerts","l":"Telegram: digniin qalad (on/off)","g":27,"k":0,"t":"b","x":283,"r":0,"m":0},{"n":"TG_TradeCloseAlert","l":"Telegram: digniin xidhitaanka trade (on/off)","g":27,"k":0,"t":"b","x":284,"r":0,"m":0},{"n":"TG_NewsAlert","l":"Telegram: digniin warar (on/off)","g":27,"k":0,"t":"b","x":285,"r":0,"m":0},{"n":"TG_RejectedAlerts","l":"Telegram: digniin trade la diiday (on/off)","g":27,"k":0,"t":"b","x":286,"r":0,"m":0},{"n":"TG_Reject_Cooldown_Min","l":"Telegram: daqiiqado u dhexeeya digniinaha diidmada","g":27,"k":0,"t":"i","x":287,"r":0,"m":0},{"n":"TG_Error_Cooldown_Sec","l":"Telegram: ilbiriqsiyo u dhexeeya digniinaha qaladka","g":27,"k":0,"t":"i","x":288,"r":0,"m":0},{"n":"EnableCloudDashboard","l":"Dashboard-ka cloud-ka (on/off)","g":28,"k":2,"t":"b"},{"n":"CloudDashboardURL","l":"URL-ka dashboard-ka","g":28,"k":2,"t":"s"},{"n":"CloudCommandURL","l":"URL-ka amarada","g":28,"k":2,"t":"s"},{"n":"Cloud_Bot_Name","l":"Magaca bootka ee dashboard-ka (gaar u ah EA kasta)","g":28,"k":2,"t":"s"},{"n":"Enable_Connection_Guard","l":"Ilaali xiriirka internet-ka (on/off)","g":28,"k":2,"t":"b"},{"n":"Enable_Reconnect_Alert","l":"Digniin marka xiriirku dib u soo noqdo (on/off)","g":28,"k":2,"t":"b"},{"n":"Cloud_Push_Seconds","l":"intee ilbiriqsi kasta ayaa xogta la dirayaa (hore 15). Kordhi = bandwidth yar","g":28,"k":2,"t":"i"},{"n":"Cloud_Cmd_Seconds","l":"amarrada intee ilbiriqsi kasta (hore 10)","g":28,"k":2,"t":"i"},{"n":"Cloud_Journal_Max","l":"immisa trade oo xidhan ayaa push kasta la dirayaa (hore 120)","g":28,"k":2,"t":"i"},{"n":"Cloud_Timeout_Ms","l":"Sug xogta guud (ms) - internet gaabis 8000-12000","g":28,"k":2,"t":"i"},{"n":"Journal_Timeout_Ms","l":"Sug jornalka (ms) - Render hurda 20000","g":28,"k":2,"t":"i"},{"n":"Journal_Batch_Max","l":"Trade tiro badan oo hal mar la diro (yaree = dhakhso)","g":28,"k":2,"t":"i"},{"n":"Journal_Only_New","l":"Kaliya kuwa cusub dir (ha dirin mar walba isku mid)","g":28,"k":2,"t":"b"},{"n":"UI_Premium","l":"chart-ka cusub (panel glass + xuduud dahab ah) - false = panel-kii hore","g":29,"k":0,"t":"b","x":289,"r":0,"m":0},{"n":"UI_Scale","l":"cabbirka panel-ka (0 = toos, DPI-ga shaashadda) · 1.0 / 1.25 / 1.5","g":29,"k":0,"t":"d","x":290,"r":0,"m":0},{"n":"UI_Show_EMA","l":"EMA qurxin chart-ka (daruur · glow · cross · qiimaha)","g":29,"k":0,"t":"b","x":291,"r":0,"m":0},{"n":"UI_Show_Zones","l":"zone-yada SD (★) + dhaqaaqa la filayo (ATR D1) chart-ka ku sawir","g":29,"k":0,"t":"b","x":292,"r":0,"m":0},{"n":"BrandName","l":"Magaca panel-ka","g":29,"k":0,"t":"s","x":293,"r":0,"m":0},{"n":"Watermark_Text","l":"Qoraalka watermark-ka","g":29,"k":0,"t":"s","x":294,"r":0,"m":0},{"n":"Watermark_Size","l":"Cabbirka watermark-ka","g":29,"k":0,"t":"i","x":295,"r":0,"m":0},{"n":"Watermark_Color","l":"Midabka watermark-ka","g":29,"k":0,"t":"c","x":296,"r":0,"m":0},{"n":"Show_Trade_Signals","l":"Tus calaamadaha signal-ka (on/off)","g":29,"k":0,"t":"b","x":297,"r":0,"m":0},{"n":"Show_Trade_Markers","l":"Tus calaamadaha trade-ka (on/off)","g":29,"k":0,"t":"b","x":298,"r":0,"m":0},{"n":"Marker_Size","l":"Cabbirka calaamadda","g":29,"k":0,"t":"i","x":299,"r":0,"m":0},{"n":"Buy_Marker_Color","l":"Midabka calaamadda BUY","g":29,"k":0,"t":"c","x":300,"r":0,"m":0},{"n":"Sell_Marker_Color","l":"Midabka calaamadda SELL","g":29,"k":0,"t":"c","x":301,"r":0,"m":0},{"n":"Show_Dynamic_Zones","l":"Tus zone-yada firfircoon (on/off)","g":29,"k":0,"t":"b","x":302,"r":0,"m":0},{"n":"Show_Trade_Panel","l":"panel-ka trade-yada furan (hoose-bidix) SL/TP pip","g":29,"k":0,"t":"b","x":303,"r":0,"m":0},{"n":"Show_Control_Panel","l":"CONTROL PANEL-ka hore (badhamo xeelad/LOT/SL/TP) - shid/dami adigoo doorta, uma baahnid F7 recompile","g":29,"k":0,"t":"b","x":304,"r":0,"m":0},{"n":"CPanel_X","l":"CONTROL PANEL - X (marka Use_New_Left_Panel=true) - waad bedeli kartaa","g":29,"k":0,"t":"i","x":305,"r":0,"m":0},{"n":"CPanel_Y","l":"kor, la simay dashboard-ka bidix: CONTROL PANEL - Y (marka Use_New_Left_Panel=true) - waad bedeli kartaa","g":29,"k":0,"t":"i","x":306,"r":0,"m":0},{"n":"CPanel_Gap_Below_Strat","l":"CILAD-XALI - marka Use_New_Left_Panel=FALSE (STRATEGY PERFORMANCE panel-ku muuqdo), CONTROL PANEL-ku meel bann","g":29,"k":0,"t":"i","x":307,"r":0,"m":0},{"n":"Panel_Always_Show","l":"tus xitaa marka trade furan aan jirin (si aad u hubiso)","g":29,"k":0,"t":"b","x":308,"r":0,"m":0},{"n":"Panel_X","l":"dashboard-ka bidix kuma dul fadhiisto: fogaanta bidixda (panel-kii hore 280 buu ballaadhan yahay)","g":29,"k":0,"t":"i","x":309,"r":0,"m":0},{"n":"Panel_Y_Margin","l":"fogaanta hoose","g":29,"k":0,"t":"i","x":310,"r":0,"m":0},{"n":"Panel_Font_Scale","l":"cabbirka qoraalka (1.0 = caadi, 0.9 = yar)","g":29,"k":0,"t":"d","x":311,"r":0,"m":0},{"n":"Use_New_Left_Panel","l":"panel-ka bidixda ee CUSUB (qiimayaashu MIDIG bay ku toosan yihiin)","g":29,"k":0,"t":"b","x":312,"r":0,"m":0},{"n":"LPanel_X","l":"panel-ka bidixda - X","g":29,"k":0,"t":"i","x":313,"r":0,"m":0},{"n":"LPanel_Y","l":"panel-ka bidixda - Y","g":29,"k":0,"t":"i","x":314,"r":0,"m":0},{"n":"Show_Trend_Lines","l":"Tus xariiqaha trendka (on/off)","g":29,"k":0,"t":"b","x":315,"r":0,"m":0},{"n":"SR_Draw_Zones","l":"SR Draw Zones","g":29,"k":0,"t":"b","x":316,"r":0,"m":0},{"n":"SD_Profile","l":"heerka zone-ka · TAYO = inputs-ka hoose (adag) · DHEXE = isku dheelli · BADAN = trade badan","g":30,"k":1,"t":"e","o":[[0,"TAYO"],[1,"DHEXE"],[2,"BADAN"]]},{"n":"Enable_SD_Engine","l":"isticmaal SUPPLY&DEMAND halkii SR-kii hore (on/off)","g":30,"k":0,"t":"b","x":317,"r":0,"m":0},{"n":"SD_Zone_TF","l":"timeframe-ka zone-yada","g":30,"k":0,"t":"e","x":318,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"SD_Lookback","l":"immisa shumac dib loo eegayo","g":30,"k":0,"t":"i","x":319,"r":0,"m":0},{"n":"SD_Base_Max_Bars","l":"shumac ugu badan oo base ah (1-5)","g":30,"k":0,"t":"i","x":320,"r":0,"m":0},{"n":"SD_Base_Max_Range_ATR","l":"base shumac kasta range-kiisu ka yar (x ATR)","g":30,"k":0,"t":"d","x":321,"r":0,"m":0},{"n":"SD_Base_Max_Body_Pct","l":"base jidhku ka yar","g":30,"k":0,"t":"d","x":322,"r":0,"m":0},{"n":"Inp_SD_Impulse_Min_ATR","l":"SD Impulse Min ATR","g":30,"k":0,"t":"d","x":323,"r":0,"m":8},{"n":"Inp_SD_Impulse_Min_Pips","l":"zone xoog leh","g":30,"k":0,"t":"d","x":324,"r":0,"m":8},{"n":"Inp_SD_Touch_React_Min_Pips","l":"SD Touch React Min Pips","g":30,"k":0,"t":"d","x":325,"r":0,"m":8},{"n":"SD_Swing_Extreme","l":"swing-na sidoo kale","g":30,"k":0,"t":"b","x":326,"r":0,"m":0},{"n":"SD_Impulse_Max_Bars","l":"SD: shumac ugu badan oo baxsasho ah","g":30,"k":0,"t":"i","x":327,"r":0,"m":0},{"n":"SD_Impulse_Body_Pct","l":"shumaca 1aad ee baxsashada jidhkiisu ka badan","g":30,"k":0,"t":"d","x":328,"r":0,"m":0},{"n":"Inp_SD_Max_Touches","l":"zone cusub/nadiif ah","g":30,"k":0,"t":"i","x":329,"r":0,"m":8},{"n":"SD_Min_Zone_Age","l":"SD: shumac ugu yar oo zone-ku jiray","g":30,"k":0,"t":"i","x":330,"r":0,"m":0},{"n":"SD_Max_Zone_Age","l":"zone WEYN wuu duugoobaa - 31 maalmood kuma filna","g":30,"k":0,"t":"i","x":331,"r":0,"m":0},{"n":"SD_Max_Dist_ATR","l":"fogaanta 8 -> 15 ATR","g":30,"k":0,"t":"d","x":332,"r":0,"m":0},{"n":"SD_SL_Buffer_ATR","l":"SD: SL-ku intee buu DISTAL-ka ka baxsanaadaa (x ATR)","g":30,"k":0,"t":"d","x":333,"r":0,"m":0},{"n":"SD_SL_Max_ATR","l":"SD: SL ugu ballaadhan (x ATR) - ka tag haddii ka weyn","g":30,"k":0,"t":"d","x":334,"r":0,"m":0},{"n":"SD_RR","l":"TP = SL x tan","g":30,"k":0,"t":"d","x":335,"r":0,"m":0},{"n":"SD_Require_Confirm","l":"SD: u baahan shumac diidmo (rejection) (on/off)","g":30,"k":0,"t":"b","x":336,"r":0,"m":0},{"n":"SD_Confirm_Wick_Pct","l":"dabada shumaca / range","g":30,"k":0,"t":"d","x":337,"r":0,"m":0},{"n":"SD_Kill_On_Break","l":"SD: close ka baxsan distal -> zone WAA LA TUURAA (on/off)","g":30,"k":0,"t":"b","x":338,"r":0,"m":0},{"n":"SD_Break_Buf_ATR","l":"SD: buffer-ka jabinta (x ATR)","g":30,"k":0,"t":"d","x":339,"r":0,"m":0},{"n":"Inp_SD_Require_BOS","l":"baxsashadu waa inay JABISAA qaab-dhismeedkii hore (BOS)","g":30,"k":0,"t":"b","x":340,"r":0,"m":8},{"n":"SD_BOS_Lookback","l":"SD BOS Lookback","g":30,"k":0,"t":"i","x":341,"r":0,"m":0},{"n":"SD_Swing_Zones","l":"zone ka dhis SWING HIGH/LOW (base looma baahna)","g":30,"k":0,"t":"b","x":342,"r":0,"m":0},{"n":"SD_Swing_Len","l":"shumac dhinac kasta oo swing-ka qeexaya","g":30,"k":0,"t":"i","x":343,"r":0,"m":0},{"n":"SD_Swing_Imp_Bars","l":"immisa shumac kadib ayaa baxsashada la qiyaasayo","g":30,"k":0,"t":"i","x":344,"r":0,"m":0},{"n":"Inp_SD_Extreme_Only","l":"zone waa inuu CIDHIFKA ku yaallaa - dhexda lama qaadanayo","g":30,"k":0,"t":"b","x":345,"r":0,"m":8},{"n":"Inp_SD_Extreme_Window","l":"cidhif dhab ah - dhexda ma jirto","g":30,"k":0,"t":"i","x":346,"r":0,"m":8},{"n":"Inp_SD_Extreme_Tol_ATR","l":"SD Extreme Tol ATR","g":30,"k":0,"t":"d","x":347,"r":0,"m":8},{"n":"SD_Big_TF","l":"TF-ka lagu qiyaaso WEYNIDA baxsashada","g":30,"k":0,"t":"e","x":348,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"SD_Big_Weight","l":"dhibcaha weynida (0 = damman)","g":30,"k":0,"t":"d","x":349,"r":0,"m":0},{"n":"SD_Recency_Weight","l":"dhibcaha CUSUBNIMADA (hore 5.0 - zone duug oo weyn wuu guuli waayay)","g":30,"k":0,"t":"d","x":350,"r":0,"m":0},{"n":"SD_Debug","l":"SD: qor sabab kasta oo diidmo ah","g":30,"k":0,"t":"b","x":351,"r":0,"m":0},{"n":"Panel_Show_Selected_Only","l":"Panel: kaliya tus xeeladda la doortay (on/off)","g":30,"k":0,"t":"b","x":352,"r":0,"m":0},{"n":"Show_CurrencyMeter","l":"Tus cabbirka xoogga lacagaha (on/off)","g":30,"k":0,"t":"b","x":353,"r":0,"m":0},{"n":"Show_EMA_Lines","l":"Show EMA Lines","g":30,"k":0,"t":"b","x":354,"r":0,"m":0},{"n":"Viz_EMA_Fast","l":"Muuqaal: EMA degdeg","g":30,"k":0,"t":"i","x":355,"r":0,"m":0},{"n":"Viz_EMA_Slow","l":"Muuqaal: EMA gaabis","g":30,"k":0,"t":"i","x":356,"r":0,"m":0},{"n":"Viz_EMA_Fast_Clr","l":"Muuqaal: midabka EMA degdeg","g":30,"k":0,"t":"c","x":357,"r":0,"m":0},{"n":"Viz_EMA_Slow_Clr","l":"Muuqaal: midabka EMA gaabis","g":30,"k":0,"t":"c","x":358,"r":0,"m":0},{"n":"Viz_EMA_Width","l":"Muuqaal: dhumucda xariiqda EMA","g":30,"k":0,"t":"i","x":359,"r":0,"m":0},{"n":"Viz_EMA_Bars","l":"Muuqaal: immisa shumac EMA la sawirayo","g":30,"k":0,"t":"i","x":360,"r":0,"m":0},{"n":"Enable_Chart_Screenshot","l":"Qaado sawirka chart-ka (on/off)","g":30,"k":0,"t":"b","x":361,"r":0,"m":0},{"n":"Screenshot_Width","l":"Ballaca sawirka","g":30,"k":0,"t":"i","x":362,"r":0,"m":0},{"n":"Screenshot_Height","l":"Dhererka sawirka","g":30,"k":0,"t":"i","x":363,"r":0,"m":0},{"n":"Screenshot_To_App","l":"sawirka trade-ka (furan + xidhan) app-ka u dir (Trade tab)","g":30,"k":0,"t":"b","x":364,"r":0,"m":0},{"n":"Screenshot_Show_Panels","l":"false = panel-yada MOHA PRO waa la qariyaa inta sawirka la qaadayo (chart nadiif ah)","g":30,"k":0,"t":"b","x":365,"r":0,"m":0},{"n":"EnableJournal","l":"Diiwaanka trade-yada CSV (on/off)","g":31,"k":0,"t":"b","x":366,"r":1,"m":0},{"n":"Journal_Filename","l":"Magaca faylka diiwaanka","g":31,"k":0,"t":"s","x":367,"r":1,"m":0},{"n":"Enable_Debug_Log","l":"Diiwaanka debug-ga (on/off)","g":31,"k":0,"t":"b","x":368,"r":0,"m":0}]}'''
+INP_SCHEMA = json.loads(INP_SCHEMA_JSON)
+INP_GEN = {it["n"]: it for it in INP_SCHEMA["items"] if it.get("k") == 0}
+
+
+def valid_in(name, raw):
+    """v12.18: qiimaha input-ka -> qaab EA-ga (bool 1/0 · int · double · enum · color · string = h+hex). None = khaldan."""
+    it = INP_GEN.get(str(name))
+    if not it:
+        return None
+    t = it.get("t"); raw = str(raw).strip()
+    if t == "b":
+        return {"1": "1", "0": "0", "true": "1", "false": "0"}.get(raw.lower())
+    if t == "s":
+        if not re.fullmatch(r"h(?:[0-9a-fA-F]{2}){0,400}", raw):
+            return None
+        try:
+            txt = bytes.fromhex(raw[1:]).decode("utf-8")
+        except ValueError:
+            return None
+        if len(txt) > 200 or any(ord(ch) < 32 for ch in txt):
+            return None
+        return "h" + txt.encode("utf-8").hex()
+    try:
+        f = float(raw)
+    except ValueError:
+        return None
+    if f != f or abs(f) > 1e12:
+        return None
+    if t == "d":
+        out = ("%.10f" % f).rstrip("0").rstrip(".")
+        return "0" if out in ("", "-0") else out
+    if f != int(f):
+        return None
+    v = int(f)
+    if t == "i":
+        return str(v) if abs(v) <= 2000000000 else None
+    if t == "c":
+        return str(v) if 0 <= v <= 0xFFFFFF else None
+    if t == "e":
+        return str(v) if v in [o[0] for o in it.get("o") or []] else None
+    return None
+
 
 def valid_command(cmd):
     """True + amarka nadiifsan, ama False + sabab."""
     if cmd in VALID_COMMANDS:
         return True, cmd
+    if cmd.startswith("SET:INDEL:"):                      # v12.18: input-ka MT5-ka ku celi
+        return (True, cmd) if cmd[10:] in INP_GEN else (False, None)
+    if cmd.startswith("SET:IN:"):                         # v12.18: input kasta (EA v70.6+)
+        mm = re.match(r"^SET:IN:([A-Za-z_]\w{0,63})=(.*)$", cmd, re.S)
+        if not mm:
+            return False, None
+        vv = valid_in(mm.group(1), mm.group(2))
+        return (True, "SET:IN:%s=%s" % (mm.group(1), vv)) if vv is not None else (False, None)
     m = re.match(r"^SET:([A-Z][A-Z0-9]*)=([0-9]+(?:\.[0-9]+)?)$", cmd)
     if not m:
         return False, None
@@ -2330,7 +2397,7 @@ def _lic_effective(con, acc, row):
         m = _master(con)
         if m and m != acc:
             eff.update(_cfg_row(con, m)[0])
-    eff.update({k: v for k, v in (ovr.get("a") or {}).items() if k in CFG_KEYS})
+    eff.update({k: v for k, v in (ovr.get("a") or {}).items() if k in CFG_KEYS or str(k).startswith("IN:")})   # v12.18
     for k, v in (ovr.get("c") or {}).items():
         perm = PERM_OF.get(k)
         if k in CFG_KEYS and perm and p.get(perm):
@@ -2617,12 +2684,20 @@ def _save_tick(con, acc, d):
                       "cd": int(n(cf.get("cd"), 0, 0, 3600)), "maxd": int(n(cf.get("maxd"), 0, 1, 1000)), "ml": int(n(cf.get("ml"), 0, 0, 20)),
                       "pause": int(n(cf.get("pause"), 0, 1, 1440)), "dl": n(cf.get("dl"), 1, 0, 50), "dt": n(cf.get("dt"), 1, 0, 100),
                       "tpm": int(n(cf.get("tpm"), 0, 0, 1)) if "tpm" in cf else None,   # v12.15
+                      "bon": (1 if n(cf.get("bon"), 0, 0, 1) else 0) if "bon" in cf else None,   # v12.16 (EA v70.4)
+                      "tron": (1 if n(cf.get("tron"), 0, 0, 1) else 0) if "tron" in cf else None,   # v12.17 (EA v70.5): TP RAAC
+                      "trst": n(cf.get("trst"), 0, 50, 95), "trlk": n(cf.get("trlk"), 0, 10, 90),
+                      "trstep": n(cf.get("trstep"), 2, 0.1, 50), "trmax": int(n(cf.get("trmax"), 0, 1, 10)),
+                      "bn": int(n(cf.get("bn"), 0, 2, 5)), "bent": int(n(cf.get("bent"), 0, 0, 1)), "bex": int(n(cf.get("bex"), 0, 0, 1)),
+                      "btgt": n(cf.get("btgt"), 2, 0, 10000), "bbe": n(cf.get("bbe"), 2, 0, 10000), "blp": int(n(cf.get("blp"), 0, 0, 1000000)),
                       "slm": int(n(cf.get("slm"), 0, 0, 1)), "spm": n(cf.get("spm"), 1, 0, 10), "tr": 1 if n(cf.get("tr"), 0, 0, 1) else 0}   # v12.14
     if out["st"] == "OPEN":
         out.update({"dir": "SELL" if str(a.get("dir")) == "SELL" else "BUY",
-                    "e": n(a.get("e"), dg, 0, 1e7), "vs": n(a.get("vs"), dg, 0, 1e7), "stg": int(n(a.get("stg"), 0, 0, 2)),
+                    "e": n(a.get("e"), dg, 0, 1e7), "vs": n(a.get("vs"), dg, 0, 1e7), "stg": int(n(a.get("stg"), 0, 0, 3)),
                     "fav": n(a.get("fav"), 2, -1e5, 1e5), "lot": n(a.get("lot"), 2, 0, 1e4), "pl": n(a.get("pl")),
                     "t0": int(n(a.get("t0"), 0, 0, 4e9)), "bsl": n(a.get("bsl"), dg, 0, 1e7), "btp": n(a.get("btp"), dg, 0, 1e7)})
+        if "rc" in a:   # v12.17 (EA v70.5): TP RAAC - raac-yada · masaafada TP-ga hadda ($)
+            out.update({"rc": int(n(a.get("rc"), 0, 0, 10)), "tpd": n(a.get("tpd"), 2, 0, 1000)})
     sq = str(a.get("seq") or "")[:50]                                   # v12.13 (EA v70.1)
     out["seq"] = "".join(ch for ch in sq if ch in "UDN")
     out["srv"] = int(n(a.get("srv"), 0, 0, 4e9))
@@ -2633,13 +2708,42 @@ def _save_tick(con, acc, d):
         if not isinstance(h, dict):
             continue
         hist.append({"t": int(n(h.get("t"), 0, 0, 4e9)), "d": 1 if n(h.get("d"), 0, -1, 1) > 0 else -1,
-                     "x": int(n(h.get("x"), 0, 0, 9)), "pl": n(h.get("pl"))})
+                     "x": int(n(h.get("x"), 0, 0, 12)), "pl": n(h.get("pl"))})
         if "k" in h:   # v12.14 (EA v70.2): peak · slippage · spread · SL broker
             hist[-1].update({"k": n(h.get("k"), 2, -1e5, 1e5), "s": n(h.get("s"), 2, -1e5, 1e5), "sp": n(h.get("sp"), 2, 0, 1e5),
                              "b": int(n(h.get("b"), 0, 0, 2))})   # 1 = SL broker · 2 = TP broker (v12.15)
+        hist[-1]["n"] = int(n(h.get("n"), 0, 0, 5))   # v12.16: lakabyada basket-ka (0 = hal trade)
     out["hist"] = hist
+    bk = a.get("bk")   # v12.16 (EA v70.4): basket-yada maanta + basket socda
+    if isinstance(bk, dict):
+        out["bk"] = {"n": int(n(bk.get("n"), 0, 0, 100000)), "hit": int(n(bk.get("hit"), 0, 0, 100000)), "pl": n(bk.get("pl"))}
+    bt = a.get("bkt")
+    if out["st"] == "OPEN" and isinstance(bt, dict):
+        lay = []
+        for L in (bt.get("lay") or [])[:5]:
+            if isinstance(L, dict):
+                lay.append({"e": n(L.get("e"), dg, 0, 1e7), "lot": n(L.get("lot"), 2, 0, 1e4), "pl": n(L.get("pl")), "t": int(n(L.get("t"), 0, 0, 4e9)),
+                            "rc": int(n(L.get("rc"), 0, 0, 10))})   # v12.17: TP RAAC lakabka
+        out["bkt"] = {"dir": "SELL" if str(bt.get("dir")) == "SELL" else "BUY", "pl": n(bt.get("pl")), "pk": n(bt.get("pk")),
+                      "sl": n(bt.get("sl"), dg, 0, 1e7), "be": 1 if n(bt.get("be"), 0, 0, 1) else 0, "t0": int(n(bt.get("t0"), 0, 0, 4e9)), "lay": lay}
     con.execute("INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
                 ("tick:" + acc, json.dumps(out, separators=(",", ":"), ensure_ascii=False)))
+
+
+def _save_inp(con, acc, a, d):
+    """v12.18 (EA v70.6): {"h": hash, "v": [qiimaha hadda], "b": [MT5 input]} -> kv inp:<acc>."""
+    if not isinstance(a, dict):
+        return
+    v, b = a.get("v"), a.get("b")
+    if not isinstance(v, list) or not isinstance(b, list) or len(v) != len(b) or len(v) > 1200:
+        return
+    ok = lambda x: isinstance(x, (int, float, bool)) or (isinstance(x, str) and len(x) <= 210)
+    if not all(ok(x) for x in v) or not all(ok(x) for x in b):
+        return
+    out = {"h": str(a.get("h") or "")[:16], "v": v, "b": b, "ts": time.time(),
+           "ver": str(d.get("ver") or "")[:12], "chart": str(d.get("chart") or "")[:40]}
+    con.execute("INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                ("inp:" + acc, json.dumps(out, separators=(",", ":"), ensure_ascii=False)))
 
 
 def _save_asia(con, acc, d):
@@ -2732,7 +2836,9 @@ def ea_update():
 
     now = time.time()
     d["_server_ts"] = now
+    inp = d.pop("inp", None)                             # v12.18 (EA v70.6): qiimaha input-yada -> kv gooni ah
     with db() as con:
+        _save_inp(con, acc, inp, d)
         con.execute(
             "INSERT INTO snapshots(account,bot,data,updated_at) VALUES(?,?,?,?)"
             " ON CONFLICT(account) DO UPDATE SET bot=excluded.bot,"
@@ -2822,6 +2928,8 @@ def _collapse_cmds(cmds):
         c = str(c)
         if c in ("START", "STOP"):
             key = "RUN"
+        elif c.startswith("SET:INDEL:"):                  # v12.18: IN / INDEL isla input -> kan dambe
+            key = "SET:IN:" + c[10:]
         elif c.startswith("SET:") and "=" in c:
             key = c.split("=", 1)[0]
         elif c.startswith("STRATEGY:"):
@@ -2847,6 +2955,11 @@ def _cfg_cmds(vals, rev):
     out = []
     for k in CFG_KEYS:
         if k in vals:
+            ok, c = valid_command("SET:%s=%s" % (k, vals[k]))
+            if ok:
+                out.append(c)
+    for k in sorted(vals):                                # v12.18: ⚙️ INPUT
+        if str(k).startswith("IN:"):
             ok, c = valid_command("SET:%s=%s" % (k, vals[k]))
             if ok:
                 out.append(c)
@@ -2901,8 +3014,14 @@ def api_config_save():
     raw = body.get("values") or {}
     if not isinstance(raw, dict):
         return jsonify(ok=False, error="values"), 400
+    uns = [str(x) for x in (body.get("unset") or []) if isinstance(x, str) and x.startswith("IN:") and x[3:] in INP_GEN][:600]   # v12.18
     clean, bad = {}, []
     for k, v in raw.items():
+        if str(k).startswith("IN:"):                      # v12.18: ⚙️ INPUT (magaca sidiisa)
+            vv = valid_in(str(k)[3:], v)
+            if vv is None:
+                bad.append(str(k)); continue
+            clean[str(k)] = vv; continue
         k = str(k).upper()
         if k not in CFG_KEYS:
             bad.append(k); continue
@@ -2920,12 +3039,16 @@ def api_config_save():
         if not keep:
             return jsonify(ok=False, error="Sitinkan admin-ka ayaa maamula."), 403
         clean = keep
+        uns = []
     with db() as con:
         lr = _lic_row(con, acc)
         if lr is not None:                                    # v12: macmiil (admin ama isaga) -> ovr
             ovr = _jload(lr["ovr"])
             side = "c" if lic is not None else "a"
-            part = dict(ovr.get(side) or {}); part.update(clean); ovr[side] = part
+            part = dict(ovr.get(side) or {}); part.update(clean)
+            for k in uns:                                 # v12.18
+                part.pop(k, None)
+            ovr[side] = part
             if side == "a":                                   # admin-ku wuu ka adkaadaa macmiilka
                 ovr["c"] = {k: v for k, v in (ovr.get("c") or {}).items() if k not in clean}
             con.execute("UPDATE licenses SET ovr=?, updated_at=? WHERE account=?", (json.dumps(ovr), now, acc))
@@ -2941,12 +3064,14 @@ def api_config_save():
             except ValueError:
                 merged = {}
         merged.update(clean)
+        for k in uns:                                     # v12.18: ↺ MT5-ka ku celi
+            merged.pop(k, None)
         rev = int(r["rev"]) + 1 if r else 1
         con.execute(
             "INSERT INTO ea_config(account,data,rev,updated_at) VALUES(?,?,?,?)"
             " ON CONFLICT(account) DO UPDATE SET data=excluded.data, rev=excluded.rev, updated_at=excluded.updated_at",
             (acc, json.dumps(merged), rev, now))
-        cmds = _cfg_cmds(clean, rev)
+        cmds = ["SET:INDEL:" + k[3:] for k in uns] + _cfg_cmds(clean, rev)   # v12.18
         con.insert_many_ignore("commands", ("account", "cmd", "by_account", "created_at"),
                                [(acc, c, u["account"], now) for c in cmds])
         nf = _propagate_master(con, u["account"]) if acc == _master(con) else 0   # v12
@@ -3278,6 +3403,7 @@ def api_state():
         bskr = con.execute("SELECT v FROM kv WHERE k=?", ("bsk:" + acc,)).fetchone()                       # v12.7
         asr = con.execute("SELECT v FROM kv WHERE k=?", ("asia:" + acc,)).fetchone()                       # v12.9
         tkr = con.execute("SELECT v FROM kv WHERE k=?", ("tick:" + acc,)).fetchone()                       # v12.12
+        inr = con.execute("SELECT v FROM kv WHERE k=?", ("inp:" + acc,)).fetchone()                        # v12.18
 
     data = json.loads(snap["data"]) if snap else {}
     age = (now - snap["updated_at"]) if snap else None
@@ -3297,6 +3423,9 @@ def api_state():
         if asia["age"] > ANALYSIS_TTL:
             asia = None
     online = (age is not None and age < STALE_SECONDS)
+    inp = _jload(inr["v"]) if inr else None                   # v12.18: ⚙️ INPUT (qiimaha EA-ga)
+    if isinstance(inp, dict):
+        inp["age"] = int(now - float(inp.get("ts") or 0))
 
     ct = []
     for r in closed:
@@ -3337,7 +3466,18 @@ def api_state():
         bsk=bsk,
         asia=asia,
         tick=tick,
+        inp=inp,
     )
+
+
+@app.get("/api/inp_schema")
+@login_required
+def api_inp_schema():
+    """v12.18: liiska input-yada EA-ga (magac · nooc · qayb · doorashooyin) -> app-ka foomka ayuu ka dhisaa."""
+    resp = make_response(INP_SCHEMA_JSON)
+    resp.headers["Content-Type"] = "application/json"
+    resp.headers["Cache-Control"] = "private, max-age=600"
+    return resp
 
 
 @app.get("/api/levels")
@@ -4382,6 +4522,65 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
   .bar .sb{display:none} }
 .pane{display:none}
 .pane.on{display:block}
+/* ---------- v12.18: Maamul (xeeladaha) · ⚙️ Input ---------- */
+.sttiles{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.stt{border:1px solid var(--line);border-radius:14px;padding:11px;background:#141413;min-width:0}
+.stt .h{display:flex;justify-content:space-between;align-items:center;gap:6px}.stt .h b{font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stt .sw{width:46px;height:24px;flex:0 0 auto}.stt .sw i{width:18px;height:18px}.stt .sw.on i{left:25px}
+.stt .m{font-size:11px;color:var(--ink3);margin-top:7px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.stp2{font-size:9.5px;font-weight:800;letter-spacing:.05em;padding:2px 7px;border-radius:999px;background:#22211f;color:var(--ink3)}
+.stp2.run{background:rgba(34,197,94,.14);color:#7fe0ab}.stp2.wt{background:rgba(240,192,112,.13);color:#f0c070}
+.stt .p{font-size:16px;font-weight:800;margin-top:6px;font-variant-numeric:tabular-nums}.stt .p.g{color:#7fe0ab}.stt .p.r{color:#f2a3a3}
+.stt .lnk{display:inline-block;margin-top:7px;font-size:11.5px;font-weight:700;color:var(--s1);cursor:pointer;background:none;border:none;padding:0;font-family:inherit}
+.stt.off .m,.stt.off .p{opacity:.55}.stsr{font-size:11px;font-weight:800;color:var(--ink2)}
+.fold{margin-bottom:12px;padding:0}.fold>summary{list-style:none;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px 16px;font-size:13.5px;font-weight:700}
+.fold>summary::-webkit-details-marker{display:none}.fold>summary small{color:var(--ink3);font-weight:500;font-size:11px}
+.fold>summary:after{content:"›";color:var(--ink3);font-size:18px;margin-left:auto}.fold[open]>summary:after{content:"⌄"}
+.fold>:not(summary){padding:0 16px 14px}.fold .card{border:none;background:none;padding:0;margin:0!important}
+.inph{position:sticky;top:0;z-index:6;background:var(--plane);padding:2px 0 8px}
+.insrch{display:flex;align-items:center;gap:8px;margin:0;background:#0f1013;border:1px solid var(--line);border-radius:12px;padding:0 12px}
+.insrch svg{width:17px;height:17px;stroke:var(--ink3);fill:none;stroke-width:2.2;flex:0 0 auto}
+.insrch input{flex:1;background:none;border:none;color:var(--ink);font:inherit;font-size:14px;padding:11px 0;outline:none;min-width:0}
+.incats{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+.incats button{font:inherit;font-size:12px;font-weight:700;color:var(--ink2);background:#161615;border:1px solid var(--line);border-radius:11px;padding:7px 10px;cursor:pointer}
+.incats button b{font-size:10.5px;color:var(--ink3);margin-left:3px}.incats button.on{background:var(--s1);border-color:var(--s1);color:#fff}.incats button.on b{color:rgba(255,255,255,.8)}
+.incats button.dt:after{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:#f0c070;margin-left:5px;vertical-align:2px}
+.insync{margin-top:8px;font-size:11.5px;color:#8fb59a;background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.25);border-radius:10px;padding:7px 10px;line-height:1.45}
+.insync.warn{color:#f0d9a0;background:rgba(240,192,112,.07);border-color:rgba(240,192,112,.3)}
+.incat{display:none}.incat.on{display:block}#pInput.srch .incat{display:block}
+.incard{margin-top:10px;padding:6px 14px}.incard>.grp:first-child{margin-top:8px}
+.ingen:empty{display:none}
+.inacc{border:1px solid var(--line);border-radius:14px;margin-top:9px;background:#161615;overflow:hidden}
+.inah{width:100%;display:flex;align-items:center;gap:10px;padding:12px;background:none;border:none;color:var(--ink);font:inherit;text-align:left;cursor:pointer}
+.inah .ic{width:28px;height:28px;border-radius:9px;background:#1d1d1b;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:13px;flex:0 0 auto}
+.inah .nm{flex:1;min-width:0;font-size:13.5px;font-weight:700;line-height:1.25}.inah .nm small{display:block;color:var(--ink3);font-size:11px;font-weight:500}
+.inct{font-size:11px;font-weight:800;padding:3px 8px;border-radius:7px;border:1px solid var(--line);color:var(--ink2)}
+.indot{width:7px;height:7px;border-radius:50%;background:#f0c070;box-shadow:0 0 6px #f0c070;display:none}.inacc.chg .indot{display:inline-block}
+.inah:after{content:"›";color:var(--ink3);font-size:18px}.inacc.open .inah:after{content:"⌄"}
+.inab{display:none;padding:0 12px 8px;border-top:1px solid var(--line)}.inacc.open .inab{display:block}
+.inrow{border-bottom:1px solid #222220}.inrow:last-child{border-bottom:none}
+.inrow .l{flex:1 1 auto;min-width:0;font-size:13.5px;line-height:1.3}.inrow .l small{display:block;margin-top:2px;word-break:break-word}
+.inrow .nmx{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10px;color:#6d6c66}
+.inrow .ctl{display:flex;align-items:center;gap:4px;margin-left:auto;flex:0 0 auto}
+.inrow input[type=number]{width:96px}
+.inrow select{max-width:150px;padding:8px;font-size:13.5px;font-weight:700;border-radius:10px;background:#0f1013;border:1px solid var(--line);color:var(--ink)}
+.inrow input[type=text]{width:132px;font-weight:600;font-size:13px}.inrow input[type=color]{width:56px;height:36px;padding:2px;border-radius:9px;background:#0f1013;border:1px solid var(--line)}
+.inrow.chg input,.inrow.chg select{border-color:#f0c070;color:#f0d9a0;box-shadow:0 0 0 3px rgba(240,192,112,.1)}
+.inrow.chg .sw{box-shadow:0 0 0 3px rgba(240,192,112,.35)}
+.inrow.pend input,.inrow.pend select{border-style:dashed;border-color:#c084fc;color:#e9d5ff}.inrow.pend .sw{box-shadow:0 0 0 3px rgba(192,132,252,.45)}
+.inrst{background:none;border:none;color:var(--ink3);font-size:16px;cursor:pointer;padding:4px 2px;visibility:hidden}.inrow.chg .inrst,.inrow.pend .inrst{visibility:visible}
+.inbdg{display:inline-block;font-size:9px;font-weight:800;padding:1px 5px;border-radius:5px;background:rgba(56,189,248,.14);color:#7cc8ff;margin-left:6px;vertical-align:1px}
+.inlk{opacity:.6}.inlkv{font-size:11px;font-weight:800;color:var(--ink3);border:1px solid var(--line);border-radius:7px;padding:3px 7px}
+.inoff .ctl{opacity:.45;pointer-events:none}
+.insave{position:sticky;bottom:calc(66px + env(safe-area-inset-bottom));z-index:5;margin-top:14px;background:rgba(18,18,17,.97);border:1px solid var(--line);border-radius:16px;padding:10px 12px;backdrop-filter:blur(8px)}
+.insave .acts{margin-top:0!important}.insave .note{margin-top:6px;font-size:11.5px;line-height:1.35}
+.bsub.fold{cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.bsub.fold:after{content:"⌄";font-size:14px;color:#8a7440}.bsub.fold.shut:after{content:"›"}
+.bsub.fold.shut+.bsec{display:none}#pInput.srch .bsec{display:block!important}
+.inmain .grp>.gh{cursor:pointer;display:flex;justify-content:space-between;align-items:center}
+.inmain .grp>.gh:after{content:"⌄";color:var(--ink3)}.inmain .grp.shut>.gh:after{content:"›"}
+.inmain .grp.shut>:not(.gh){display:none}#pInput.srch .inmain .grp>*{display:revert}
+.inhid{display:none!important}
 
 /* ---------- v10: kaadhka maamulka (qaybo) ---------- */
 .grp{border:1px solid var(--line);border-radius:14px;padding:4px 12px 6px;margin:12px 0;background:#161615}
@@ -4473,6 +4672,23 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 .tkhr2{border-bottom:1px solid #1d2127;padding:6px 2px}.tkhr2:last-child{border-bottom:none}
 .tkhr2 .tkhr{border:none;padding:0 0 2px}
 .tkhr2 .x{font-size:10px;color:#7a818b;margin-left:52px}.tkhr2 .x b{color:#c7ccd4;font-weight:700}.tkhr2 .x b.r{color:#f2a3a3}
+/* v12.16: TICK BASKET card */
+.tkbk{margin-top:12px;border-radius:14px;padding:11px 12px;background:linear-gradient(180deg,rgba(18,40,26,.85),rgba(14,22,17,.9));border:1px solid rgba(47,107,63,.8)}
+.tkbk .h{display:flex;justify-content:space-between;align-items:center;gap:8px}.tkbk .h b{font-size:14px;font-weight:900}.tkbk .h span{font-size:15.5px;font-weight:900}
+.tkbk .h .pos{color:#7fe0ab}.tkbk .h .neg{color:#f2a3a3}
+.tkbk .tg{margin:10px 0 4px}.tkbk .tgb{height:9px;border-radius:6px;background:#1b1f25;position:relative;overflow:hidden}.tkbk .tgb i{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,#1f8a4c,#22c55e);border-radius:6px}
+.tkbk .tgl{display:flex;justify-content:space-between;font-size:10.5px;color:#93a39a;margin-top:4px}.tkbk .tgl b{color:#7fe0ab}.tkbk .tgl .y{color:#f0cf86}
+.tkly{display:grid;grid-template-columns:28px 62px 1fr auto;gap:6px;align-items:center;font-size:11.5px;padding:6px 2px;border-bottom:1px solid rgba(47,107,63,.35);color:#c7ccd4}
+.tkly:last-child{border-bottom:none}.tkly .n{font-weight:900;color:#f0cf86}.tkly .w{color:#6f7a73}.tkly b{font-variant-numeric:tabular-nums}.tkly .g{color:#7fe0ab}.tkly .r{color:#f2a3a3}
+.tkly.wait{opacity:.5}
+/* v12.17: TP RAAC */
+.tktpr{margin:8px 0 4px;padding:2px 10px 6px;border:1px solid rgba(127,224,171,.28);border-radius:12px;background:rgba(34,197,94,.05)}
+.tknew{display:inline-block;margin:0 6px;padding:1px 6px;border-radius:6px;background:#1f8a4c;color:#eafff2;font-size:9.5px;font-weight:900;letter-spacing:.4px;vertical-align:1px}
+.tkrc{color:#7fe0ab;font-weight:800}
+.tkbk .sl{display:flex;justify-content:space-between;gap:6px;flex-wrap:wrap;font-size:10.5px;color:#93a39a;margin-top:8px}.tkbk .sl .y{color:#f0cf86}.tkbk .sl .g{color:#7fe0ab}
+.tkbd4{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+.tkbd4 div{background:rgba(201,154,63,.06);border:1px solid rgba(201,154,63,.3);border-radius:11px;padding:7px 5px;text-align:center;font-size:9.5px;letter-spacing:.06em;color:#8f96a0;font-weight:700;text-transform:uppercase}
+.tkbd4 b{display:block;font-size:15px;color:var(--ink);letter-spacing:0;text-transform:none}.tkbd4 b.g{color:#7fe0ab}.tkbd4 b.r{color:#f2a3a3}
 .tkterm{background:#000;border:1px solid #2a2a2a;border-radius:10px;padding:10px 12px;font-family:Consolas,"DejaVu Sans Mono",Menlo,monospace;font-size:11.4px;line-height:1.6;margin-top:12px;white-space:pre-wrap;word-break:break-word}
 .tkterm .y{color:#ffd700}.tkterm .s{color:#c0c0c0}.tkterm .lg{color:#32cd32}.tkterm .o{color:#ffa500}.tkterm .b{color:#00bfff}.tkterm .w{color:#fff}.tkterm .r{color:#ff6347}.tkterm .d{color:#8a8a8a}.tkterm .gr{color:#808080}
 .aswarn{color:#f0d9a0!important;background:#1a1609;border:1px solid #6b5320;border-radius:10px;padding:8px 10px!important;margin:6px 0}
@@ -4926,6 +5142,14 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
         <div class="tkbarl" id="tkLg"></div>
         <div class="tkst" id="tkSteps"></div>
       </div>
+      <div class="tkbk" id="tkBsk" hidden>
+        <div class="h"><b id="tkBkH">—</b><span id="tkBkPL">—</span></div>
+        <div class="tktrs" id="tkBkS">—</div>
+        <div class="tg" id="tkBkTg"><div class="tgb"><i id="tkBkTgI"></i></div><div class="tgl"><span id="tkBkTgL">—</span><span id="tkBkTgR">—</span></div></div>
+        <div id="tkBkL"></div>
+        <div class="sl" id="tkBkSl"></div>
+        <div class="tkst" id="tkBkSt"></div>
+      </div>
       <div class="tksec" id="tkTTh">TICK TRACKER</div>
       <div class="tktt"><div class="tkdots" id="tkDots"></div><div class="tkttn" id="tkTTn">—</div></div>
       <div class="tkmv" id="tkMv"><div class="tkmvb"><i id="tkMvI"></i><em></em></div><div class="tkmvl"><span id="tkMvL">—</span><span id="tkMvR">—</span></div></div>
@@ -4940,6 +5164,10 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
       <div class="tkses" id="tkSes"><div class="tksesb"><i id="tkSesI"></i><em id="tkSesE"></em></div>
         <div class="tksesl"><span id="tkSesA">—</span><span class="m" id="tkSesM">—</span><span id="tkSesB">—</span></div></div>
       <div class="tkchips" id="tkChips"></div>
+      <div id="tkBkD" hidden>
+        <div class="tksec">BASKET-YADA MAANTA</div>
+        <div class="tkbd4"><div><b id="tkBkDN">—</b>basket</div><div><b id="tkBkDH">—</b>bartilmaameed</div><div><b id="tkBkDP">—</b>basket $</div></div>
+      </div>
       <div id="tkQA" hidden>
         <div class="tksec">TAYADA BIXITAANKA</div>
         <div class="tkqa"><div><b id="tkAPK">—</b>peak (celcelis)</div><div><b id="tkASL">—</b>slippage</div><div><b id="tkASP">—</b>spread</div></div>
@@ -4982,36 +5210,6 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
       <div class="bidle" id="bskIdle">—</div>
       <div class="bday"><span>Maanta · dahab</span><b id="bskDay">—</b></div>
     </div>
-
-    {% if can_control %}
-    <div class="card" style="margin-bottom:16px">
-      <p class="sec-t">Amarrada</p>
-      <div class="acts">
-        <button class="act go" data-cmd="START" data-perm="run">
-          <svg viewBox="0 0 24 24"><path d="m6 4 14 8-14 8Z"/></svg>SHID</button>
-        <button class="act stop" data-cmd="STOP" data-perm="run">
-          <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>DAMI</button>
-        <button class="act warn" data-cmd="CLOSE_ALL" data-perm="close">
-          <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>XIDH</button>
-      </div>
-      <div class="acts" style="margin-top:10px">
-        <button class="act calm" data-cmd="CLOSE_PROFIT" data-perm="close" style="grid-column:span 3;flex-direction:row;gap:9px;padding:13px">
-          <svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 7-7"/><path d="M14 8h6v6"/></svg>XIDH FAA'IIDO</button>
-      </div>
-      <div class="note" id="cmdNote">Amarku wuxuu gaadhayaa EA-da 3–5 ilbiriqsi gudahood.</div>
-    </div>
-
-    <!-- v5: xidhitaanka faa'iidada -->
-    <div class="card" style="margin-bottom:16px">
-      <h2>Faa'iidada la xidhay <span class="cnt" id="cLock"></span></h2>
-      <div class="scroll"><table id="tl">
-        <thead><tr><th>Waqti</th><th>Symbol</th><th style="text-align:right">Faa'iido</th>
-          <th style="text-align:right">Xidhay</th></tr></thead>
-        <tbody><tr><td colspan="4" class="empty">Weli wax lama xidhin.</td></tr></tbody>
-      </table></div>
-      <div class="note" id="lockSum" style="margin-top:10px">—</div>
-    </div>
-    {% endif %}
 
     <div class="card"><p class="sec-t">Xogta account-ka</p>
       <div class="note" id="meta" style="margin:0">—</div></div>
@@ -5066,66 +5264,209 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
   <!-- ============ MAAMUL (v10.1: tab gooni ah) ============ -->
   {% if can_control %}
   <section class="pane" id="pMaamul">
-    <!-- v5: MAAMULKA (SL / TP / LOT / STEP-LOCK) -->
+    <!-- v12.18: MAAMUL = amarrada · xeeladaha · khatarta (gaaban). Sitinka kale oo dhan -> ⚙️ Input -->
+    <div class="card" style="margin-bottom:16px">
+      <p class="sec-t">Amarrada</p>
+      <div class="acts">
+        <button class="act go" data-cmd="START" data-perm="run">
+          <svg viewBox="0 0 24 24"><path d="m6 4 14 8-14 8Z"/></svg>SHID</button>
+        <button class="act stop" data-cmd="STOP" data-perm="run">
+          <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>DAMI</button>
+        <button class="act warn" data-cmd="CLOSE_ALL" data-perm="close">
+          <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>XIDH</button>
+      </div>
+      <div class="acts" style="margin-top:10px">
+        <button class="act calm" data-cmd="CLOSE_PROFIT" data-perm="close" style="grid-column:span 3;flex-direction:row;gap:9px;padding:13px">
+          <svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 7-7"/><path d="M14 8h6v6"/></svg>XIDH FAA'IIDO</button>
+      </div>
+      <div class="note" id="cmdNote">Amarku wuxuu gaadhayaa EA-da 3–5 ilbiriqsi gudahood.</div>
+    </div>
+
+    <div class="card" id="stCard" style="margin-bottom:16px">
+      <p class="sec-t">Xeeladaha</p>
+      <div class="sttiles">
+        <div class="stt" data-k="TICK"><div class="h"><b>⚡ TICK</b><button class="sw stsw" type="button" data-sw="mTK" aria-label="TICK SCALPER"><i></i></button></div>
+          <div class="m"><span class="stp2" id="stTkS">—</span><span id="stTkN"></span></div><div class="p" id="stTkP">—</div><button type="button" class="lnk" data-go="TICK">⚙️ Input › TICK</button></div>
+        <div class="stt" data-k="GOLD"><div class="h"><b>🥇 GOLD</b><button class="sw stsw" type="button" data-sw="mBSK" aria-label="GOLD BASKET"><i></i></button></div>
+          <div class="m"><span class="stp2" id="stGdS">—</span></div><div class="p" id="stGdP">—</div><button type="button" class="lnk" data-go="GOLD">⚙️ Input › GOLD</button></div>
+        <div class="stt" data-k="ASIA"><div class="h"><b>🌅 ASIA</b><button class="sw stsw" type="button" data-sw="mASIA" aria-label="ASIA BREAKOUT"><i></i></button></div>
+          <div class="m"><span class="stp2" id="stAsS">—</span></div><div class="p" id="stAsP">—</div><button type="button" class="lnk" data-go="ASIA">⚙️ Input › ASIA</button></div>
+        <div class="stt" data-k="MAIN"><div class="h"><b>🎯 MAIN</b><span class="stsr" id="stMnN">—</span></div>
+          <div class="m"><span class="stp2" id="stMnS">—</span></div><div class="p" id="stMnP">—</div><button type="button" class="lnk" data-go="MAIN">⚙️ Input › MAIN</button></div>
+      </div>
+      <div class="note">Shid / dami → <b>KAYDI &amp; DIR</b> (hoose). Sitin kasta oo kale → <b>⚙️ Input</b>.</div>
+    </div>
     <div class="card" id="mCard" style="margin-bottom:16px">
-      <p class="sec-t">Maamulka bot-ka</p>
+      <p class="sec-t">Khatarta <small style="text-transform:none;letter-spacing:0;color:var(--ink3);font-weight:500">· dhammaan xeeladaha</small></p>
       <div class="savebar" id="mSave"><span class="dt"></span>—</div>
       {% if lic %}<div class="lockband" id="mLockBand"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Waxa quful ah <b>admin-ka ayaa maamula</b> — waad arki kartaa oo keliya.</span></div>{% endif %}
 
-      <div class="grp"><div class="gh">1 · KHATARTA &amp; LOT</div>
         <div class="frow"><span>Risk trade kasta <small>(lot-ka auto ayuu go'aamiyaa)</small></span><span><input id="mRISK" type="number" min="0.01" max="10" step="0.05"> <i>%</i></span></div>
         <div class="frow"><span>Lot go'an <small>(0 = auto · risk %)</small></span><span><input id="mLOT" type="number" min="0" max="100" step="0.01"> <i>lot</i></span></div>
         <div class="frow"><span>Khasaaraha maalinlaha <small>(kadib wuu joogsadaa maanta)</small></span><span><input id="mDLOSS" type="number" min="0" max="50" step="0.5"> <i>%</i></span></div>
         <div class="frow"><span>Drawdown ugu badan <small>(emergency stop)</small></span><span><input id="mMAXDD" type="number" min="0" max="100" step="1"> <i>%</i></span></div>
+      
+      <div class="acts" style="margin-top:12px;grid-template-columns:1fr">
+        <button class="act go" id="mSend2" type="button" style="flex-direction:row;gap:9px;padding:14px">KAYDI &amp; DIR</button>
       </div>
+      <div class="note" id="mNote2">—</div>
+    </div>
+    <details class="card fold" id="fdLock"><summary><span>💰 Faa'iidada la xidhay <span class="cnt" id="cLock"></span></span><small>step-lock · BE</small></summary>
+    <div>
+      
+      <div class="scroll"><table id="tl">
+        <thead><tr><th>Waqti</th><th>Symbol</th><th style="text-align:right">Faa'iido</th>
+          <th style="text-align:right">Xidhay</th></tr></thead>
+        <tbody><tr><td colspan="4" class="empty">Weli wax lama xidhin.</td></tr></tbody>
+      </table></div>
+      <div class="note" id="lockSum" style="margin-top:10px">—</div>
+    </div>
+    </details>
+    <details class="card fold" id="fdAcc"><summary><span>👤 Account · furaha bot-ka</span><small>xogta account-ka</small></summary><div id="fdAccB"></div></details>
+    <details class="card fold" id="fdMx"><summary><span>🎨 Muuqaalka</span><small>midabka · Colour Matrix</small></summary><div id="fdMxB"></div></details>
+  </section>
 
-      <div class="grp"><div class="gh">2 · XEELADDA</div>
-        <div class="frow frow-col" id="rSTRAT"><div class="sg3" id="mSTRAT" role="radiogroup" aria-label="Xeeladda">
-          <button type="button" data-s="0" role="radio">SR/SD<small>zone S&amp;D</small></button>
-          <button type="button" data-s="1" role="radio">SMC<small>Order Block</small></button>
-          <button type="button" data-s="2" role="radio">LABADA<small>2-da</small></button>
+  <!-- ============ v12.18: ⚙️ INPUT (tab cusub · Chart-kii meeshiisa) ============ -->
+  <section class="pane" id="pInput">
+    {% if lic %}<div class="lockband" id="mLockBand2"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Waxa quful ah <b>admin-ka ayaa maamula</b> — waad arki kartaa oo keliya.</span></div>{% endif %}
+    <div class="inph">
+      <label class="insrch"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="inQ" type="search" placeholder="Raadi input… (trailing, session, RR)" autocomplete="off" aria-label="Raadi input"></label>
+      <div class="incats" id="inCats" role="tablist">
+        <button type="button" data-c="TICK">⚡ TICK <b></b></button><button type="button" data-c="GOLD">🥇 GOLD <b></b></button><button type="button" data-c="ASIA">🌅 ASIA <b></b></button>
+        <button type="button" data-c="MAIN">🎯 MAIN <b></b></button><button type="button" data-c="PROT">🛡 Ilaalin <b></b></button><button type="button" data-c="FILT">🕐 Waqti &amp; Filter <b></b></button><button type="button" data-c="SYS">📨 Nidaam <b></b></button>
+      </div>
+      <div class="insync" id="inSync">—</div>
+    </div>
+    <div class="incat" data-c="TICK"><div class="card incard">
+      <!-- v12.12: ⚡ TICK SCALPER (EA v70.0) -->
+      <div class="grp bskg" id="tkGrp">
+        <div class="gh bskgh"><span class="gold"><i class="coin"></i>⚡ TICK SCALPER <small>XAUUSD</small></span><button class="sw" id="mTK" type="button" aria-label="TICK SCALPER"><i></i></button></div>
+        <div class="sltph">Momentum scalper: tick kasta ayuu akhriyaa → marka tick-yadu hal jiho si degdeg ah u wada dhaqaaqaan ayuu galaa → <b>virtual SL / TP · break-even · trailing</b> (broker-ka lama tuso) + SL adag ilaalin ah. <b>EA v70.0+</b></div>
+        <div class="frow"><span>TICK oo keliya <small>main · basket · asia XAUUSD ha furin</small></span><span><button class="sw on" id="mTKONLY" type="button" aria-label="TICK oo keliya"><i></i></button></span></div>
+        <div class="bsub">1 · GELITAAN · TICK TRACKER</div>
+        <div class="frow"><span>Tick-yada (W) <small>isbeddelada qiimaha la eegayo · 3 – 50</small></span><span class="stp"><button type="button" id="mTKWm" aria-label="Ka yaree">−</button><b id="mTKW">8</b><button type="button" id="mTKWp" aria-label="Ku dar">+</button></span></div>
+        <div class="frow"><span>Jiho isku mid (K) <small>W ka mid · 5 / 8 = momentum</small></span><span class="stp"><button type="button" id="mTKKm" aria-label="Ka yaree">−</button><b id="mTKK">5</b><button type="button" id="mTKKp" aria-label="Ku dar">+</button></span></div>
+        <div class="frow"><span>Dhaqdhaqaaq ugu yar <small>window-ka gudihiisa</small></span><span><input id="mTKMV" type="number" min="0" max="20" step="0.05" value="0.4"> <i>$</i></span></div>
+        <div class="frow"><span>Xawaare <small>window ≤ X ilbiriqsi · 0 = off</small></span><span><input id="mTKSEC" type="number" min="0" max="300" step="1" value="10"> <i>s</i></span></div>
+        <div class="frow"><span>Filter spread <small>dhaqdhaqaaq ≥ X × spread · 0 = off · EA v70.2+</small></span><span><input id="mTKSPM" type="number" min="0" max="10" step="0.5" value="3"> <i>×</i></span></div>
+        <div class="frow"><span>Filter trend <small>EMA50 M5 · BUY kor oo keliya / SELL hoos</small></span><span><button class="sw" id="mTKTR" type="button" aria-label="Filter trend"><i></i></button></span></div>
+        <div class="bsub">2 · LOT</div>
+        <div class="frow frow-col" id="rTKLM"><div class="seg" id="mTKLM" role="radiogroup" aria-label="Lot">
+          <button type="button" data-v="0" role="radio">GO'AN</button>
+          <button type="button" data-v="1" role="radio">RISK %</button>
         </div></div>
-        <div class="frow"><span>Sniper <small>(CHoCH M5 gudaha zone / OB)</small></span><span><button class="sw" id="mSNIPER" type="button" aria-label="Sniper"><i></i></button></span></div>
-        <!-- v12.8 (EA v69.6): heerka zone-ka -->
-        <div class="frow"><span>Heerka zone-ka <small>inta zone ee la aqbalayo</small></span></div>
-        <div class="frow frow-col" id="rSDPROF"><div class="sg3" id="mSDPROF" role="radiogroup" aria-label="Heerka zone-ka">
-          <button type="button" data-v="0" role="radio">TAYO<small>adag · yar</small></button>
-          <button type="button" data-v="1" role="radio">DHEXE<small>isku dheelli</small></button>
-          <button type="button" data-v="2" role="radio">BADAN<small>trade badan</small></button>
+        <div class="frow" id="rTKLOT"><span>Lot go'an</span><span><input id="mTKLOT" type="number" min="0.01" max="100" step="0.01" value="0.01"> <i>lot</i></span></div>
+        <div class="frow" id="rTKRISK"><span>Risk trade kasta <small>% balance ÷ virtual SL</small></span><span><input id="mTKRISK" type="number" min="0.01" max="5" step="0.05" value="0.25"> <i>%</i></span></div>
+        <div class="bsub">3 · BIXITAAN</div>
+        <div class="frow frow-col" id="rTKSLM"><span style="margin-bottom:6px">Stop Loss <small>halka SL-ku ku jiro · EA v70.2+</small></span><div class="seg" id="mTKSLM" role="radiogroup" aria-label="Stop Loss">
+          <button type="button" data-v="0" role="radio">VIRTUAL<small style="display:block;font-size:10px;opacity:.8">bot-ka ayaa xidha</small></button>
+          <button type="button" data-v="1" role="radio">BROKER<small style="display:block;font-size:10px;opacity:.8">server-ka ayaa xidha</small></button>
         </div></div>
-        <table class="sdtbl" id="sdTbl"><tr><th></th><th data-c="0">TAYO</th><th data-c="1">DHEXE</th><th data-c="2">BADAN</th></tr>
-          <tr><td>Impulse ugu yar</td><td data-c="0">25p</td><td data-c="1">20p</td><td data-c="2">15p</td></tr>
-          <tr><td>BOS khasab</td><td data-c="0">✓</td><td data-c="1">✓</td><td data-c="2">✕</td></tr>
-          <tr><td>Taabasho (saac)</td><td data-c="0">6</td><td data-c="1">8</td><td data-c="2">12</td></tr>
-          <tr><td>Gelitaan ≤</td><td data-c="0">8p</td><td data-c="1">10p</td><td data-c="2">12p</td></tr></table>
-        <div class="sltph" id="mSDPROFHint">—</div>
-        <div class="frow"><span>Trade maalintii <small>(SR + SMC wadaag · chart-yada oo dhan)</small></span><span class="stp"><button type="button" id="mSNDAYm" aria-label="Ka yaree">−</button><b id="mSNDAY">3</b><button type="button" id="mSNDAYp" aria-label="Ku dar">+</button></span></div>
-        <div class="frow"><span>EMA filter <small>(EMA50 H1 + EMA200 H4 · RANGE → ma ganacsado)</small></span><span><button class="sw" id="mEMAF" type="button" aria-label="EMA filter"><i></i></button></span></div>
-        <div class="frow frow-col" id="rEMA"><div class="echip" id="emaChip" hidden><i></i><span>EMA</span></div></div>
-        <div class="frow"><span>★ ugu yar</span><span><span class="seg seg-s" id="mSTARS" role="radiogroup" aria-label="★ ugu yar"><button type="button" data-v="1" role="radio">★</button><button type="button" data-v="2" role="radio">★★</button><button type="button" data-v="3" role="radio">★★★</button></span></span></div>
-        <div class="frow"><span>Lot-ka ★★ <small>(★★★ = 100%)</small></span><span><input id="mLOT2" type="number" min="10" max="100" step="5"> <i>%</i></span></div>
-        <div class="frow"><span>Filtarka wararka <small>(jooji warka ka hor/kadib)</small></span><span><button class="sw" id="mNEWS" type="button" aria-label="Filtarka wararka"><i></i></button></span></div>
-      </div>
-
-      <div class="grp"><div class="gh">3 · SL / TP (SNIPER)</div>
-        <div class="sltph"><b>SL</b> = zone-ka / OB-ga gadaashiisa · <b>TP</b> = SL × RR. Pip go'an ma jiro.</div>
-        <div class="frow"><span>RR <small>(TP = SL × …)</small></span><span><input id="mSNRR" type="number" min="1" max="10" step="0.5"> <i>R</i></span></div>
-        <div class="frow"><span>SL ugu weyn <small>(SR iyo SMC · ka weyn → trade ma furmo)</small></span><span><input id="mSNSLMAX" type="number" min="0" max="500" step="1"> <i>pip</i></span></div>
-      </div>
-
-      <div class="grp"><div class="gh">4 · ILAALINTA FAA'IIDADA</div>
-        <div class="seg" id="mPROT" role="radiogroup" aria-label="Ilaalinta faa'iidada">
-          <button type="button" data-p="0" role="radio">DAMMAN</button>
-          <button type="button" data-p="1" role="radio">BREAK-EVEN</button>
-          <button type="button" data-p="2" role="radio">TALLAABO</button>
+        <div class="sltph" id="mTKSLMHint">—</div>
+        <div class="frow frow-col" id="rTKTPM" style="margin-top:8px"><span style="margin-bottom:6px">Take Profit <small>halka TP-gu ku jiro · EA v70.3+</small></span><div class="seg" id="mTKTPM" role="radiogroup" aria-label="Take Profit">
+          <button type="button" data-v="0" role="radio">VIRTUAL<small style="display:block;font-size:10px;opacity:.8">bot-ka ayaa xidha</small></button>
+          <button type="button" data-v="1" role="radio">BROKER<small style="display:block;font-size:10px;opacity:.8">server-ka ayaa xidha</small></button>
+        </div></div>
+        <div class="sltph" id="mTKTPMHint">—</div>
+        <div class="frow"><span>Virtual SL</span><span><input id="mTKVSL" type="number" min="0.1" max="100" step="0.1" value="2.5"> <i>$</i></span></div>
+        <div class="frow"><span>Virtual TP <small>0 = trailing oo keliya</small></span><span><input id="mTKVTP" type="number" min="0" max="100" step="0.1" value="1.5"> <i>$</i></span></div>
+        <div id="tkTprSec" class="tktpr">
+        <div class="frow" id="rTKTRON"><span>TP RAAC <b class="tknew">CUSUB</b><small>TP u dhow → TP hore u rar + SL quful · EA v70.5+</small></span><span><button class="sw" id="mTKTRON" type="button" aria-label="TP RAAC"><i></i></button></span></div>
+        <div id="tkTprOpts">
+        <div class="frow"><span>Bilow <small>faa'iido ≥ X% TP-ga</small></span><span><input id="mTKTRST" type="number" min="50" max="95" step="5" value="80"> <i>%</i></span></div>
+        <div class="frow"><span>Qufulka SL <small>SL = X% TP-ga (faa'iido)</small></span><span><input id="mTKTRLK" type="number" min="10" max="90" step="5" value="70"> <i>%</i></span></div>
+        <div class="frow"><span>TP u dheeree <small>raac kasta</small></span><span><input id="mTKTRSTEP" type="number" min="0.1" max="50" step="0.1" value="1"> <i>$</i></span></div>
+        <div class="frow"><span>Raac ugu badan <small>jeer</small></span><span><input id="mTKTRMAX" type="number" min="1" max="10" step="1" value="3"></span></div>
         </div>
-        <div class="sltph" id="mPROTHint">—</div>
-        <div class="frow" id="rSTEPSTART"><span>Bilowga <small>(faa'iidada loo baahan yahay)</small></span><span><input id="mSTEPSTART" type="number" min="1" max="5000" step="1"> <i>pip</i></span></div>
-        <div class="frow" id="rSTEP"><span>Tallaabo kasta <small>(TALLAABO oo keliya)</small></span><span><input id="mSTEP" type="number" min="1" max="5000" step="1"> <i>pip</i></span></div>
+        <div class="sltph" id="mTKTRHint">—</div>
+        </div>
+        <div class="frow"><span>Break-even <small>faa'iido $X → SL = entry + lock · 0 = off</small></span><span><input id="mTKBE" type="number" min="0" max="100" step="0.05" value="0.6"> <i>$</i></span></div>
+        <div class="frow"><span>Break-even lock</span><span><input id="mTKBEL" type="number" min="0" max="50" step="0.05" value="0.1"> <i>$</i></span></div>
+        <div class="frow"><span>Trailing bilow <small>0 = off</small></span><span><input id="mTKTRS" type="number" min="0" max="100" step="0.1" value="1"> <i>$</i></span></div>
+        <div class="frow"><span>Trailing masaafo</span><span><input id="mTKTRD" type="number" min="0.05" max="50" step="0.05" value="0.5"> <i>$</i></span></div>
+        <div class="frow"><span>Waqtiga ugu dheer <small>trade → xidh · 0 = off</small></span><span><input id="mTKHOLD" type="number" min="0" max="86400" step="30" value="900"> <i>s</i></span></div>
+        <div class="bsub">4 · 🔒 ILAALIN</div>
+        <div class="frow" id="rTKHARD"><span>SL adag (broker) <small id="mTKHARDs">internet go'a · ugu yaraan VSL + $1</small></span><span><input id="mTKHARD" type="number" min="0.5" max="200" step="0.5" value="6"> <i>$</i></span></div>
+        <div class="frow"><span>Saacadaha (server) <small>bilow → dhammaad</small></span><span><input id="mTKHS" type="number" min="0" max="23" step="1" value="1" style="width:56px"> <i>→</i> <input id="mTKHE" type="number" min="1" max="24" step="1" value="22" style="width:56px"></span></div>
+        <div class="frow"><span>Spread ugu badan <small>sent · 35 = $0.35</small></span><span><input id="mTKSPR" type="number" min="5" max="500" step="1" value="35"> <i>¢</i></span></div>
+        <div class="frow"><span>Cooldown <small>kadib trade kasta</small></span><span><input id="mTKCD" type="number" min="0" max="3600" step="5" value="20"> <i>s</i></span></div>
+        <div class="frow"><span>Trade maalintii</span><span><input id="mTKMAXD" type="number" min="1" max="1000" step="1" value="60"></span></div>
+        <div class="frow"><span>Khasaare isku xiga → hakad <small>0 = off</small></span><span><input id="mTKML" type="number" min="0" max="20" step="1" value="4"> <i>→</i> <input id="mTKPAUSE" type="number" min="1" max="1440" step="5" value="60" style="width:64px"> <i>daq</i></span></div>
+        <div class="frow"><span>Khasaaraha maalinlaha <small>% balance → maanta jooji · 0 = off</small></span><span><input id="mTKDL" type="number" min="0" max="50" step="0.5" value="2"> <i>%</i></span></div>
+        <div class="frow"><span>Bartilmaameed maalinle <small>% balance → maanta jooji · 0 = off</small></span><span><input id="mTKDT" type="number" min="0" max="100" step="0.5" value="0"> <i>%</i></span></div>
+        <div id="tkBskSec">
+        <div class="bsub">5 · BASKET <small style="font-weight:600;letter-spacing:0;opacity:.75">EA v70.4+</small></div>
+        <div class="frow frow-col" id="rTKBON"><div class="seg" id="mTKBON" role="radiogroup" aria-label="Basket">
+          <button type="button" data-v="0" role="radio">HAL TRADE</button>
+          <button type="button" data-v="1" role="radio">BASKET</button>
+        </div></div>
+        <div id="tkBskOpts">
+        <div class="frow"><span>Trade-yada basket-ka <small>2 – 5</small></span><span class="stp"><button type="button" id="mTKBNm" aria-label="Ka yaree">−</button><b id="mTKBN">3</b><button type="button" id="mTKBNp" aria-label="Ku dar">+</button></span></div>
+        <div class="frow frow-col" id="rTKBENT"><span style="margin-bottom:6px">Lakabyada <small>sida lakab cusub loo furo</small></span><div class="seg" id="mTKBENT" role="radiogroup" aria-label="Lakabyada">
+          <button type="button" data-v="0" role="radio">ISKU MAR</button>
+          <button type="button" data-v="1" role="radio">SIGNAL KASTA</button>
+        </div></div>
+        <div class="frow frow-col" id="rTKBEX"><span style="margin-bottom:6px">Xidhitaanka</span><div class="seg" id="mTKBEX" role="radiogroup" aria-label="Xidhitaanka">
+          <button type="button" data-v="0" role="radio">TP KASTA</button>
+          <button type="button" data-v="1" role="radio">WADAJIR $</button>
+        </div></div>
+        <div class="frow" id="rTKBTGT"><span>Bartilmaameed basket <small>faa'iidada guud → xidh dhammaan</small></span><span><input id="mTKBTGT" type="number" min="0" max="10000" step="0.5" value="3"> <i>$</i></span></div>
+        <div class="frow"><span>Break-even basket <small>faa'iido $X → SL wadaag = celceliska entry · 0 = off</small></span><span><input id="mTKBBE" type="number" min="0" max="10000" step="0.5" value="1.5"> <i>$</i></span></div>
+        <div class="frow"><span>Lot-ka balance-ka la kora <small>0.01 lot $X kasta · 0 = off</small></span><span><input id="mTKBLP" type="number" min="0" max="1000000" step="50" value="0"> <i>$</i></span></div>
+        </div>
+        <div class="sltph" id="mTKBHint">—</div>
+        </div>
+        <div class="sltph" id="mTKHint">—</div>
       </div>
+    </div><div class="ingen" data-c="TICK"></div></div>
+    <div class="incat" data-c="GOLD"><div class="card incard">
+      <!-- v12.7: GOLD BASKET (EA v69.0) -->
+      <div class="grp bskg" id="bskGrp">
+        <div class="gh bskgh"><span class="gold"><i class="coin"></i>🥇 GOLD BASKET <small>EMA · XAUUSD</small></span><button class="sw" id="mBSK" type="button" aria-label="GOLD BASKET"><i></i></button></div>
+        <div class="sltph">Marka ON: <b>XAUUSD</b> signal kasta hal trade halkii, <b>basket</b> ayuu furaa. Lammaanayaasha kale sidooda ayay u shaqeeyaan. Grid / Martingale ma jiraan.</div>
+        <div class="bsub">0 · SIGNAL-KA DAHABKA</div>
+        <div class="frow frow-col" id="rBSKSIG"><div class="sg3" id="mBSKSIG" role="radiogroup" aria-label="Signal-ka dahabka" style="grid-template-columns:repeat(4,1fr)">
+          <button type="button" data-v="0" role="radio">ZONE<small>demand / supply</small></button>
+          <button type="button" data-v="1" role="radio">EMA<small>pullback</small></button>
+          <button type="button" data-v="2" role="radio">LABADA<small>zone + EMA</small></button>
+          <button type="button" data-v="3" role="radio">DOUBLE<small>top / bottom</small></button>
+        </div></div>
+        <div class="sltph" id="mBSKSIGHint">—</div>
+        <div id="bskDbl">
+          <div class="frow"><span>Timeframe <small>DOUBLE · la tijaabiyay</small></span><span><b>M15</b></span></div>
+          <div class="frow"><span>Dulqaadka labada sal <small>x ATR · ka yar = tayo sare</small></span><span><input id="mBSKDTOL" type="number" min="0.05" max="1" step="0.05" value="0.2"> <i>ATR</i></span></div>
+          <div class="frow"><span>Neckline ugu yar <small>x ATR · salka ka sarreeya</small></span><span><input id="mBSKDNECK" type="number" min="0.3" max="3" step="0.1" value="1"> <i>ATR</i></span></div>
+          <div class="frow"><span>TP <small>lakab kasta · x R</small></span><span><input id="mBSKDTP" type="number" min="1" max="5" step="0.5" value="2"> <i>R</i></span></div>
+        </div>
+        <div class="frow"><span>Basket maalintii</span><span class="stp"><button type="button" id="mBSKDAYm" aria-label="Ka yaree">−</button><b id="mBSKDAY">3</b><button type="button" id="mBSKDAYp" aria-label="Ku dar">+</button></span></div>
+        <div class="bsub">1 · BASKET-KA</div>
+        <div class="frow"><span>Trade-yada basket-ka <small>2 – 5</small></span><span class="stp"><button type="button" id="mBSKNm" aria-label="Ka yaree">−</button><b id="mBSKN">3</b><button type="button" id="mBSKNp" aria-label="Ku dar">+</button></span></div>
+        <div class="frow frow-col" id="rBSKENT"><div class="seg" id="mBSKENT" role="radiogroup" aria-label="Sida loo galo">
+          <button type="button" data-v="0" role="radio">LAKAB · zone-ka gudihiisa</button>
+          <button type="button" data-v="1" role="radio">ISKU MAR</button>
+        </div></div>
+        <div class="sltph" id="mBSKENTHint">—</div>
+        <div class="bsub">2 · KHATARTA (basket oo dhan)</div>
+        <div class="frow"><span>Risk basket-ka oo dhan <small>waa la qaybiyaa, ma labanlaabmo</small></span><span><input id="mBSKRISK" type="number" min="0.05" max="5" step="0.05"> <i>%</i></span></div>
+        <div class="frow"><span>Khasaaraha ugu badan <small>xad adag — gaadho = xidh dhammaan</small></span><span><input id="mBSKMAX" type="number" min="0" max="100000" step="1"> <i>$</i></span></div>
+        <div class="frow"><span>Spread ugu badan <small>sent · 35 = $0.35</small></span><span><input id="mBSKSPR" type="number" min="5" max="500" step="1"> <i>¢</i></span></div>
+        <div class="bsub">3 · FAA'IIDADA (TP)</div>
+        <div class="frow frow-col" id="rBSKTP"><div class="seg" id="mBSKTP" role="radiogroup" aria-label="TP-ga basket-ka">
+          <button type="button" data-v="0" role="radio">JARANJAR · 1R 2R 3R</button>
+          <button type="button" data-v="1" role="radio">WADAJIR · $</button>
+        </div></div>
+        <div class="frow" id="rBSKTGT"><span>Bartilmaameedka WADAJIR</span><span><input id="mBSKTGT" type="number" min="1" max="100000" step="1"> <i>$</i></span></div>
+        <div class="bsub">4 · ILAALINTA</div>
+        <div class="frow"><span>TP1 kadib → SL = Break-even <small>basket-ku ma khasaari karo</small></span><span><button class="sw" id="mBSKBE" type="button" aria-label="TP1 kadib break-even"><i></i></button></span></div>
+        <div class="frow"><span>Qufulka faa'iidada <small>50% faa'iidada ugu sarreysa ha lumin</small></span><span><button class="sw" id="mBSKLOCK" type="button" aria-label="Qufulka faa'iidada"><i></i></button></span></div>
+        <div class="frow"><span>Waqtiga dahabka <small>London + NY · 07:00 – 17:00 GMT</small></span><span><button class="sw" id="mBSKSES" type="button" aria-label="Waqtiga dahabka"><i></i></button></span></div>
+        <div class="frow"><span>2 basket oo khasaara → jihadaas jooji maanta</span><span><button class="sw" id="mBSKBLK" type="button" aria-label="Jihada jooji"><i></i></button></span></div>
+      </div>
+    </div><div class="ingen" data-c="GOLD"></div></div>
+    <div class="incat" data-c="ASIA"><div class="card incard">
       <!-- v12.9: ASIA BREAKOUT (EA v69.7) -->
       <div class="grp bskg" id="asGrp">
-        <div class="gh bskgh"><span class="gold"><i class="coin"></i>5 · ASIA BREAKOUT <small>XAUUSD</small></span><button class="sw" id="mASIA" type="button" aria-label="ASIA BREAKOUT"><i></i></button></div>
+        <div class="gh bskgh"><span class="gold"><i class="coin"></i>🌅 ASIA BREAKOUT <small>XAUUSD</small></span><button class="sw" id="mASIA" type="button" aria-label="ASIA BREAKOUT"><i></i></button></div>
         <div class="bsub" style="border-top:none;margin-top:0">XEELADDA DAHABKA</div>
         <div class="frow frow-col" id="rGOLD"><div class="sg3" id="mGOLD" role="radiogroup" aria-label="Xeeladda dahabka">
           <button type="button" data-v="0" role="radio">EMA BASKET<small>(hore)</small></button>
@@ -5179,103 +5520,66 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
         <div class="sltph">Tijaabo 6 bilood: MARTINGALE 3 ×2 0.25R = <b>+50R · PF 2.21</b> · GRID 3 = +43R · hal trade = +29R. Bilaa SL: −39R hal maalin ✕</div>
         </div>
       </div>
-      <!-- v12.7: GOLD BASKET (EA v69.0) -->
-      <div class="grp bskg" id="bskGrp">
-        <div class="gh bskgh"><span class="gold"><i class="coin"></i>6 · GOLD BASKET <small>EMA · XAUUSD</small></span><button class="sw" id="mBSK" type="button" aria-label="GOLD BASKET"><i></i></button></div>
-        <div class="sltph">Marka ON: <b>XAUUSD</b> signal kasta hal trade halkii, <b>basket</b> ayuu furaa. Lammaanayaasha kale sidooda ayay u shaqeeyaan. Grid / Martingale ma jiraan.</div>
-        <div class="bsub">0 · SIGNAL-KA DAHABKA</div>
-        <div class="frow frow-col" id="rBSKSIG"><div class="sg3" id="mBSKSIG" role="radiogroup" aria-label="Signal-ka dahabka" style="grid-template-columns:repeat(4,1fr)">
-          <button type="button" data-v="0" role="radio">ZONE<small>demand / supply</small></button>
-          <button type="button" data-v="1" role="radio">EMA<small>pullback</small></button>
-          <button type="button" data-v="2" role="radio">LABADA<small>zone + EMA</small></button>
-          <button type="button" data-v="3" role="radio">DOUBLE<small>top / bottom</small></button>
+    </div><div class="ingen" data-c="ASIA"></div></div>
+    <div class="incat" data-c="MAIN"><div class="card incard inmain">
+      <div class="grp"><div class="gh">🧭 XEELADDA · ZONE · FILTER</div>
+        <div class="frow frow-col" id="rSTRAT"><div class="sg3" id="mSTRAT" role="radiogroup" aria-label="Xeeladda">
+          <button type="button" data-s="0" role="radio">SR/SD<small>zone S&amp;D</small></button>
+          <button type="button" data-s="1" role="radio">SMC<small>Order Block</small></button>
+          <button type="button" data-s="2" role="radio">LABADA<small>2-da</small></button>
         </div></div>
-        <div class="sltph" id="mBSKSIGHint">—</div>
-        <div id="bskDbl">
-          <div class="frow"><span>Timeframe <small>DOUBLE · la tijaabiyay</small></span><span><b>M15</b></span></div>
-          <div class="frow"><span>Dulqaadka labada sal <small>x ATR · ka yar = tayo sare</small></span><span><input id="mBSKDTOL" type="number" min="0.05" max="1" step="0.05" value="0.2"> <i>ATR</i></span></div>
-          <div class="frow"><span>Neckline ugu yar <small>x ATR · salka ka sarreeya</small></span><span><input id="mBSKDNECK" type="number" min="0.3" max="3" step="0.1" value="1"> <i>ATR</i></span></div>
-          <div class="frow"><span>TP <small>lakab kasta · x R</small></span><span><input id="mBSKDTP" type="number" min="1" max="5" step="0.5" value="2"> <i>R</i></span></div>
+        <div class="frow"><span>Sniper <small>(CHoCH M5 gudaha zone / OB)</small></span><span><button class="sw" id="mSNIPER" type="button" aria-label="Sniper"><i></i></button></span></div>
+        <!-- v12.8 (EA v69.6): heerka zone-ka -->
+        <div class="frow"><span>Heerka zone-ka <small>inta zone ee la aqbalayo</small></span></div>
+        <div class="frow frow-col" id="rSDPROF"><div class="sg3" id="mSDPROF" role="radiogroup" aria-label="Heerka zone-ka">
+          <button type="button" data-v="0" role="radio">TAYO<small>adag · yar</small></button>
+          <button type="button" data-v="1" role="radio">DHEXE<small>isku dheelli</small></button>
+          <button type="button" data-v="2" role="radio">BADAN<small>trade badan</small></button>
+        </div></div>
+        <table class="sdtbl" id="sdTbl"><tr><th></th><th data-c="0">TAYO</th><th data-c="1">DHEXE</th><th data-c="2">BADAN</th></tr>
+          <tr><td>Impulse ugu yar</td><td data-c="0">25p</td><td data-c="1">20p</td><td data-c="2">15p</td></tr>
+          <tr><td>BOS khasab</td><td data-c="0">✓</td><td data-c="1">✓</td><td data-c="2">✕</td></tr>
+          <tr><td>Taabasho (saac)</td><td data-c="0">6</td><td data-c="1">8</td><td data-c="2">12</td></tr>
+          <tr><td>Gelitaan ≤</td><td data-c="0">8p</td><td data-c="1">10p</td><td data-c="2">12p</td></tr></table>
+        <div class="sltph" id="mSDPROFHint">—</div>
+        <div class="frow"><span>Trade maalintii <small>(SR + SMC wadaag · chart-yada oo dhan)</small></span><span class="stp"><button type="button" id="mSNDAYm" aria-label="Ka yaree">−</button><b id="mSNDAY">3</b><button type="button" id="mSNDAYp" aria-label="Ku dar">+</button></span></div>
+        <div class="frow"><span>EMA filter <small>(EMA50 H1 + EMA200 H4 · RANGE → ma ganacsado)</small></span><span><button class="sw" id="mEMAF" type="button" aria-label="EMA filter"><i></i></button></span></div>
+        <div class="frow frow-col" id="rEMA"><div class="echip" id="emaChip" hidden><i></i><span>EMA</span></div></div>
+        <div class="frow"><span>★ ugu yar</span><span><span class="seg seg-s" id="mSTARS" role="radiogroup" aria-label="★ ugu yar"><button type="button" data-v="1" role="radio">★</button><button type="button" data-v="2" role="radio">★★</button><button type="button" data-v="3" role="radio">★★★</button></span></span></div>
+        <div class="frow"><span>Lot-ka ★★ <small>(★★★ = 100%)</small></span><span><input id="mLOT2" type="number" min="10" max="100" step="5"> <i>%</i></span></div>
+        <div class="frow"><span>Filtarka wararka <small>(jooji warka ka hor/kadib)</small></span><span><button class="sw" id="mNEWS" type="button" aria-label="Filtarka wararka"><i></i></button></span></div>
+      </div>
+
+      <div class="grp"><div class="gh">🎯 SL / TP (SNIPER)</div>
+        <div class="sltph"><b>SL</b> = zone-ka / OB-ga gadaashiisa · <b>TP</b> = SL × RR. Pip go'an ma jiro.</div>
+        <div class="frow"><span>RR <small>(TP = SL × …)</small></span><span><input id="mSNRR" type="number" min="1" max="10" step="0.5"> <i>R</i></span></div>
+        <div class="frow"><span>SL ugu weyn <small>(SR iyo SMC · ka weyn → trade ma furmo)</small></span><span><input id="mSNSLMAX" type="number" min="0" max="500" step="1"> <i>pip</i></span></div>
+      </div>
+
+      <div class="grp"><div class="gh">🛡 ILAALINTA FAA'IIDADA</div>
+        <div class="seg" id="mPROT" role="radiogroup" aria-label="Ilaalinta faa'iidada">
+          <button type="button" data-p="0" role="radio">DAMMAN</button>
+          <button type="button" data-p="1" role="radio">BREAK-EVEN</button>
+          <button type="button" data-p="2" role="radio">TALLAABO</button>
         </div>
-        <div class="frow"><span>Basket maalintii</span><span class="stp"><button type="button" id="mBSKDAYm" aria-label="Ka yaree">−</button><b id="mBSKDAY">3</b><button type="button" id="mBSKDAYp" aria-label="Ku dar">+</button></span></div>
-        <div class="bsub">1 · BASKET-KA</div>
-        <div class="frow"><span>Trade-yada basket-ka <small>2 – 5</small></span><span class="stp"><button type="button" id="mBSKNm" aria-label="Ka yaree">−</button><b id="mBSKN">3</b><button type="button" id="mBSKNp" aria-label="Ku dar">+</button></span></div>
-        <div class="frow frow-col" id="rBSKENT"><div class="seg" id="mBSKENT" role="radiogroup" aria-label="Sida loo galo">
-          <button type="button" data-v="0" role="radio">LAKAB · zone-ka gudihiisa</button>
-          <button type="button" data-v="1" role="radio">ISKU MAR</button>
-        </div></div>
-        <div class="sltph" id="mBSKENTHint">—</div>
-        <div class="bsub">2 · KHATARTA (basket oo dhan)</div>
-        <div class="frow"><span>Risk basket-ka oo dhan <small>waa la qaybiyaa, ma labanlaabmo</small></span><span><input id="mBSKRISK" type="number" min="0.05" max="5" step="0.05"> <i>%</i></span></div>
-        <div class="frow"><span>Khasaaraha ugu badan <small>xad adag — gaadho = xidh dhammaan</small></span><span><input id="mBSKMAX" type="number" min="0" max="100000" step="1"> <i>$</i></span></div>
-        <div class="frow"><span>Spread ugu badan <small>sent · 35 = $0.35</small></span><span><input id="mBSKSPR" type="number" min="5" max="500" step="1"> <i>¢</i></span></div>
-        <div class="bsub">3 · FAA'IIDADA (TP)</div>
-        <div class="frow frow-col" id="rBSKTP"><div class="seg" id="mBSKTP" role="radiogroup" aria-label="TP-ga basket-ka">
-          <button type="button" data-v="0" role="radio">JARANJAR · 1R 2R 3R</button>
-          <button type="button" data-v="1" role="radio">WADAJIR · $</button>
-        </div></div>
-        <div class="frow" id="rBSKTGT"><span>Bartilmaameedka WADAJIR</span><span><input id="mBSKTGT" type="number" min="1" max="100000" step="1"> <i>$</i></span></div>
-        <div class="bsub">4 · ILAALINTA</div>
-        <div class="frow"><span>TP1 kadib → SL = Break-even <small>basket-ku ma khasaari karo</small></span><span><button class="sw" id="mBSKBE" type="button" aria-label="TP1 kadib break-even"><i></i></button></span></div>
-        <div class="frow"><span>Qufulka faa'iidada <small>50% faa'iidada ugu sarreysa ha lumin</small></span><span><button class="sw" id="mBSKLOCK" type="button" aria-label="Qufulka faa'iidada"><i></i></button></span></div>
-        <div class="frow"><span>Waqtiga dahabka <small>London + NY · 07:00 – 17:00 GMT</small></span><span><button class="sw" id="mBSKSES" type="button" aria-label="Waqtiga dahabka"><i></i></button></span></div>
-        <div class="frow"><span>2 basket oo khasaara → jihadaas jooji maanta</span><span><button class="sw" id="mBSKBLK" type="button" aria-label="Jihada jooji"><i></i></button></span></div>
+        <div class="sltph" id="mPROTHint">—</div>
+        <div class="frow" id="rSTEPSTART"><span>Bilowga <small>(faa'iidada loo baahan yahay)</small></span><span><input id="mSTEPSTART" type="number" min="1" max="5000" step="1"> <i>pip</i></span></div>
+        <div class="frow" id="rSTEP"><span>Tallaabo kasta <small>(TALLAABO oo keliya)</small></span><span><input id="mSTEP" type="number" min="1" max="5000" step="1"> <i>pip</i></span></div>
       </div>
-      <!-- v12.12: ⚡ TICK SCALPER (EA v70.0) -->
-      <div class="grp bskg" id="tkGrp">
-        <div class="gh bskgh"><span class="gold"><i class="coin"></i>7 · ⚡ TICK SCALPER <small>XAUUSD</small></span><button class="sw" id="mTK" type="button" aria-label="TICK SCALPER"><i></i></button></div>
-        <div class="sltph">Momentum scalper: tick kasta ayuu akhriyaa → marka tick-yadu hal jiho si degdeg ah u wada dhaqaaqaan ayuu galaa → <b>virtual SL / TP · break-even · trailing</b> (broker-ka lama tuso) + SL adag ilaalin ah. <b>EA v70.0+</b></div>
-        <div class="frow"><span>TICK oo keliya <small>main · basket · asia XAUUSD ha furin</small></span><span><button class="sw on" id="mTKONLY" type="button" aria-label="TICK oo keliya"><i></i></button></span></div>
-        <div class="bsub">1 · GELITAAN · TICK TRACKER</div>
-        <div class="frow"><span>Tick-yada (W) <small>isbeddelada qiimaha la eegayo · 3 – 50</small></span><span class="stp"><button type="button" id="mTKWm" aria-label="Ka yaree">−</button><b id="mTKW">8</b><button type="button" id="mTKWp" aria-label="Ku dar">+</button></span></div>
-        <div class="frow"><span>Jiho isku mid (K) <small>W ka mid · 5 / 8 = momentum</small></span><span class="stp"><button type="button" id="mTKKm" aria-label="Ka yaree">−</button><b id="mTKK">5</b><button type="button" id="mTKKp" aria-label="Ku dar">+</button></span></div>
-        <div class="frow"><span>Dhaqdhaqaaq ugu yar <small>window-ka gudihiisa</small></span><span><input id="mTKMV" type="number" min="0" max="20" step="0.05" value="0.4"> <i>$</i></span></div>
-        <div class="frow"><span>Xawaare <small>window ≤ X ilbiriqsi · 0 = off</small></span><span><input id="mTKSEC" type="number" min="0" max="300" step="1" value="10"> <i>s</i></span></div>
-        <div class="frow"><span>Filter spread <small>dhaqdhaqaaq ≥ X × spread · 0 = off · EA v70.2+</small></span><span><input id="mTKSPM" type="number" min="0" max="10" step="0.5" value="3"> <i>×</i></span></div>
-        <div class="frow"><span>Filter trend <small>EMA50 M5 · BUY kor oo keliya / SELL hoos</small></span><span><button class="sw" id="mTKTR" type="button" aria-label="Filter trend"><i></i></button></span></div>
-        <div class="bsub">2 · LOT</div>
-        <div class="frow frow-col" id="rTKLM"><div class="seg" id="mTKLM" role="radiogroup" aria-label="Lot">
-          <button type="button" data-v="0" role="radio">GO'AN</button>
-          <button type="button" data-v="1" role="radio">RISK %</button>
-        </div></div>
-        <div class="frow" id="rTKLOT"><span>Lot go'an</span><span><input id="mTKLOT" type="number" min="0.01" max="100" step="0.01" value="0.01"> <i>lot</i></span></div>
-        <div class="frow" id="rTKRISK"><span>Risk trade kasta <small>% balance ÷ virtual SL</small></span><span><input id="mTKRISK" type="number" min="0.01" max="5" step="0.05" value="0.25"> <i>%</i></span></div>
-        <div class="bsub">3 · BIXITAAN</div>
-        <div class="frow frow-col" id="rTKSLM"><span style="margin-bottom:6px">Stop Loss <small>halka SL-ku ku jiro · EA v70.2+</small></span><div class="seg" id="mTKSLM" role="radiogroup" aria-label="Stop Loss">
-          <button type="button" data-v="0" role="radio">VIRTUAL<small style="display:block;font-size:10px;opacity:.8">bot-ka ayaa xidha</small></button>
-          <button type="button" data-v="1" role="radio">BROKER<small style="display:block;font-size:10px;opacity:.8">server-ka ayaa xidha</small></button>
-        </div></div>
-        <div class="sltph" id="mTKSLMHint">—</div>
-        <div class="frow frow-col" id="rTKTPM" style="margin-top:8px"><span style="margin-bottom:6px">Take Profit <small>halka TP-gu ku jiro · EA v70.3+</small></span><div class="seg" id="mTKTPM" role="radiogroup" aria-label="Take Profit">
-          <button type="button" data-v="0" role="radio">VIRTUAL<small style="display:block;font-size:10px;opacity:.8">bot-ka ayaa xidha</small></button>
-          <button type="button" data-v="1" role="radio">BROKER<small style="display:block;font-size:10px;opacity:.8">server-ka ayaa xidha</small></button>
-        </div></div>
-        <div class="sltph" id="mTKTPMHint">—</div>
-        <div class="frow"><span>Virtual SL</span><span><input id="mTKVSL" type="number" min="0.1" max="100" step="0.1" value="2.5"> <i>$</i></span></div>
-        <div class="frow"><span>Virtual TP <small>0 = trailing oo keliya</small></span><span><input id="mTKVTP" type="number" min="0" max="100" step="0.1" value="1.5"> <i>$</i></span></div>
-        <div class="frow"><span>Break-even <small>faa'iido $X → SL = entry + lock · 0 = off</small></span><span><input id="mTKBE" type="number" min="0" max="100" step="0.05" value="0.6"> <i>$</i></span></div>
-        <div class="frow"><span>Break-even lock</span><span><input id="mTKBEL" type="number" min="0" max="50" step="0.05" value="0.1"> <i>$</i></span></div>
-        <div class="frow"><span>Trailing bilow <small>0 = off</small></span><span><input id="mTKTRS" type="number" min="0" max="100" step="0.1" value="1"> <i>$</i></span></div>
-        <div class="frow"><span>Trailing masaafo</span><span><input id="mTKTRD" type="number" min="0.05" max="50" step="0.05" value="0.5"> <i>$</i></span></div>
-        <div class="frow"><span>Waqtiga ugu dheer <small>trade → xidh · 0 = off</small></span><span><input id="mTKHOLD" type="number" min="0" max="86400" step="30" value="900"> <i>s</i></span></div>
-        <div class="bsub">4 · 🔒 ILAALIN</div>
-        <div class="frow" id="rTKHARD"><span>SL adag (broker) <small id="mTKHARDs">internet go'a · ugu yaraan VSL + $1</small></span><span><input id="mTKHARD" type="number" min="0.5" max="200" step="0.5" value="6"> <i>$</i></span></div>
-        <div class="frow"><span>Saacadaha (server) <small>bilow → dhammaad</small></span><span><input id="mTKHS" type="number" min="0" max="23" step="1" value="1" style="width:56px"> <i>→</i> <input id="mTKHE" type="number" min="1" max="24" step="1" value="22" style="width:56px"></span></div>
-        <div class="frow"><span>Spread ugu badan <small>sent · 35 = $0.35</small></span><span><input id="mTKSPR" type="number" min="5" max="500" step="1" value="35"> <i>¢</i></span></div>
-        <div class="frow"><span>Cooldown <small>kadib trade kasta</small></span><span><input id="mTKCD" type="number" min="0" max="3600" step="5" value="20"> <i>s</i></span></div>
-        <div class="frow"><span>Trade maalintii</span><span><input id="mTKMAXD" type="number" min="1" max="1000" step="1" value="60"></span></div>
-        <div class="frow"><span>Khasaare isku xiga → hakad <small>0 = off</small></span><span><input id="mTKML" type="number" min="0" max="20" step="1" value="4"> <i>→</i> <input id="mTKPAUSE" type="number" min="1" max="1440" step="5" value="60" style="width:64px"> <i>daq</i></span></div>
-        <div class="frow"><span>Khasaaraha maalinlaha <small>% balance → maanta jooji · 0 = off</small></span><span><input id="mTKDL" type="number" min="0" max="50" step="0.5" value="2"> <i>%</i></span></div>
-        <div class="frow"><span>Bartilmaameed maalinle <small>% balance → maanta jooji · 0 = off</small></span><span><input id="mTKDT" type="number" min="0" max="100" step="0.5" value="0"> <i>%</i></span></div>
-        <div class="sltph" id="mTKHint">—</div>
-      </div>
+    </div><div class="ingen" data-c="MAIN"></div></div>
+    <div class="incat" data-c="PROT"><div class="ingen" data-c="PROT"></div></div>
+    <div class="incat" data-c="FILT"><div class="ingen" data-c="FILT"></div></div>
+    <div class="incat" data-c="SYS"><div class="ingen" data-c="SYS"></div></div>
+    <div class="insave" id="inSave">
       <div class="acts" style="margin-top:14px;grid-template-columns:2fr 1fr">
         <button class="act go" id="mSend" style="flex-direction:row;gap:9px;padding:14px">KAYDI &amp; DIR</button>
         {% if not lic %}<button class="act" id="mReset" style="flex-direction:row;gap:8px;padding:14px;border-color:var(--line);color:var(--ink2)">CELI</button>{% endif %}
       </div>
+      <div class="note" id="inCnt" hidden></div>
       <div class="note" id="mNote">Bot-ku wuxuu hadda isticmaalayaa: —</div>
-      <div class="note" style="margin-top:6px">Sitinkan ayaa bot-ka u ah <b>.set</b>: server-ka ayuu ku kaydsan yahay, <b>chart kasta</b> wuu gaadhayaa, MT5 ama VPS dib u kicin → bot-ku halkan ayuu ka soo qaadanayaa (EA v67.4+).</div>
+
     </div>
+    <div class="note" style="margin:10px 4px 0">Sitinkan ayaa bot-ka u ah <b>.set</b>: server-ka ayuu ku kaydsan yahay, <b>chart kasta</b> wuu gaadhayaa, MT5 ama VPS dib u kicin → bot-ku halkan ayuu ka soo qaadanayaa (EA v67.4+).</div>
   </section>
   {% endif %}
 
@@ -5355,14 +5659,6 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
   </section>
 
   <!-- ============ CHART ============ -->
-  <section class="pane" id="pChart">
-    <div class="card">
-      <h2>Equity — 12 saac ee ugu dambeeyay</h2>
-      <svg class="chart" id="chart" role="img" aria-label="Equity-ga waqti ahaan"></svg>
-      <div class="note" id="chartNote"></div>
-    </div>
-  </section>
-
   <!-- ============ JOURNAL ============ -->
   <section class="pane" id="pJournal">
     <!-- v7.2: caafimaadka bot-ka - baadhis toos ah -->
@@ -5459,9 +5755,9 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
   {% if can_control %}
   <button data-tab="Maamul">
     <svg viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg>Maamul</button>
+  <button data-tab="Input">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>Input</button>
   {% endif %}
-  <button data-tab="Chart">
-    <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-6"/></svg>Chart</button>
   <button data-tab="Journal">
     <svg viewBox="0 0 24 24"><path d="M5 3h11l4 4v14H5Z"/><path d="M9 9h7M9 13h7M9 17h4"/></svg>Journal<span class="tbadge" id="hcBadge" style="display:none"></span></button>
 </nav>
@@ -5547,6 +5843,8 @@ function paint(d){
   paintMyKey(d);                                    // v11
   paintLic(d);                                      // v12
   paintTick(d.tick);                                // v12.12
+  INPV=d.inp||null; if(INPS) inpPaint();            // v12.18: ⚙️ INPUT
+  stPaint(d);                                       // v12.18: Maamul -> xeeladaha
   paintAsia(d.asia);                                // v12.9
   paintBasket(d.bsk);                               // v12.7
   paintReasons(d);                                  // v12.8
@@ -5662,6 +5960,7 @@ function esc(s){const n=document.createElement("span");n.textContent=s==null?"":
 /* ---- Equity line chart: hal series, crosshair + tooltip ---- */
 function drawChart(){
   const svg=$("#chart"), note=$("#chartNote");
+  if(!svg) return;   // v12.18: tab-ka Chart waa la saaray (⚙️ Input)
   const W=svg.clientWidth||600, H=210, P={t:12,r:52,b:22,l:10};
   svg.setAttribute("viewBox","0 0 "+W+" "+H);
   svg.innerHTML="";
@@ -6700,7 +6999,8 @@ const PERM_EL={mRISK:"risk",mDLOSS:"",mMAXDD:"",mSNIPER:"sltp",mSNDAYm:"day",mSN
   mASIAWEm:"",mASIACLm:"",mASIATR:"",mASIAMAXR:"",mASIATPm:"",mASIARISK:"",mASIAMAX:"",
   mASGLm:"",mASGSm:"",mASGXm:"",
   mTKONLY:"",mTKWm:"",mTKKm:"",mTKMV:"",mTKSEC:"",mTKLOT:"",mTKRISK:"",mTKVSL:"",mTKVTP:"",mTKBE:"",mTKBEL:"",mTKTRS:"",mTKTRD:"",
-  mTKHOLD:"",mTKHARD:"",mTKHS:"",mTKSPR:"",mTKCD:"",mTKMAXD:"",mTKML:"",mTKDL:"",mTKDT:"",mTKSPM:"",mTKTR:""};   // v12.12: TICK = admin   // v12.10: GRID = admin   // v12.9: ASIA = admin   // v12.7: GOLD BASKET = admin
+  mTKHOLD:"",mTKHARD:"",mTKHS:"",mTKSPR:"",mTKCD:"",mTKMAXD:"",mTKML:"",mTKDL:"",mTKDT:"",mTKSPM:"",mTKTR:"",mTKBNm:"",mTKBTGT:"",mTKBBE:"",mTKBLP:"",
+  mTKTRON:"",mTKTRST:"",mTKTRLK:"",mTKTRSTEP:"",mTKTRMAX:""};   // v12.17: TP RAAC = admin   // v12.12: TICK = admin   // v12.10: GRID = admin   // v12.9: ASIA = admin   // v12.7: GOLD BASKET = admin
 let licOK=true;
 const LKSVG='<svg class="lk" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
 function permOK(p){ return !PERMS || (licOK && !!(p && PERMS[p])); }
@@ -6718,12 +7018,12 @@ function applyPerms(){
   ["mBSKSIG","mBSKENT","mBSKTP"].forEach(segLock); const bsw=$("#mBSK"); if(bsw){ bsw.disabled=true; bsw.classList.add("lockd"); }   // v12.7
   ["mGOLD","mASIADIR","mASIASL","mASIAL","mASGM"].forEach(segLock); const asw=$("#mASIA"); if(asw){ asw.disabled=true; asw.classList.add("lockd"); }   // v12.9
   { const gsw=$("#mASG"); if(gsw){ gsw.disabled=true; gsw.classList.add("lockd"); } }   // v12.10
-  segLock("mTKLM"); segLock("mTKSLM"); segLock("mTKTPM"); { const tsw=$("#mTK"); if(tsw){ tsw.disabled=true; tsw.classList.add("lockd"); } }   // v12.12
+  segLock("mTKLM"); segLock("mTKSLM"); segLock("mTKTPM"); ["mTKBON","mTKBENT","mTKBEX"].forEach(segLock); { const tsw=$("#mTK"); if(tsw){ tsw.disabled=true; tsw.classList.add("lockd"); } }   // v12.12
   document.querySelectorAll("[data-perm]").forEach(b=>{ if(!permOK(b.dataset.perm)){ b.classList.add("lockd"); b.disabled=true; } });
 
   const r=$("#mRISK"); if(r && permOK("risk")){ r.min=PERMS.lo; r.max=PERMS.hi;
     const lab=r.closest(".frow").querySelector("span"); if(lab && !lab.querySelector(".rhint")) lab.insertAdjacentHTML("beforeend",'<small class="rhint">xadka: '+Number(PERMS.lo).toFixed(2)+' – '+Number(PERMS.hi).toFixed(2)+'%</small>'); }
-  const any=Object.keys(PERM_OF).some(k=>permOK(PERM_OF[k])); const sb=$("#mSend"); if(sb && !any){ sb.disabled=true; sb.classList.add("lockd"); }
+  const any=Object.keys(PERM_OF).some(k=>permOK(PERM_OF[k])); ["mSend","mSend2"].forEach(id=>{ const sb=$("#"+id); if(sb && !any){ sb.disabled=true; sb.classList.add("lockd"); } });
 }
 function paintLic(d){
   const c=$("#licCard"); if(!c) return; const L=d.lic;
@@ -6841,8 +7141,8 @@ function bskStep(id,d,lo,hi){ const e=$("#"+id); if(!e) return; let v=Number(e.t
   if(p) p.addEventListener("click",()=>{ if(!p.disabled) bskStep(id,1,lo,hi); });
 });
 /* ---- v12.12: ⚡ TICK SCALPER (Maamul · admin) ---- */
-let TKCFG=null, TICK=null, mTkLM=0, mTkTouched=false, mTkSLM=1, mTkTPM=1;
-const TK_IN=["SPM","MV","SEC","LOT","RISK","VSL","VTP","BE","BEL","TRS","TRD","HOLD","HARD","HS","HE","SPR","CD","MAXD","ML","PAUSE","DL","DT"];
+let TKCFG=null, TICK=null, mTkLM=0, mTkTouched=false, mTkSLM=1, mTkTPM=1, mTkBON=0, mTkBENT=1, mTkBEX=1;
+const TK_IN=["TRST","TRLK","TRSTEP","TRMAX","BTGT","BBE","BLP","SPM","MV","SEC","LOT","RISK","VSL","VTP","BE","BEL","TRS","TRD","HOLD","HARD","HS","HE","SPR","CD","MAXD","ML","PAUSE","DL","DT"];
 function tkVal(k){ const e=$("#mTK"+k); if(!e||e.value==="") return null; const v=Number(e.value); return isFinite(v)?v:null; }
 function tkPaint(){
   const g=$("#tkGrp"); if(g) g.classList.toggle("off",!swGet("mTK"));
@@ -6850,6 +7150,26 @@ function tkPaint(){
   const rl=$("#rTKLOT"), rr=$("#rTKRISK"); if(rl) rl.style.display=(mTkLM!==0)?"none":""; if(rr) rr.style.display=(mTkLM!==1)?"none":"";
   segPaint("mTKSLM","v",mTkSLM);   // v12.14
   segPaint("mTKTPM","v",mTkTPM);   // v12.15
+  { segPaint("mTKBON","v",mTkBON); segPaint("mTKBENT","v",mTkBENT); segPaint("mTKBEX","v",mTkBEX);   // v12.16 BASKET
+    const has=!!(TKCFG && TKCFG.bon!==undefined && TKCFG.bon!==null), sec=$("#tkBskSec"), op=$("#tkBskOpts"), bh=$("#mTKBHint"), tg=$("#rTKBTGT");
+    if(sec) sec.style.opacity=(TKCFG && !has)?".45":"";
+    if(op) op.style.display=(mTkBON===1)?"":"none";
+    if(tg) tg.style.display=(mTkBEX===1)?"":"none";
+    const N=Number(($("#mTKBN")||{}).textContent)||3, vsl=tkVal("VSL")||2, tgt=tkVal("BTGT")||0, lot=tkVal("LOT")||0.01;
+    if(bh) bh.innerHTML=(TKCFG && !has)?"Bot-ka chart-ka wuxuu u baahan yahay <b>EA v70.4</b> si BASKET u shaqeeyo."
+      :(mTkBON!==1?"<b>HAL TRADE:</b> signal kasta = hal trade (sidii hore).":
+        ("<b>"+N+" trade</b> × "+lot.toFixed(2)+" · SL wadaag $"+vsl.toFixed(2)+" → khatar ugu badan <b>$"+(N*lot*100*vsl).toFixed(2)+"</b>"+
+         (mTkBEX===1?(" · bartilmaameed <b>$"+tgt.toFixed(2)+"</b> → dhammaan hal mar."):" · lakab kasta TP-giisa (T/P broker).")+
+         (mTkBENT===1?" Lakab cusub: signal isku jiho + basket-ka faa'iido ku jiro.":" Dhammaan lakabyada signal-ka ayay furmaan."))); }
+  { const has=!!(TKCFG && TKCFG.tron!==undefined && TKCFG.tron!==null), sec=$("#tkTprSec"), op=$("#tkTprOpts"), hh=$("#mTKTRHint"), on=swGet("mTKTRON");   // v12.17 TP RAAC
+    if(sec) sec.style.opacity=(TKCFG && !has)?".45":"";
+    if(op) op.style.display=on?"":"none";
+    const vt=tkVal("VTP")||0, st=tkVal("TRST")||80, lk=tkVal("TRLK")||70, sp=tkVal("TRSTEP")||1, mx=Math.max(1,Math.min(10,Math.round(tkVal("TRMAX")||3)));
+    if(hh) hh.innerHTML=(TKCFG && !has)?"Bot-ka chart-ka wuxuu u baahan yahay <b>EA v70.5</b> si TP RAAC u shaqeeyo."
+      :(!on?"<b>DAMMAN:</b> TP-gu meeshiisa ayuu joogaa (sidii hore)."
+       :(vt<=0?'<span style="color:#f0d9a0">Virtual TP = 0 → TP RAAC ma shaqeeyo (TP ma jiro).</span>'
+        :("TP $"+vt.toFixed(2)+" → "+Math.round(st)+"% = <b>$"+(vt*st/100).toFixed(2)+"</b> → TP cusub <b>$"+(vt+sp).toFixed(2)+"</b> · SL <b>+$"+(vt*lk/100).toFixed(2)+"</b> 🔒. Raac "+mx+" → TP ugu fog <b>$"+(vt+sp*mx).toFixed(2)+"</b>."
+          +(lk>=st?'<br><span style="color:#f0d9a0">Qufulka waa in uu ka yar yahay Bilowga → bot-ku wuxuu u dhigayaa '+Math.max(10,Math.round(st-10))+'%.</span>':"")))); }
   { const th=$("#mTKTPMHint"), vt=tkVal("VTP")||0, has=!!(TKCFG && TKCFG.tpm!==undefined && TKCFG.tpm!==null), r=$("#rTKTPM");
     if(r) r.style.opacity=(TKCFG && !has)?".45":"";
     if(th) th.innerHTML=(TKCFG && !has)?"Bot-ka chart-ka wuxuu u baahan yahay <b>EA v70.3</b> si TP broker u shaqeeyo."
@@ -6879,6 +7199,11 @@ function tkSeed(){
   Object.keys(m).forEach(k=>{ const e=$("#mTK"+k); if(e && m[k]!==undefined && m[k]!==null) e.value=m[k]; });
   mTkLM=(Number(c.risk)>0)?1:0;
   mTkTPM=(c.tpm===0)?0:1;   // v12.15
+  if(c.bon!==undefined && c.bon!==null){ mTkBON=c.bon?1:0; mTkBENT=(c.bent===0)?0:1; mTkBEX=(c.bex===0)?0:1;   // v12.16
+    if($("#mTKBN")) $("#mTKBN").textContent=c.bn||3;
+    const st=(id,v)=>{ const e=$("#"+id); if(e && v!==undefined && v!==null) e.value=v; }; st("mTKBTGT",c.btgt); st("mTKBBE",c.bbe); st("mTKBLP",c.blp); }
+  if(c.tron!==undefined && c.tron!==null){ swSet("mTKTRON",!!c.tron);   // v12.17 TP RAAC
+    const st=(id,v)=>{ const e=$("#"+id); if(e && v!==undefined && v!==null) e.value=v; }; st("mTKTRST",c.trst); st("mTKTRLK",c.trlk); st("mTKTRSTEP",c.trstep); st("mTKTRMAX",c.trmax); }
   mTkSLM=(c.slm===0)?0:1; swSet("mTKTR",!!c.tr); { const e=$("#mTKSPM"); if(e && c.spm!==undefined) e.value=c.spm; }   // v12.14
   tkPaint();
 }
@@ -6894,15 +7219,33 @@ function tickCmds(cmds){
   else cmds.push("SET:TKRISK=0");
   if(TKCFG && TKCFG.slm!==undefined){   // v12.14: EA v70.2+ oo keliya
     if(TKCFG.tpm!==undefined && TKCFG.tpm!==null) cmds.push("SET:TKTPM="+mTkTPM);   // v12.15: EA v70.3+
+    if(TKCFG.bon!==undefined && TKCFG.bon!==null){   // v12.16: EA v70.4+
+      cmds.push("SET:TKBON="+mTkBON); cmds.push("SET:TKBENT="+mTkBENT); cmds.push("SET:TKBEX="+mTkBEX);
+      const bn=Number(($("#mTKBN")||{}).textContent); if(bn>=2&&bn<=5) cmds.push("SET:TKBN="+bn);
+      const t1=tkVal("BTGT"), t2=tkVal("BBE"), t3=tkVal("BLP");
+      if(t1!==null) cmds.push("SET:TKBTGT="+Math.max(0,Math.min(10000,t1))); if(t2!==null) cmds.push("SET:TKBBE="+Math.max(0,Math.min(10000,t2)));
+      if(t3!==null) cmds.push("SET:TKBLP="+Math.round(Math.max(0,Math.min(1000000,t3)))); }
+    if(TKCFG.tron!==undefined && TKCFG.tron!==null){   // v12.17: EA v70.5+ (TP RAAC)
+      cmds.push("SET:TKTRON="+(swGet("mTKTRON")?1:0));
+      const a1=tkVal("TRST"), a2=tkVal("TRLK"), a3=tkVal("TRSTEP"), a4=tkVal("TRMAX");
+      const s1=(a1===null)?null:Math.max(50,Math.min(95,a1));
+      if(s1!==null) cmds.push("SET:TKTRST="+s1);
+      if(a2!==null){ let l=Math.max(10,Math.min(90,a2)); const ref=(s1!==null)?s1:(Number(TKCFG.trst)||80); if(l>=ref) l=Math.max(10,ref-10); cmds.push("SET:TKTRLK="+l); }
+      if(a3!==null) cmds.push("SET:TKTRSTEP="+Math.max(0.1,Math.min(50,a3)));
+      if(a4!==null) cmds.push("SET:TKTRMAX="+Math.round(Math.max(1,Math.min(10,a4)))); }
     cmds.push("SET:TKSLM="+mTkSLM); cmds.push("SET:TKTR="+(swGet("mTKTR")?1:0));
     const sm=tkVal("SPM"); if(sm!==null) cmds.push("SET:TKSPM="+Math.max(0,Math.min(10,sm)));
   }
 }
 { const e=$("#mTK"); if(e) e.addEventListener("click",()=>{ if(e.disabled) return; e.classList.toggle("on"); mTouched=true; mTkTouched=true; tkPaint(); }); }
 { const e=$("#mTKONLY"); if(e) e.addEventListener("click",()=>{ if(e.disabled) return; e.classList.toggle("on"); mTouched=true; mTkTouched=true; }); }
+[["mTKBON",v=>{mTkBON=v;}],["mTKBENT",v=>{mTkBENT=v;}],["mTKBEX",v=>{mTkBEX=v;}]].forEach(([id,f])=>document.querySelectorAll("#"+id+" button").forEach(b=>b.addEventListener("click",()=>{ if(b.disabled) return; f(Number(b.dataset.v)); mTouched=true; mTkTouched=true; tkPaint(); })));   // v12.16
+{ const m=$("#mTKBNm"), p=$("#mTKBNp"); const go=d=>{ const e=$("#mTKBN"); if(!e) return; e.textContent=Math.max(2,Math.min(5,(Number(e.textContent)||3)+d)); mTouched=true; mTkTouched=true; tkPaint(); };
+  if(m) m.addEventListener("click",()=>{ if(!m.disabled) go(-1); }); if(p) p.addEventListener("click",()=>{ if(!p.disabled) go(1); }); }
 document.querySelectorAll("#mTKTPM button").forEach(b=>b.addEventListener("click",()=>{ if(b.disabled) return; mTkTPM=Number(b.dataset.v); mTouched=true; mTkTouched=true; tkPaint(); }));   // v12.15
 document.querySelectorAll("#mTKSLM button").forEach(b=>b.addEventListener("click",()=>{ if(b.disabled) return; mTkSLM=Number(b.dataset.v); mTouched=true; mTkTouched=true; tkPaint(); }));   // v12.14
 { const e=$("#mTKTR"); if(e) e.addEventListener("click",()=>{ if(e.disabled) return; e.classList.toggle("on"); mTouched=true; mTkTouched=true; }); }
+{ const e=$("#mTKTRON"); if(e) e.addEventListener("click",()=>{ if(e.disabled) return; e.classList.toggle("on"); mTouched=true; mTkTouched=true; tkPaint(); }); }   // v12.17
 document.querySelectorAll("#mTKLM button").forEach(b=>b.addEventListener("click",()=>{ if(b.disabled) return; mTkLM=Number(b.dataset.v); mTouched=true; mTkTouched=true; tkPaint(); }));
 TK_IN.forEach(k=>{ const e=$("#mTK"+k); if(e) e.addEventListener("input",()=>{ mTouched=true; mTkTouched=true; tkPaint(); }); });
 [["mTKW",3,50],["mTKK",2,50]].forEach(([id,lo,hi])=>{
@@ -6913,35 +7256,255 @@ TK_IN.forEach(k=>{ const e=$("#mTK"+k); if(e) e.addEventListener("input",()=>{ m
   if(p) p.addEventListener("click",()=>{ if(!p.disabled) go(1); });
 });
 
+
+/* ================= v12.18: ⚙️ INPUT (dhammaan input-yada EA v70.6) · Maamul xeeladaha ================= */
+let INPS=null, INPV=null, INPBY={}, inEd={}, inDel={}, inSentM={}, inLoading=false, inCat="TICK";
+try{ inCat=localStorage.getItem("mp_incat")||"TICK"; }catch(e){}
+const IN_ICON=[["0 ·","🧪"],["0c","📐"],["0a","🪜"],["0b","🎯"],["1 ·","🔒"],["2 ·","🧭"],["3 ·","🔢"],["4 ·","💰"],["5 ·","🛑"],["6 ·","🎯"],["7 ·","🛡"],["8 ·","✂️"],["9 ·","⏏"],
+  ["10 ·","🌡"],["11 ·","📈"],["12 ·","➡️"],["13 ·","🧰"],["14 ·","🕐"],["15 ·","📰"],["16 ·","🧠"],["19 ·","🏦"],["19b","⭐"],["21b","📦"],["22 ·","⚙️"],["23 ·","🏢"],["24 ·","📨"],["25 ·","☁️"],["26 ·","🎨"],["27 ·","🪵"]];
+function inIcon(g){ let ic="•"; IN_ICON.forEach(([p,i])=>{ if(g.startsWith(p)) ic=i; }); if(/TICK/.test(g)) ic="⚡"; else if(/GOLD/.test(g)) ic="🥇"; else if(/ASIA/.test(g)) ic="🌅"; return ic; }
+function inGName(g){ return g.replace(/\s*\((?:v|b)\d[^)]*\)\s*/g," ").replace(/\s+/g," ").trim(); }
+function inHex(t){ return "h"+Array.from(new TextEncoder().encode(String(t))).map(b=>b.toString(16).padStart(2,"0")).join(""); }
+function inColHex(v){ v=Number(v)||0; const r=v&255,g=(v>>8)&255,b=(v>>16)&255; return "#"+[r,g,b].map(x=>x.toString(16).padStart(2,"0")).join(""); }
+function inColInt(h){ const m=/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(h||""); if(!m) return 0; return parseInt(m[1],16)+parseInt(m[2],16)*256+parseInt(m[3],16)*65536; }
+function inEq(t,a,b){ if(a===undefined||b===undefined||a===null||b===null) return a===b; if(t==="s") return String(a)===String(b); return Math.abs(Number(a)-Number(b))<1e-9; }
+function inFmt(it,v){ if(v===undefined||v===null) return "—"; if(it.t==="b") return Number(v)?"ON":"OFF"; if(it.t==="e"){ const o=(it.o||[]).find(o=>o[0]===Number(v)); return o?o[1]:String(v); } if(it.t==="c") return inColHex(v); if(it.t==="s") return v===""?"(madhan)":('"'+String(v).slice(0,24)+(String(v).length>24?"…":"")+'"'); return String(v); }
+function inOk(){ return !!(INPS && INPV && INPV.h===INPS.h && Array.isArray(INPV.v)); }
+function inCur(it){ return inOk()?INPV.v[it.x]:undefined; }
+function inBase(it){ return inOk()?INPV.b[it.x]:undefined; }
+function inShown(it){ if(it.n in inEd) return inEd[it.n]; if(inDel[it.n]) return inBase(it); if(it.n in inSentM) return inSentM[it.n].v; return inCur(it); }
+async function inpLoad(){
+  if(INPS||inLoading||!$("#pInput")) return; inLoading=true;
+  try{ const r=await fetch("/api/inp_schema"); if(r.ok){ INPS=await r.json(); INPBY={}; INPS.items.forEach(it=>{ INPBY[it.n]=it; }); inpBuild(); inpPaint(); } }catch(e){}
+  inLoading=false;
+}
+function inCatSet(c){
+  inCat=c; try{ localStorage.setItem("mp_incat",c); }catch(e){}
+  document.querySelectorAll("#pInput .incat").forEach(x=>x.classList.toggle("on",x.dataset.c===c));
+  document.querySelectorAll("#inCats button").forEach(b=>b.classList.toggle("on",b.dataset.c===c));
+}
+function inRowHTML(it){
+  const lab=esc(it.l||it.n), nm='<span class="nmx">'+esc(it.n)+'</span>';
+  if(it.k===2) return '<div class="frow inrow inlk" data-n="'+esc(it.n)+'"><span class="l">'+lab+'<small>'+nm+' · MT5 oo keliya (ammaan)</small></span><span class="ctl"><span class="inlkv">🔒 MT5</span></span></div>';
+  let ctl="";
+  if(it.t==="b") ctl='<button class="sw" type="button" data-in="1" aria-label="'+esc(it.l||it.n)+'"><i></i></button>';
+  else if(it.t==="i") ctl='<input type="number" step="1" inputmode="numeric" data-in="1">';
+  else if(it.t==="d") ctl='<input type="number" step="any" inputmode="decimal" data-in="1">';
+  else if(it.t==="e") ctl='<select data-in="1">'+(it.o||[]).map(o=>'<option value="'+o[0]+'">'+esc(o[1])+'</option>').join("")+'</select>';
+  else if(it.t==="c") ctl='<input type="color" data-in="1">';
+  else ctl='<input type="text" maxlength="200" data-in="1">';
+  const bd=it.r?'<span class="inbdg" title="EA-ga dib u kicin kadib ayuu shaqeeyaa">↻ MT5</span>':'';
+  return '<div class="frow inrow" data-n="'+esc(it.n)+'"><span class="l">'+lab+bd+'<small>'+nm+' · <span class="inb">MT5: —</span></small></span><span class="ctl">'+ctl+'<button class="inrst" type="button" title="MT5-ka ku celi" aria-label="MT5-ka ku celi">↺</button></span></div>';
+}
+function inpBuild(){
+  const G=INPS.groups, by={};
+  INPS.items.forEach(it=>{ if(it.k===1) return; (by[it.g]=by[it.g]||[]).push(it); });
+  const cnt={}; INPS.items.forEach(it=>{ const c=G[it.g].cat; cnt[c]=(cnt[c]||0)+1; });
+  document.querySelectorAll("#inCats button").forEach(b=>{ const x=b.querySelector("b"); if(x) x.textContent=cnt[b.dataset.c]||""; });
+  let open={}; try{ open=JSON.parse(localStorage.getItem("mp_inacc")||"{}")||{}; }catch(e){}
+  document.querySelectorAll("#pInput .ingen").forEach(box=>{
+    const c=box.dataset.c; let h="";
+    G.forEach((g,gi)=>{
+      if(g.cat!==c || !by[gi]) return;
+      const its=by[gi], mod=(c==="TICK"||c==="GOLD"||c==="ASIA");
+      const nm=mod?("Sitinka kale · "+inGName(g.name)):inGName(g.name);
+      const sub=its.length+" input"+(its.some(i=>i.k===2)?" · 🔒 MT5":"")+(its.some(i=>i.r)?" · ↻ qaar":"");
+      h+='<div class="inacc'+(open[gi]?" open":"")+'" data-g="'+gi+'"><button type="button" class="inah"><span class="ic">'+inIcon(g.name)+'</span><span class="nm">'+esc(nm)+'<small>'+esc(sub)+'</small></span><span class="indot"></span><span class="inct">'+its.length+'</span></button>'
+        +'<div class="inab">'+its.map(inRowHTML).join("")+'</div></div>';
+    });
+    box.innerHTML=h;
+  });
+}
+function inRowPaint(row){
+  const it=INPBY[row.dataset.n]; if(!it || it.k!==0) return;
+  const ok=inOk(), cur=inCur(it), base=inBase(it), v=inShown(it);
+  row.classList.toggle("inoff",!ok);
+  const pend=(it.n in inEd)||!!inDel[it.n]||(it.n in inSentM);
+  row.classList.toggle("pend",pend);
+  row.classList.toggle("chg",ok && !pend && !inEq(it.t,cur,base));
+  const bs=row.querySelector(".inb"); if(bs) bs.textContent="MT5: "+inFmt(it,base)+((it.n in inSentM)?" · ⏳ EA-ga ayaa la dirayaa":"");
+  const c=row.querySelector("[data-in]"); if(!c || (document.activeElement===c && it.t!=="b")) return;
+  if(it.t==="b") c.classList.toggle("on",!!Number(v));
+  else if(it.t==="c") c.value=inColHex(v);
+  else if(v===undefined||v===null) c.value="";
+  else c.value=String(v);
+}
+function inpPaint(){
+  if(!INPS) return;
+  const now=Date.now();
+  Object.keys(inSentM).forEach(n=>{ const it=INPBY[n], s=inSentM[n]; if(!it) return delete inSentM[n];
+    if(inOk() && inEq(it.t,inCur(it),s.v)) delete inSentM[n]; else if(now-s.t>90000) delete inSentM[n]; });
+  document.querySelectorAll("#pInput .inrow").forEach(inRowPaint);
+  const dirty=new Set();
+  document.querySelectorAll("#pInput .inacc").forEach(a=>{ const ch=!!a.querySelector(".inrow.chg,.inrow.pend"); a.classList.toggle("chg",ch); if(ch) dirty.add(INPS.groups[a.dataset.g].cat); });
+  document.querySelectorAll("#inCats button").forEach(b=>b.classList.toggle("dt",dirty.has(b.dataset.c)));
+  const sy=$("#inSync"); if(sy){
+    if(!INPV){ sy.className="insync warn"; sy.innerHTML="EA v70.6 weli qiimaha input-yada ma soo dirin — chart-ka <b>MOHA_PRO_V70_6</b> ku dhaji (5 daqiiqo gudahood ayay soo muuqdaan)."; }
+    else if(INPV.h!==INPS.h){ sy.className="insync warn"; sy.innerHTML="⚠️ EA-ga chart-ka (#"+esc(INPV.h||"?")+") iyo app-ka (#"+esc(INPS.h)+") isku version ma aha → <b>EA v"+esc(INPS.ver)+"</b> rakib. Qaybaha gaarka ah (TICK · GOLD · ASIA · MAIN) way shaqeeyaan."; }
+    else { let n=0; INPS.items.forEach(it=>{ if(it.k===0 && !inEq(it.t,INPV.v[it.x],INPV.b[it.x])) n++; });
+      const ag=Number(INPV.age)||0, w=ag<90?(ag+"s"):(ag<5400?(Math.round(ag/60)+" daq"):(Math.round(ag/3600)+" saac"));
+      sy.className="insync"; sy.innerHTML="✓ MT5 ⇄ App · "+esc(INPV.chart||"")+" · EA v"+esc(INPV.ver||"")+" · "+w+" ka hor · <b>● "+n+"</b> way ka duwan yihiin MT5"; }
+  }
+  inCount();
+}
+function inCount(){
+  const n=Object.keys(inEd).length+Object.keys(inDel).length, c=$("#inCnt");
+  if(c){ c.hidden=!n; c.innerHTML=n?("<b>"+n+"</b> input ayaa sugaya → <b>KAYDI &amp; DIR</b>"):""; }
+}
+function inSetEdit(n,val){
+  const it=INPBY[n]; if(!it) return;
+  delete inDel[n]; delete inSentM[n];
+  if(inOk() && inEq(it.t,val,inCur(it))) delete inEd[n]; else inEd[n]=val;
+  mTouched=true; const row=document.querySelector('#pInput .inrow[data-n="'+n+'"]'); if(row) inRowPaint(row); inpPaint();
+}
+function inpCollect(values){
+  if(!INPS) return [];
+  Object.keys(inEd).forEach(n=>{ const it=INPBY[n]; if(!it) return; values["IN:"+n]=(it.t==="s")?inHex(inEd[n]):String(inEd[n]); });
+  return Object.keys(inDel).map(n=>"IN:"+n);
+}
+function inpSent(){
+  const t=Date.now();
+  Object.keys(inEd).forEach(n=>{ inSentM[n]={v:inEd[n],t:t}; });
+  Object.keys(inDel).forEach(n=>{ const it=INPBY[n]; if(it) inSentM[n]={v:inBase(it),t:t}; });
+  inEd={}; inDel={}; if(INPS) inpPaint();
+}
+function inSearch(q){
+  q=String(q||"").trim().toLowerCase(); const P=$("#pInput"); if(!P) return;
+  P.classList.toggle("srch",!!q);
+  P.querySelectorAll(".inrow,.incard .frow").forEach(r=>{ const hit=!q || (r.textContent+" "+(r.dataset.n||"")).toLowerCase().includes(q); r.classList.toggle("inhid",!hit); });
+  P.querySelectorAll(".inacc").forEach(a=>{ const any=!!a.querySelector(".inrow:not(.inhid)"); a.classList.toggle("inhid",!!q && !any); if(q) a.classList.toggle("open",any); });
+  P.querySelectorAll(".incard").forEach(c=>{ c.classList.toggle("inhid",!!q && !c.querySelector(".frow:not(.inhid)")); });
+  P.querySelectorAll(".incat").forEach(c=>{ c.classList.toggle("inhid",!!q && !c.querySelector(".frow:not(.inhid)")); });
+}
+function inFold(){
+  let open={}; try{ open=JSON.parse(localStorage.getItem("mp_fold")||"{}")||{}; }catch(e){}
+  const save=()=>{ try{ localStorage.setItem("mp_fold",JSON.stringify(open)); }catch(e){} };
+  document.querySelectorAll("#pInput .bskg .bsub").forEach(h=>{
+    const key=(h.closest(".bskg").id||"g")+":"+h.textContent.trim().slice(0,22);
+    const sec=document.createElement("div"); sec.className="bsec";
+    let n=h.nextElementSibling;
+    while(n && !n.classList.contains("bsub") && !n.querySelector(":scope > .bsub")){ const nx=n.nextElementSibling; sec.appendChild(n); n=nx; }
+    h.after(sec); h.classList.add("fold"); if(!open[key]) h.classList.add("shut");
+    h.addEventListener("click",e=>{ if(e.target.closest("button")) return; h.classList.toggle("shut"); open[key]=!h.classList.contains("shut"); save(); });
+  });
+  document.querySelectorAll("#pInput .inmain .grp").forEach(g=>{
+    const h=g.querySelector(":scope > .gh"); if(!h) return; const key="m:"+h.textContent.trim().slice(0,22);
+    if(!open[key]) g.classList.add("shut");
+    h.addEventListener("click",()=>{ g.classList.toggle("shut"); open[key]=!g.classList.contains("shut"); save(); });
+  });
+}
+function inExpandAll(){ document.querySelectorAll("#pInput .bsub.fold").forEach(h=>h.classList.remove("shut")); document.querySelectorAll("#pInput .inmain .grp").forEach(g=>g.classList.remove("shut")); document.querySelectorAll("#pInput .inacc").forEach(a=>a.classList.add("open")); }
+(function(){
+  const P=$("#pInput"); if(!P) return;
+  inFold(); inCatSet(inCat);
+  document.querySelectorAll("#inCats button").forEach(b=>b.addEventListener("click",()=>{ const q=$("#inQ"); if(q && q.value){ q.value=""; inSearch(""); } inCatSet(b.dataset.c); }));
+  const q=$("#inQ"); if(q) q.addEventListener("input",()=>inSearch(q.value));
+  P.addEventListener("click",e=>{
+    const ah=e.target.closest(".inah");
+    if(ah){ const a=ah.parentElement; a.classList.toggle("open"); let o={}; try{ o=JSON.parse(localStorage.getItem("mp_inacc")||"{}")||{}; }catch(_){}
+      o[a.dataset.g]=a.classList.contains("open"); try{ localStorage.setItem("mp_inacc",JSON.stringify(o)); }catch(_){} return; }
+    const row=e.target.closest(".inrow"); if(!row || row.classList.contains("inoff")) return;
+    const n=row.dataset.n, it=INPBY[n]; if(!it || it.k!==0) return;
+    if(e.target.closest(".inrst")){ delete inEd[n]; delete inSentM[n]; if(inOk() && !inEq(it.t,inCur(it),inBase(it))) inDel[n]=1; else delete inDel[n]; mTouched=true; inRowPaint(row); inpPaint(); return; }
+    const sw=e.target.closest(".sw[data-in]"); if(sw){ inSetEdit(n, Number(inShown(it))?0:1); }
+  });
+  P.addEventListener("change",e=>{
+    const c=e.target.closest("[data-in]"); if(!c || c.classList.contains("sw")) return;
+    const row=c.closest(".inrow"), it=row && INPBY[row.dataset.n]; if(!it) return;
+    let v=c.value;
+    if(it.t==="i"){ if(v===""||!isFinite(Number(v))) return inRowPaint(row); v=String(Math.round(Number(v))); }
+    else if(it.t==="d"){ if(v===""||!isFinite(Number(v))) return inRowPaint(row); v=String(Number(v)); }
+    else if(it.t==="e") v=String(Number(v));
+    else if(it.t==="c") v=String(inColInt(v));
+    inSetEdit(it.n,v);
+  });
+  /* Maamul: kaadhadhka xeeladaha -> badhamada dhabta ah (Input) */
+  document.querySelectorAll("#stCard .stsw").forEach(b=>b.addEventListener("click",()=>{ const t=$("#"+b.dataset.sw); if(t && !t.disabled){ t.click(); stSync(); } }));
+  document.querySelectorAll("#stCard [data-go]").forEach(b=>b.addEventListener("click",()=>{ tab("Input"); inCatSet(b.dataset.go); }));
+  /* Account · furaha · muuqaalka -> Maamul (laab) */
+  const acc=$("#meta") && $("#meta").closest(".card"), fa=$("#fdAccB"); if(acc && fa){ fa.appendChild(acc); const k=$("#myKey"); if(k) fa.appendChild(k); }
+  const mx=$("#mxCard"), fm=$("#fdMxB"); if(mx && fm) fm.appendChild(mx);
+})();
+function stSync(){
+  document.querySelectorAll("#stCard .stsw").forEach(b=>{ const t=$("#"+b.dataset.sw); if(!t) return; b.classList.toggle("on",t.classList.contains("on")); b.disabled=!!t.disabled; b.closest(".stt").classList.toggle("off",!t.classList.contains("on")); });
+}
+function stPaint(d){
+  if(!$("#stCard")) return;
+  stSync();
+  const pl=(id,v)=>{ const e=$("#"+id); if(!e) return; if(v===null||v===undefined){ e.textContent="—"; e.className="p"; return; } const n=Number(v)||0; e.textContent=(n>=0?"+$":"-$")+Math.abs(n).toFixed(2); e.className="p "+(n>0?"g":(n<0?"r":"")); };
+  const pill=(id,t,c)=>{ const e=$("#"+id); if(e){ e.textContent=t; e.className="stp2 "+(c||""); } };
+  const T=d.tick; if(T){ const M={OFF:["DAMMAN",""],SEARCH:["RAADINAYA","run"],PAUSE:["SUGAYA","wt"],OPEN:[(T.bkt?"BASKET SOCDA":"TRADE SOCDA"),"run"]}, m=M[T.st]||["—",""];
+    pill("stTkS",m[0],m[1]); const D=T.day||{}, cf=T.cfg||{}; $("#stTkN").textContent=(D.n||0)+"/"+(cf.maxd||"—"); pl("stTkP",D.pl); } else { pill("stTkS","XOG MA JIRO",""); $("#stTkN").textContent=""; pl("stTkP",null); }
+  const B=d.bsk; if(B){ pill("stGdS",B.act?"BASKET SOCDA":(B.on?"SUGAYA SIGNAL":"DAMMAN"),B.act?"run":(B.on?"wt":"")); pl("stGdP",(B.day||{}).pl); } else { pill("stGdS","XOG MA JIRO",""); pl("stGdP",null); }
+  const A=d.asia; if(A){ const M={OFF:["DAMMAN",""],RANGE:["RANGE","wt"],WAIT:["SUGAYA JEBIN","wt"],OPEN:["TRADE SOCDA","run"],DONE:["MAANTA LA QAATAY","run"],SKIP:["MAANTA MA JIRO",""]}, m=M[A.st]||[String(A.st||"—"),""];
+    pill("stAsS",m[0],m[1]); const h=(A.hist||[])[0]; pl("stAsP",(h && Number(h.d)===Number(A.day))?h.pl:null); } else { pill("stAsS","XOG MA JIRO",""); pl("stAsP",null); }
+  const st=(d.data||{}).settings||{}, SN={SR:"SR / SD",SMC:"SMC",BOTH:"LABADA"};
+  const mn=$("#stMnN"); if(mn) mn.textContent=SN[st.strat]||"—";
+  const tko=!!(T && T.cfg && T.cfg.on && T.cfg.only);
+  pill("stMnS",tko?"TICK OO KELIYA":(d.online?"SHAQAYNAYA":"OFFLINE"),tko?"wt":(d.online?"run":""));
+  pl("stMnP",(d.data||{}).profit);
+}
 /* ---- v12.12: ⚡ TICK SCALPER (Guud · live) - panel-ka chart-ka oo kale ---- */
-const TK_STG=["VIRTUAL SL","BREAK-EVEN","TRAILING"];
+const TK_STG=["VIRTUAL SL","BREAK-EVEN","TRAILING","TP RAAC"];   // v12.17
 function tkMoney(v){ const n=Number(v)||0; return (n>=0?"+$":"-$")+Math.abs(n).toFixed(2); }
-const TK_X={1:"VIRTUAL TP",2:"VIRTUAL SL",3:"WAQTI",6:"BREAK-EVEN",8:"TRAILING",9:"SL ADAG / GACAN"};
+const TK_X={1:"VIRTUAL TP",2:"VIRTUAL SL",3:"WAQTI",6:"BREAK-EVEN",8:"TRAILING",9:"SL ADAG / GACAN",12:"TP RAAC"};   // v12.17
 function tkHM(t){ if(!t) return "—"; const d=new Date(t*1000); return String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0"); }
 function paintTick(a){
   const c=$("#tkCard"); if(!c) return;
   if(!a){ c.hidden=true; return; }
   c.hidden=false; TICK=a;
   const cf=a.cfg||{}, D=a.day||{}, T=a.tot||{}, dg=Number(a.dg)||2, tt=a.tt||{};
-  const ST={OFF:["DAMMAN","off"],SEARCH:["RAADINAYA","run"],PAUSE:["SUGAYA","wait"],OPEN:["TRADE SOCDA","run"]};
+  const ST={OFF:["DAMMAN","off"],SEARCH:["RAADINAYA","run"],PAUSE:["SUGAYA","wait"],OPEN:[(a.bkt?"BASKET SOCDA":"TRADE SOCDA"),"run"]};
   const s=ST[a.st]||["—",""];
   $("#tkPill").className="tkpill "+s[1]; $("#tkState").textContent=s[0];
-  $("#tkSub").textContent=(a.sym||"XAUUSD")+(cf.only?" · TICK OO KELIYA":"");
+  $("#tkSub").textContent=(a.sym||"XAUUSD")+(a.bkt?(" · BASKET "+((a.bkt.lay||[]).length)+" / "+(cf.bn||"—")):(cf.bon?(" · BASKET "+(cf.bn||"")):(cf.only?" · TICK OO KELIYA":"")));
   //--- sababta
   const wy=$("#tkWhy");
-  if(!a.on && a.st!=="OPEN"){ wy.hidden=false; wy.textContent="⏻ TICK SCALPER waa damman — Maamul → 7 · TICK SCALPER ama badhanka ⚡ TICK ee chart-ka."; }
+  if(!a.on && a.st!=="OPEN"){ wy.hidden=false; wy.textContent="⏻ TICK SCALPER waa damman — Maamul → Xeeladaha → ⚡ TICK (ama ⚙️ Input → TICK · badhanka ⚡ TICK ee chart-ka)."; }
   else if(a.st==="PAUSE"){ const w=String(a.why||"sug"); wy.hidden=false; wy.textContent=(/war|news/i.test(w)?"📰 ":(/spread/i.test(w)?"↔ ":(/saac|weekend|Jimce/i.test(w)?"🕐 ":"⏸ ")))+w+" — trade cusub ma furmo"; }
   else wy.hidden=true;
   //--- trade furan
   const op=$("#tkOpen");
-  if(a.st==="OPEN"){
+  //--- v12.16: TICK BASKET card
+  const bc=$("#tkBsk"), B=a.bkt;
+  if(a.st==="OPEN" && B){
+    bc.hidden=false;
+    const L=B.lay||[], N=Number(cf.bn)||L.length, lot=L.reduce((x,l)=>x+(Number(l.lot)||0),0), pl=Number(B.pl)||0, buy=(B.dir!=="SELL");
+    $("#tkBkH").textContent=(B.dir||"")+" BASKET · "+L.length+" lakab · "+lot.toFixed(2)+" lot";
+    const pe=$("#tkBkPL"); pe.textContent=tkMoney(pl); pe.className=pl>=0?"pos":"neg";
+    const age=(a.srv&&B.t0)?Math.max(0,a.srv-B.t0):0, ag=s=>(Math.floor(s/60)+"m "+String(s%60).padStart(2,"0")+"s");
+    $("#tkBkS").textContent=(age>0&&age<86400?(ag(age)+" · "):"")+"peak "+tkMoney(B.pk)+(cf.bent===1&&L.length<N?(" · lakab cusub: signal "+(buy?"▲":"▼")+" + basket faa'iido"):"");
+    const tgt=Number(cf.btgt)||0, tgW=$("#tkBkTg");
+    if(cf.bex===1 && tgt>0){ tgW.hidden=false; $("#tkBkTgI").style.width=Math.max(0,Math.min(100,pl/tgt*100))+"%";
+      $("#tkBkTgL").innerHTML="wadar <b>"+tkMoney(pl)+"</b>"; $("#tkBkTgR").innerHTML='bartilmaameed <b class="y">$'+tgt.toFixed(2)+'</b> → xidh dhammaan'; }
+    else tgW.hidden=true;
+    let rows=""; for(let k=0;k<Math.max(N,L.length);k++){ const l=L[k];
+      if(l){ const p=Number(l.pl)||0, s2=(a.srv&&l.t)?Math.max(0,a.srv-l.t):0;
+        rows+='<div class="tkly"><span class="n">#'+(k+1)+'</span><span>'+Number(l.e).toFixed(dg)+'</span><span class="w">'+Number(l.lot).toFixed(2)+(s2>0&&s2<86400?(' · '+ag(s2)):'')+((Number(l.rc)||0)>0?(' · <span class="tkrc">raac '+Number(l.rc)+'</span>'):'')+'</span><b class="'+(p>=0?"g":"r")+'">'+tkMoney(p)+'</b></div>'; }
+      else rows+='<div class="tkly wait"><span class="n">#'+(k+1)+'</span><span>—</span><span class="w">'+(cf.bent===1?("sugaya signal "+(buy?"▲":"▼")):"—")+'</span><b>—</b></div>'; }
+    $("#tkBkL").innerHTML=rows;
+    const sl=Number(B.sl)||0, risk=B.be?0:L.reduce((x,l)=>x+(Number(l.lot)||0)*100*Math.abs((Number(l.e)||0)-sl),0);
+    $("#tkBkSl").innerHTML='<span>SL wadaag <b class="y">'+sl.toFixed(dg)+'</b> <span class="tklock">🔒 BROKER</span></span><span>'+(B.be?'BE ✓':('BE @ +$'+Number(cf.bbe||0).toFixed(2)))+'</span><span>khatar hadda <b class="'+(risk<=0.005?"g":"")+'">$'+risk.toFixed(2)+'</b></span>';
+    const nm=["① SL WADAAG","② BREAK-EVEN",(cf.bex===1?("③ $"+tgt.toFixed(2)+" → XIDH"):"③ TP KASTA")], stg=B.be?1:0;
+    $("#tkBkSt").innerHTML=nm.map((t,i)=>'<span class="'+(i<stg?"done":(i===stg?"now":""))+'">'+t+'</span>').join("");
+  } else bc.hidden=true;
+  { const bd=$("#tkBkD"), K=a.bk;   // basket-yada maanta
+    if(K && (cf.bon || K.n>0)){ bd.hidden=false; $("#tkBkDN").textContent=K.n; const h=$("#tkBkDH"); h.textContent=K.hit+" / "+K.n; h.className=K.hit>0?"g":"";
+      const p=$("#tkBkDP"); p.textContent=tkMoney(K.pl); p.className=(Number(K.pl)||0)>0?"g":((Number(K.pl)||0)<0?"r":""); }
+    else bd.hidden=true; }
+  if(a.st==="OPEN" && !B){
     op.hidden=false;
     const buy=(a.dir!=="SELL"), e=Number(a.e)||0, vs=Number(a.vs)||0, vsl=Number(cf.vsl)||2.5, vtp=Number(cf.vtp)||0, fav=Number(a.fav)||0, pl=Number(a.pl)||0, stg=Number(a.stg)||0;
     $("#tkOT").textContent=(a.dir||"BUY")+" "+Number(a.lot||0).toFixed(2)+" · @ "+e.toFixed(dg);
     const o=$("#tkOPL"); o.textContent=tkMoney(pl); o.className=pl>=0?"pos":"neg";
     const age=(a.srv&&a.t0)?Math.max(0,a.srv-a.t0):0;
-    $("#tkTrs").textContent=(age>0&&age<86400?(age+"s · "):"")+"peak +$"+fav.toFixed(2)+" · "+(cf.trs>0?(stg>=2?"trailing wuu socdaa":("trailing wuxuu bilaabmayaa +$"+Number(cf.trs).toFixed(2))):"trailing off");
-    const sl0=buy?e-vsl:e+vsl, top=vtp>0?vtp:Math.max(fav,vsl/2), tp=buy?e+top:e-top;
+    const rc=Number(a.rc)||0, tpd=(vtp>0 && Number(a.tpd)>0)?Number(a.tpd):vtp, trm=Number(cf.trmax)||3, tron=(cf.tron===1 && vtp>0);   // v12.17 TP RAAC
+    const ag2=s=>(s>=60?(Math.floor(s/60)+"m "+String(s%60).padStart(2,"0")+"s"):(s+"s"));
+    $("#tkTrs").innerHTML=(age>0&&age<86400?(ag2(age)+" · "):"")+"peak +$"+fav.toFixed(2)+" · "
+      +(tron&&(rc>0||stg===3)?('<b class="tkrc">TP RAAC '+rc+' / '+trm+'</b>')
+        :((cf.trs>0?(stg>=2?"trailing wuu socdaa":("trailing wuxuu bilaabmayaa +$"+Number(cf.trs).toFixed(2))):"trailing off")
+          +(tron?(' · TP RAAC @ +$'+(tpd*(Number(cf.trst)||80)/100).toFixed(2)):'')));
+    const sl0=buy?e-vsl:e+vsl, top=vtp>0?tpd:Math.max(fav,vsl/2), tp=buy?e+top:e-top;
     const X=v=>Math.max(0,Math.min(100,(buy?(v-sl0):(sl0-v))/(vsl+top)*100));
     const xe=X(e), xv=X(vs), xp=X(buy?e+fav:e-fav);
     $("#tkBar").innerHTML='<div class="sg" style="left:0;width:'+xe+'%;background:linear-gradient(90deg,#7a2a2a,#4a1c1e)"></div>'
@@ -6950,9 +7513,10 @@ function paintTick(a){
       +(vtp>0?'<div class="mk" style="left:100%;background:#7fe0ab"></div>':'');
     const brk=(cf.slm===1 && Number(a.bsl)>0 && Math.abs(Number(a.bsl)-vs)<Math.pow(10,-dg)*0.6);   // v12.14
     const btp=Number(a.btp)>0, tpShow=btp?Number(a.btp):tp;   // v12.15: TP broker
-    $("#tkLg").innerHTML='<span>SL asal '+sl0.toFixed(dg)+'</span><span class="y">'+(cf.slm===1?"SL":"VSL")+' → '+vs.toFixed(dg)+(brk?('<span class="tklock">🔒'+(btp?'':' BROKER')+'</span>'):'')+'</span>'+(vtp>0?(btp?('<span style="color:#7fe0ab">TP '+tpShow.toFixed(dg)+'<span class="tklock">🔒 BROKER</span></span>'):('<span>VTP '+tp.toFixed(dg)+'</span>')):'<span>VTP off</span>');
-    const nm=[(cf.slm===1?"① STOP LOSS":"① VIRTUAL SL"),"② BREAK-EVEN","③ TRAILING"];
-    $("#tkSteps").innerHTML=nm.map((t,i)=>'<span class="'+(i<stg?"done":(i===stg?"now":""))+'">'+t+'</span>').join("");
+    const slP=buy?(vs-e):(e-vs), slTxt=(stg>0&&slP>0.004)?('+$'+slP.toFixed(2)):vs.toFixed(dg), rcT=rc>0?(' RAAC '+rc):'';   // v12.17: SL qufulan -> +$ faa'iido
+    $("#tkLg").innerHTML='<span>SL asal '+sl0.toFixed(dg)+'</span><span class="y">'+(cf.slm===1?"SL":"VSL")+' → '+slTxt+(brk?('<span class="tklock">🔒'+(btp?'':' BROKER')+'</span>'):'')+'</span>'+(vtp>0?(btp?('<span style="color:#7fe0ab">TP '+tpShow.toFixed(dg)+'<span class="tklock">🔒 '+(rc>0?rcT.trim():'BROKER')+'</span></span>'):('<span'+(rc>0?' style="color:#7fe0ab"':'')+'>VTP '+tp.toFixed(dg)+(rc>0?('<span class="tklock">'+rcT.trim()+'</span>'):'')+'</span>')):'<span>VTP off</span>');
+    const nm=[(cf.slm===1?"① STOP LOSS":"① VIRTUAL SL"),"② BREAK-EVEN",(stg===3?"③ TP RAAC":"③ TRAILING")], si=Math.min(stg,2);
+    $("#tkSteps").innerHTML=nm.map((t,i)=>'<span class="'+(i<si?"done":(i===si?"now":""))+'">'+t+'</span>').join("");
   } else op.hidden=true;
   //--- tick tracker
   const W=Number(cf.w)||8, K=Number(cf.k)||5, sq=String(a.seq||"");
@@ -6979,17 +7543,20 @@ function paintTick(a){
   else { se.hidden=true; $("#tkSesM").textContent="SAACADAHA (server)"; }
   $("#tkSesA").textContent=String(hs).padStart(2,"0")+":00"; $("#tkSesB").textContent=String(he).padStart(2,"0")+":00";
   //--- chips
-  const lot=(a.st==="OPEN")?Number(a.lot||0):(Number(a.lotp)||Number(cf.lot)||0.01);
+  const BL=(a.bkt&&a.bkt.lay)?a.bkt.lay:null;   // v12.16
+  const lot=BL?BL.reduce((x,l)=>x+(Number(l.lot)||0),0):((a.st==="OPEN")?Number(a.lot||0):(Number(a.lotp)||Number(cf.lot)||0.01));
   $("#tkChips").innerHTML='<span>LOT <b>'+lot.toFixed(2)+'</b> '+(cf.risk>0?("risk "+Number(cf.risk).toFixed(2)+"%"):"go'an")+'</span>'
     +(a.sp!==undefined?'<span>SPREAD <b>$'+Number(a.sp).toFixed(2)+'</b></span>':'')
-    +'<span>TRADE <b>'+(a.st==="OPEN"?1:0)+'/1</b></span><span>DD <b>'+Number(a.dd||0).toFixed(2)+'%</b></span>';
+    +'<span>TRADE <b>'+(BL?(BL.length+'/'+(cf.bn||BL.length)):((a.st==="OPEN"?1:0)+'/1'))+'</b></span><span>DD <b>'+Number(a.dd||0).toFixed(2)+'%</b></span>';
   //--- taariikhda
   const H=a.hist||[];
   $("#tkHist").innerHTML=H.length?H.map(h=>{ const p=Number(h.pl)||0;
-      const nm=(h.b===1 && h.x===2)?"STOP LOSS":((h.b===2 && h.x===1)?"TAKE PROFIT":(TK_X[h.x]||"—")), ex=(h.k!==undefined);   // v12.15
+      const nb=Number(h.n)||0, BX={10:"$ ✓",11:"BE",12:"TP RAAC",2:"SL",1:"TP",3:"WAQTI",9:"—"};
+      const nm=nb>0?("BASKET ×"+nb+" · "+(BX[h.x]||"—")):((h.b===1 && h.x===2)?"STOP LOSS":((h.b===2 && h.x===1)?"TAKE PROFIT":(TK_X[h.x]||"—"))), ex=(h.k!==undefined);   // v12.15 · v12.16
       const sl=Number(h.s)||0;
       return '<div class="tkhr2"><div class="tkhr"><span class="t">'+tkHM(h.t)+'</span><span>'+(h.d>0?"BUY":"SELL")+'</span><span>'+esc(nm)+(h.b?' 🔒':'')+'</span><b class="'+(p>0?"g":(p<0?"r":""))+'">'+tkMoney(p)+'</b></div>'
-        +(ex?('<div class="x">peak <b>+$'+Number(h.k||0).toFixed(2)+'</b> · slip <b class="'+(sl>0.3?"r":"")+'">$'+sl.toFixed(2)+'</b> · spread <b>$'+Number(h.sp||0).toFixed(2)+'</b></div>'):'')+'</div>'; }).join("")
+        +(nb>0?('<div class="x">'+nb+' lakab · peak <b>'+tkMoney(h.k)+'</b> · spread <b>$'+Number(h.sp||0).toFixed(2)+'</b></div>')
+          :(ex?('<div class="x">peak <b>+$'+Number(h.k||0).toFixed(2)+'</b> · slip <b class="'+(sl>0.3?"r":"")+'">$'+sl.toFixed(2)+'</b> · spread <b>$'+Number(h.sp||0).toFixed(2)+'</b></div>'):''))+'</div>'; }).join("")
     :'<div class="bidle" style="margin-top:4px">Weli trade lama xidhin (EA v70.1+).</div>';
   //--- v12.14: tayada bixitaanka (EA v70.2+)
   const qa=$("#tkQA");
@@ -7171,7 +7738,7 @@ function paintAsia(a){
   } else live.hidden=true;
   $("#asWhy").hidden=(a.st==="OPEN");
   let why=a.why||"";
-  if(!a.on && a.st!=="OPEN") why="ASIA BREAKOUT waa damman — Maamul → 5 · ASIA BREAKOUT ka shid.";
+  if(!a.on && a.st!=="OPEN") why="ASIA BREAKOUT waa damman — Maamul → Xeeladaha → 🌅 ASIA ka shid.";
   else if(a.st==="WAIT" && a.tr!==0){ const d=a.tr>0?"BUY":"SELL"; why=esc(why)+'<br><small style="color:var(--ink3)">Trend-ku waa '+(a.tr>0?"KOR":"HOOS")+' → <b>'+d+' oo keliya</b> marka '+(a.tr>0?"SARE":"HOOS")+' la jebiyo (ilaa '+String(a.we||12).padStart(2,"0")+':00 GMT).</small>'; $("#asWhy").innerHTML=why; why=null; }
   if(why!==null) $("#asWhy").textContent=why||"—";
   const H=(a.hist||[]);
@@ -7235,7 +7802,7 @@ function paintBasket(b){
     chips.innerHTML='<span class="y">'+esc(SIGN[b.sig]||"LABADA")+'</span>';
     live.hidden=true; idle.hidden=false;
     idle.innerHTML=b.on?("Basket ma socdo — bot-ku wuxuu sugayaa signal "+esc(SIGN[b.sig]||"")+" tayo leh."+(b.why?('<br><small style="color:var(--ink3)">Ugu dambeeyay: '+esc(b.why)+'</small>'):""))
-                       :"GOLD BASKET waa damman — Maamul → 6 · GOLD BASKET ka shid.";
+                       :"GOLD BASKET waa damman — Maamul → Xeeladaha → 🥇 GOLD BASKET ka shid.";
     return;
   }
   $("#bskTitle").textContent=(b.sym||"XAUUSD")+" · "+(b.dir||"")+" BASKET";
@@ -7340,23 +7907,26 @@ async function sendSettings(){
   tickCmds(cmds);  // v12.12: ⚡ TICK SCALPER
   const values={}; cmds.forEach(c=>{ const m=/^SET:([A-Z0-9]+)=(.+)$/.exec(c); if(m) values[m[1]]=m[2]; });
   if(PERMS) Object.keys(values).forEach(k=>{ if(!permOK(PERM_OF[k])) delete values[k]; });   // v12: macmiil
+  const unset=PERMS?[]:inpCollect(values);   // v12.18: ⚙️ INPUT (admin)
   btn.disabled=true; btn.textContent="Kaydinaya…";
   let err="";
   try{
-    const body={values:values}; if(accSel)body.account=accSel.value;
+    const body={values:values}; if(unset.length) body.unset=unset; if(accSel)body.account=accSel.value;
     const r=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
     const d=await r.json(); if(!d.ok) err=d.error||"Lama kaydin.";
   }catch(e){ err="Internet ma jiro — lama kaydin."; }
   btn.disabled=false; btn.textContent=old;
-  if(!err){ mTouched=false; mSavedAt=Date.now(); }
+  if(!err){ mTouched=false; mSavedAt=Date.now(); inpSent(); }
   $("#mNote").textContent = err ? err : "La kaydiyay oo la diray. Chart kasta 20 ilbiriqsi gudahood ayuu qaadanayaa.";
+  if($("#mNote2")) $("#mNote2").textContent=$("#mNote").textContent;   // v12.18
   tick();
 }
 if($("#mSend"))  $("#mSend").addEventListener("click",sendSettings);
+if($("#mSend2")) $("#mSend2").addEventListener("click",sendSettings);   // v12.18: Maamul
 if($("#mReset")) $("#mReset").addEventListener("click",async ()=>{
   const body={reset:true}; if(accSel)body.account=accSel.value;
   await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-  mTouched=false; mSeeded=false;
+  mTouched=false; mSeeded=false; inEd={}; inDel={}; inSentM={}; if(INPS) inpPaint();
   $("#mNote").textContent="Celis: sitinka app-ka waa la tirtiray - bot-ku wuxuu ku noqonayaa sitinka koodka.";
   tick();
 });
@@ -7465,7 +8035,7 @@ async function loadJournal(){
 function tab(n){
   document.querySelectorAll(".pane").forEach(p=>p.classList.toggle("on",p.id==="p"+n));
   document.querySelectorAll(".appbar button").forEach(b=>b.classList.toggle("on",b.dataset.tab===n));
-  if(n==="Chart") drawChart();
+  if(n==="Input") inpLoad();                          // v12.18
   if(n==="Journal") loadJournal();
   if(n==="Trade") loadShots();                        // v9.1
   if(n==="Analiis") loadLevels(true);                 // v12.3
