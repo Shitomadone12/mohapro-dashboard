@@ -20,6 +20,7 @@ Web (session auth):
   /login /register /logout /dashboard /admin
   GET  /api/state         -> xogta account-ka user-ka
   POST /api/command       -> amar loo diro EA-da
+  v12.23: wajiga hore (sawir shaashad buuxda · ⏻ MT5 SHID/DAMI · ✕ XIDH · ⋯) · 🎵 player la jiidi karo
   v12.22: 🎯 ZONE YAR (zn) · 💱 LAMAANAHA (pairs · SET:PAIRS=h..) - EA v70.8
   GET/POST /api/music     -> v12.20: 🎵 liiska heesaha (link-yo)
 """
@@ -5409,6 +5410,83 @@ html.th .hero-fade{background:linear-gradient(180deg,rgba(13,13,13,.58) 0%,rgba(
 .nwarn{border:1px solid rgba(208,59,59,.5);background:rgba(208,59,59,.1);color:#f2a3a3;
   border-radius:12px;padding:11px 13px;font-size:12.5px;line-height:1.45}
 @media(min-width:900px){.cols.two{grid-template-columns:1fr}}
+/* ---------- v12.23: 🖼 sawirka shaashadda oo dhan · ⏻ MT5 SHID/DAMI · ✕ XIDH · 🎵 player la jiidi karo ---------- */
+.hero.hfull{min-height:calc(100vh - 66px);min-height:calc(100svh - 66px - env(safe-area-inset-bottom));padding:70px 14px 14px;border-bottom:none}
+.hero.hfull .hero-fade{background:linear-gradient(180deg,rgba(10,8,18,.5) 0%,rgba(10,8,18,0) 16%,rgba(10,8,18,0) 40%,rgba(14,11,22,.78) 64%,rgba(16,12,24,.97) 100%)}
+.hfull #btnPic span{display:none}
+.hfull #btnPic{padding:9px;border-radius:50%}
+.hmb{width:38px;height:38px;padding:0;justify-content:center;border-radius:50%;font-size:18px;font-weight:900;letter-spacing:1px}
+.hfull .hero-in{gap:0}
+.hacc{display:inline-flex;gap:6px;font-size:11.5px;font-weight:800;padding:4px 10px;border-radius:999px;background:rgba(15,12,24,.55);border:1px solid rgba(255,255,255,.18);color:#d8d2e6;margin-bottom:6px}
+.hfull h1{font-size:34px}
+.hst{display:flex;align-items:center;gap:7px;font-size:12.5px;color:#d8d2e6;margin-top:4px;line-height:1.45;flex-wrap:wrap}
+.hst .dot{flex:0 0 auto;margin-top:5px}
+.hst{align-items:flex-start}.hst #st{flex:1;min-width:0}
+.hstats{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;width:100%;margin-top:12px}
+.hstats div{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.13);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-radius:13px;padding:8px 10px;min-width:0}
+.hstats small{display:block;font-size:9.5px;letter-spacing:.12em;color:#b9b3c8;font-weight:800}
+.hstats b,.hstats b.v{display:block;font-size:16px;font-weight:800;margin:2px 0 0;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hctl{display:grid;grid-template-columns:1.45fr 1fr;gap:9px;width:100%;margin-top:11px;align-items:center}
+.mtsw{position:relative;height:68px;border-radius:999px;padding:0;border:none;cursor:pointer;background:linear-gradient(135deg,#fff1b8,#e8b44a 30%,#8a5a12 55%,#f6d58b 80%,#a8741c);box-shadow:0 0 18px rgba(240,180,60,.45),0 6px 18px rgba(0,0,0,.6);touch-action:pan-y;-webkit-tap-highlight-color:transparent}
+.mtsw:before{content:"";position:absolute;inset:3px;border-radius:999px;background:radial-gradient(ellipse at 50% 30%,#2a2418,#0b0907 75%);box-shadow:inset 0 0 0 2px rgba(255,215,120,.35),inset 0 4px 14px rgba(0,0,0,.9)}
+.mtsw .knob{position:absolute;top:2px;left:calc(100% - 66px);width:64px;height:64px;border-radius:50%;z-index:2;background:#0b0907 center/cover no-repeat;box-shadow:0 0 0 2px rgba(34,197,94,.95),0 0 22px rgba(34,197,94,.75);transition:left .32s cubic-bezier(.3,1.4,.5,1),box-shadow .3s,filter .3s}
+.mtsw.off .knob{left:2px;box-shadow:0 0 0 2px rgba(239,68,68,.95),0 0 22px rgba(239,68,68,.6);filter:saturate(.55) brightness(.85)}
+.mtsw.na .knob{left:calc(50% - 32px);box-shadow:0 0 0 2px rgba(160,160,170,.7);filter:grayscale(1) brightness(.7)}
+.mtsw .lbl{position:absolute;z-index:2;top:50%;transform:translateY(-50%);left:22px;right:76px;text-align:left;line-height:1.2;pointer-events:none}
+.mtsw.off .lbl{left:76px;right:18px;text-align:right}
+.mtsw.na .lbl{left:14px;right:14px;text-align:center;opacity:0}
+.mtsw .lbl b{display:block;font-size:15px;letter-spacing:.1em;color:#86efac;text-shadow:0 0 10px rgba(34,197,94,.6)}
+.mtsw.off .lbl b{color:#fca5a5;text-shadow:0 0 10px rgba(239,68,68,.5)}
+.mtsw .lbl small{display:block;font-size:10px;color:#d9c79b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mtsw.pend .knob{animation:mtpulse 1s ease-in-out infinite}
+@keyframes mtpulse{50%{box-shadow:0 0 0 2px #f0cf86,0 0 30px rgba(240,207,134,.9)}}
+@media (prefers-reduced-motion:reduce){.mtsw .knob{transition:none}.mtsw.pend .knob{animation:none}}
+.mtsw:disabled{cursor:default;opacity:.55}
+.mtsw:focus-visible,.hxid:focus-visible{outline:2px solid #f0cf86;outline-offset:3px}
+.hxid{display:flex;align-items:center;gap:9px;height:68px;padding:0 12px;border-radius:18px;cursor:pointer;color:#fff;text-align:left;font:inherit;background:linear-gradient(120deg,rgba(249,115,22,.2),rgba(20,16,28,.88));border:1px solid rgba(249,115,22,.55);min-width:0}
+.hxid .xi{width:44px;height:44px;flex:0 0 44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:19px;font-weight:900;color:#fdba74;border:2px solid #f97316;background:#22150c}
+.hxid .pt{min-width:0}.hxid .pt b{display:block;font-size:14px;letter-spacing:.08em;color:#fdba74}
+.hxid .pt small{display:block;font-size:10.5px;color:#d6c9bd;white-space:pre-line;line-height:1.3}
+.hxid:disabled{opacity:.45;cursor:default}
+.hmenu{position:fixed;top:58px;right:12px;z-index:70;width:230px;display:flex;flex-direction:column;gap:6px;padding:8px;border-radius:16px;background:#181420;border:1px solid #3a3150;box-shadow:0 18px 40px rgba(0,0,0,.65)}
+.hmenu[hidden]{display:none!important}
+.hmenu .spacer{display:none}
+.hmenu select{width:100%!important}
+.hmenu .pill{justify-content:flex-start}
+.hmenu .btn{display:block;width:100%;text-align:left;padding:10px 12px;border-radius:10px}
+.cfm{position:fixed;inset:0;z-index:95;display:flex;flex-direction:column;justify-content:flex-end;background:rgba(0,0,0,.5)}
+.cfm[hidden]{display:none!important}
+.cfm .sh{background:#17131f;border-top:1px solid #3a3150;border-radius:22px 22px 0 0;padding:14px 16px calc(18px + env(safe-area-inset-bottom));max-width:560px;width:100%;margin:0 auto}
+.cfm .gr{width:40px;height:4px;border-radius:2px;background:#3a3150;margin:0 auto 12px}
+.cfm h4{font-size:17px;margin:0}
+.cfm .bd{font-size:13px;color:#c9c3d8;line-height:1.55;margin-top:8px}
+.cfm .ls{display:flex;flex-direction:column;gap:5px;margin-top:10px;max-height:34vh;overflow-y:auto}
+.cfm .ls span{font-size:12.5px;background:#211c2e;border:1px solid #3a3150;border-radius:10px;padding:7px 10px;display:flex;justify-content:space-between;gap:8px}
+.cfm .bt{display:grid;grid-template-columns:1.3fr 1fr;gap:8px;margin-top:14px}
+.cfm .bt button{padding:13px;border-radius:14px;font:inherit;font-weight:900;font-size:14px;cursor:pointer}
+.cfm .bt .d{background:rgba(239,68,68,.2);border:1px solid #ef4444;color:#fecaca}
+.cfm .bt .o{background:rgba(249,115,22,.2);border:1px solid #f97316;color:#fed7aa}
+.cfm .bt .c{background:#211c2e;border:1px solid #3a3150;color:#d8d2e6}
+.cfm .alt{display:block;width:100%;margin-top:10px;background:none;border:none;color:#93c5fd;font:inherit;font-weight:800;font-size:13px;cursor:pointer;padding:6px}
+.cfm .nt{font-size:12px;margin-top:8px;color:#f6d58b;min-height:1px}
+/* 🎵 player la jiidi karo · la qarin karo */
+.mubar{padding-left:2px}
+.muhd{flex:0 0 22px;align-self:stretch;display:flex;align-items:center;justify-content:center;color:#b58aa8;font-size:16px;letter-spacing:-3px;cursor:grab;touch-action:none;border-right:1px solid #3a2b3a;user-select:none;-webkit-user-select:none}
+.mubar.drag{box-shadow:0 22px 44px rgba(0,0,0,.8),0 0 0 2px rgba(236,72,153,.6);transform:scale(1.02)}
+.mubar.drag .muhd{cursor:grabbing}
+.mux{position:absolute;top:-13px;width:28px;height:28px;border-radius:50%;padding:0;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:900;cursor:pointer;background:#2a2230;box-shadow:0 4px 12px rgba(0,0,0,.6)}
+.mux.mn{right:40px;border:2px solid #f472b6;color:#f9a8d4}
+.mux.cl{right:6px;border:2px solid #6b5a72;color:#e2d5e6}
+.mububl{position:fixed;z-index:41;width:62px;height:62px;border-radius:50%;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none;background:radial-gradient(circle,#f0cf86 0 7%,#1a1a1a 8% 30%,#2c2c2c 31% 33%,#151515 34% 100%) center/cover no-repeat;border:3px solid #ec4899;box-shadow:0 0 0 6px rgba(236,72,153,.2),0 10px 24px rgba(0,0,0,.7)}
+.mububl[hidden]{display:none!important}
+.mububl.drag{transform:scale(1.1)}
+.mububl .eq{position:absolute;right:-5px;bottom:-5px;width:24px;height:24px;border-radius:50%;background:#ec4899;display:flex;gap:2px;align-items:flex-end;justify-content:center;padding-bottom:6px;z-index:3}
+.mububl .eq i{width:3px;height:4px;background:#fff;border-radius:1px}
+.mububl.play .eq i{animation:neq .9s ease-in-out infinite}.mububl.play .eq i:nth-child(2){animation-delay:.3s}.mububl.play .eq i:nth-child(3){animation-delay:.6s}
+.muhost.bub{border-radius:50%}
+.muhost.mini{pointer-events:none}   /* saxanka / sawirka yar: taabashadu ha gaadho bar-ka */
+.hero.hfull.hoff .hero-photo,.hero.hfull.hoff .hero-ph{filter:saturate(.3) brightness(.7);transition:filter .4s}
+.mtsw .knob{background-image:url("data:image/webp;base64,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")}
 
 /* ---------- v12.22: 💱 LAMAANAHA + 🎯 ZONE YAR (EA v70.8) ---------- */
 .prstrip{display:flex;gap:6px;overflow-x:auto;margin:0 0 14px;padding:7px;border-radius:14px;background:var(--surface);border:1px solid var(--line);scrollbar-width:none}
@@ -5585,7 +5663,7 @@ body.mu-on{padding-bottom:calc(136px + env(safe-area-inset-bottom))}
 body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
 </style></head><body>
 
-<div class="hero">
+<div class="hero hfull">
   <div class="hero-ph"></div>
   <div class="hero-photo" id="heroPhoto"></div>
   <div class="hero-fade"></div>
@@ -5600,20 +5678,27 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
         <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
         <span>Beddel sawirka</span>
       </button>
+      <button class="edit hmb" id="heroMenuB" type="button" aria-label="Menu: account · password · bax" aria-haspopup="true" aria-expanded="false">⋯</button>
     </span>
   </div>
-  <div class="hero-in">
+  <div class="hero-in">   <!-- v12.23: wajiga hore -->
+    <span class="hacc"><span id="heroAcc">—</span> · MT5</span>
     <h1>MOHA PRO <b id="heroVer"></b></h1>
-    <div class="chips">
-      <span class="chip"><span class="dot" id="dot"></span><span id="st">Xiriirinaya…</span></span>
-      <span class="chip">MT5</span>
-      <span class="chip" id="heroAcc">—</span>
+    <div class="hst"><span class="dot" id="dot"></span><span id="st">Xiriirinaya…</span></div>
+    <div class="hstats">
+      <div><small>BALANCE</small><b class="v neu" id="bal">—</b></div>
+      <div><small>EQUITY</small><b class="v neu" id="eq">—</b></div>
+      <div><small>MAANTA</small><b class="v" id="pf">—</b></div>
+    </div>
+    <div class="hctl">
+      <button class="mtsw na" id="pwrSw" type="button" data-perm="run" aria-label="Bot-ka shid / dami" aria-pressed="false"><span class="lbl"><b id="pwrT">—</b><small id="pwrS">—</small></span><span class="knob" aria-hidden="true"></span></button>
+      <button class="hxid" id="xidB" type="button" data-perm="close" aria-label="Xidh trade-yada furan" disabled><span class="xi" aria-hidden="true">✕</span><span class="pt"><b>XIDH</b><small id="xidS">—</small></span></button>
     </div>
   </div>
 </div>
 <input type="file" id="pick" accept="image/png,image/jpeg,image/webp">
 
-<div class="top">
+<div class="hmenu" id="heroMenu" hidden role="menu">   <!-- v12.23: ⋯ -->
   {% if is_admin %}
   <select id="accSel" autocomplete="off" style="width:auto;padding:7px 10px;font-size:13px">
     {% for a in accounts %}<option value="{{ a }}" {% if a==sel %}selected{% endif %}>{{ a }}</option>{% endfor %}
@@ -5622,9 +5707,9 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
   {% else %}<span class="pill">Account: {{ me }}</span>{% endif %}
   <span class="spacer"></span>
   <span class="pill">{{ name }}</span>
-  {% if is_admin %}<a class="btn" href="/admin">Maamul</a>{% endif %}
-  <a class="btn" href="/password">Password</a>
-  <a class="btn" href="/logout">Bax</a>
+  {% if is_admin %}<a class="btn" href="/admin">🛡 Admin (maamul)</a>{% endif %}
+  <a class="btn" href="/password">🔑 Password</a>
+  <a class="btn" href="/logout">⎋ Bax</a>
 </div>
 
 <div class="wrap">
@@ -5635,9 +5720,6 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
     <div class="prstrip" id="prStrip" hidden role="tablist" aria-label="Lamaanaha"></div>
     <div class="prflt" id="prFlt" hidden><span>💱 <b id="prFltS">—</b> oo keliya · Trade-yada</span><button type="button" id="prFltX">✕ Dhammaan</button></div>
     <div class="grid">
-      <div class="tile"><div class="k">Balance</div><div class="v neu" id="bal">—</div></div>
-      <div class="tile"><div class="k">Equity</div><div class="v neu" id="eq">—</div></div>
-      <div class="tile"><div class="k">Faa'iido xidhan (maanta)</div><div class="v" id="pf">—</div></div>
       <div class="tile"><div class="k">Faa'iido furan (float)</div><div class="v" id="fl">—</div></div>
       <div class="tile"><div class="k">Wadarta hadda</div><div class="v" id="tot">—</div></div>
       <div class="tile"><div class="k">Win rate</div><div class="v neu" id="wr">—</div></div>
@@ -6368,15 +6450,21 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
 </nav>
 <div class="chtoast" id="chToast" hidden role="status"><span>💬</span><span class="tx"><b>Fariin cusub</b> · <span id="chToastN"></span></span><button type="button" id="chToastGo">FUR</button><button type="button" class="x" id="chToastX" aria-label="Xidh">✕</button></div>
 <div class="tip" id="tip"></div>
+<div class="cfm" id="cfm" hidden role="dialog" aria-modal="true" aria-labelledby="cfmT"><div class="sh"><div class="gr"></div><h4 id="cfmT">—</h4><div class="bd" id="cfmB"></div><div class="ls" id="cfmL" hidden></div>
+  <div class="bt"><button type="button" id="cfmOk" class="d">OK</button><button type="button" id="cfmNo" class="c">Ka noqo</button></div><button type="button" class="alt" id="cfmAlt" hidden>—</button><div class="nt" id="cfmN"></div></div></div>
 
 <!-- v12.20: 🎵 MUUSIG -->
 <div class="mubar" id="muBar" hidden>
+  <span class="muhd" id="muHd" role="button" aria-label="Jiid player-ka">⋮⋮</span>
+  <button class="mux mn" type="button" id="muMin" aria-label="Qari player-ka (heestu way socotaa)">–</button>
+  <button class="mux cl" type="button" id="muX" aria-label="Jooji oo xidh">✕</button>
   <div class="art" id="muArt" role="button" tabindex="0" aria-label="Fur muusigga">🎵</div>
   <div class="mi" id="muMi" role="button" tabindex="0" aria-label="Fur muusigga"><b id="muT">—</b><small id="muS">—</small><div class="pb"><i id="muPb"></i></div></div>
   <button class="mubtn" type="button" id="muPrev" aria-label="Heestii hore">⏮</button>
   <button class="mubtn p" type="button" id="muPlay" aria-label="Shid / jooji">▶</button>
   <button class="mubtn" type="button" id="muNext" aria-label="Heesta xigta">⏭</button>
 </div>
+<div class="mububl" id="muBub" hidden role="button" tabindex="0" aria-label="Muusigga: taabo → player-ka · jiid → meel kale"><span class="eq"><i></i><i></i><i></i></span></div>
 <div class="muhost" id="muHost"></div>
 <audio id="muAudio" preload="metadata" playsinline></audio>
 <input type="file" id="muFile" accept="audio/*,.mp3,.m4a,.aac,.ogg,.wav,.flac" multiple>
@@ -6532,7 +6620,8 @@ function paint(d){
   paintMyKey(d);                                    // v11
   paintLic(d);                                      // v12
   paintTick(d.tick);                                // v12.12
-  try{ znPaint(d.zn); PRD=d.pairs||null; prSeed(); prStripPaint(); prPaint(); }catch(e){ console.error(e); }   // v12.22: 🎯 ZONE YAR · 💱 LAMAANAHA
+  try{ znPaint(d.zn); PRD=d.pairs||null; prSeed(); prStripPaint(); prPaint(); }catch(e){ console.error(e); }
+  try{ heroPaint(d); }catch(e){ console.error(e); }   // v12.23: ⏻ SHID/DAMI · ✕ XIDH   // v12.22: 🎯 ZONE YAR · 💱 LAMAANAHA
   try{ muOnState(d,x); }catch(e){}                  // v12.20: 🎵 trade xidhmay -> codka hoos u dhig
   INPV=d.inp||null; if(INPS) inpPaint();            // v12.18: ⚙️ INPUT
   stPaint(d);                                       // v12.18: Maamul -> xeeladaha
@@ -6740,8 +6829,8 @@ $("#pick").addEventListener("change",async ev=>{
   const f=ev.target.files && ev.target.files[0];
   ev.target.value="";
   if(!f) return;
-  const btn=$("#btnPic"); const old=btn.textContent;
-  btn.disabled=true; btn.textContent="Cusboonaysiinaya…";
+  const btn=$("#btnPic"); const old=btn.innerHTML;   // v12.23: icon-ka ha lumin
+  btn.disabled=true; btn.innerHTML="⏳";
   try{
     const data=await shrink(f,1600,0.86);
     const body={img:data};
@@ -6752,7 +6841,7 @@ $("#pick").addEventListener("change",async ev=>{
     if(d.ok){ setBrand(data); }
     else    { alert(d.error||"Sawirka lama keydin."); }
   }catch(e){ alert("Sawirka lama akhriyi karin."); }
-  btn.disabled=false; btn.textContent=old;
+  btn.disabled=false; btn.innerHTML=old;
 });
 
 /* v4.2: sawirka ka saarid - "Beddel sawirka" si dheer u hay (1 ilbiriqsi) */
@@ -8975,18 +9064,21 @@ function muLayout(){
   const open=!mu$("muSheet").hidden, bar=mu$("muBar");
   const live=MU.kind && (MU.kind==="lo" || h.dataset.made);
   if(!live){ h.classList.remove("show"); return; }
-  let el=null;
-  if(open) el=mu$("muSlot"); else if(!bar.hidden) el=mu$("muArt");
+  let el=null; const ub=mu$("muBub");
+  if(open) el=mu$("muSlot"); else if(!bar.hidden) el=mu$("muArt"); else if(ub && !ub.hidden) el=ub;   // v12.23: saxan yar
+  h.classList.toggle("bub",!open && !!el && el===ub);
   if(!el){ h.classList.remove("show"); return; }
   const r=el.getBoundingClientRect();
   h.style.left=r.left+"px"; h.style.top=r.top+"px"; h.style.width=r.width+"px"; h.style.height=r.height+"px";
   h.classList.add("show"); h.classList.toggle("big",open); h.classList.toggle("mini",!open);
 }
 function muBar(){
-  const b=mu$("muBar"); if(!b) return;
-  const show=!!MU.cur, was=!b.hidden;
-  b.hidden=!show; document.body.classList.toggle("mu-on",show);
-  const ab=document.querySelector(".appbar"); if(ab) b.style.bottom=(ab.offsetHeight+6)+"px";
+  const b=mu$("muBar"), ub=mu$("muBub"); if(!b) return;
+  let bub=false, dock=true; try{ bub=(MUP.mode==="bub"); dock=(MUP.y===null); }catch(e){}   // v12.23
+  const has=!!MU.cur, show=has && !bub, was=!b.hidden;
+  b.hidden=!show; if(ub) ub.hidden=!(has && bub);
+  document.body.classList.toggle("mu-on",show && dock);
+  try{ mupPlaceBar(); mupPlaceBub(); }catch(e){ const ab=document.querySelector(".appbar"); if(ab) b.style.bottom=(ab.offsetHeight+6)+"px"; }
   const it=MU.it;
   mu$("muT").textContent=it?(it.t||"—"):"—";
   const art=mu$("muArt"); art.setAttribute("style",it&&it.k!=="lo"?muBgUrl(it.th):""); art.textContent=it&&(it.k==="lo"||!it.th)?(it.k==="lo"?"📱":"🎵"):"";
@@ -9007,6 +9099,7 @@ function muTick(){
   ["muPlay","muPlay2"].forEach(id=>{ const b=mu$(id); if(b) b.textContent=MU.playing?"⏸":"▶"; });
   const d=mu$("muDisc"); if(d) d.classList.toggle("spin",MU.kind==="lo"&&MU.playing);
   const nm=mu$("navMus"); if(nm) nm.classList.toggle("play",!!MU.playing);   // v12.21
+  const ubp=mu$("muBub"); if(ubp) ubp.classList.toggle("play",!!MU.playing);   // v12.23
   if("mediaSession" in navigator){ try{ navigator.mediaSession.playbackState=MU.playing?"playing":"paused"; }catch(e){} }
 }
 function muHalt(keep){
@@ -9604,6 +9697,121 @@ document.querySelectorAll("#znEye button").forEach(b=>b.addEventListener("click"
   const err=await cfgPost({ZNSH:v});
   $("#znMeta").textContent=err?("⚠️ "+err):(v?"👁 Zone-yada chart-ka MT5 ayaa lagu muujinayaa (~20 ilbiriqsi).":"🙈 Chart-ka MT5 waa la nadiifinayaa — bot-ku wuu sii ganacsanayaa.");
 }));
+
+
+/* ================= v12.23: 🖼 wajiga hore · ⏻ MT5 SHID/DAMI · ✕ XIDH · ⋯ menu ================= */
+const HERO={on:null,pend:null,open:[],flo:0};
+function cfmOpen(o){
+  const c=$("#cfm"); if(!c) return;
+  $("#cfmT").textContent=o.title||""; $("#cfmB").innerHTML=o.html||""; $("#cfmL").innerHTML=o.list||""; $("#cfmL").hidden=!o.list; $("#cfmN").textContent="";
+  const ok=$("#cfmOk"), al=$("#cfmAlt");
+  ok.textContent=o.ok||"OK"; ok.className=o.okCls||"d"; ok.onclick=()=>{ cfmClose(); if(o.onOk) o.onOk(); };
+  if(o.alt){ al.hidden=false; al.textContent=o.alt; al.onclick=()=>{ cfmClose(); if(o.onAlt) o.onAlt(); }; } else al.hidden=true;
+  c.hidden=false; setTimeout(()=>{ try{ $("#cfmNo").focus(); }catch(e){} },30);
+}
+function cfmClose(){ const c=$("#cfm"); if(c) c.hidden=true; }
+if($("#cfm")){
+  $("#cfmNo").addEventListener("click",cfmClose);
+  $("#cfm").addEventListener("click",e=>{ if(e.target.id==="cfm") cfmClose(); });
+  addEventListener("keydown",e=>{ if(e.key==="Escape" && !$("#cfm").hidden) cfmClose(); });
+}
+async function heroCmd(cmd){
+  const note=$("#cmdNote");
+  try{
+    const body={cmd:cmd}; if(accSel) body.account=accSel.value;
+    const r=await fetch("/api/command",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const d=await r.json();
+    if(note) note.textContent=d.ok?("Waa la diray: "+cmd+" — EA-du 3–5s gudahood buu qaadanayaa."):("Khalad: "+(d.error||"lama diri karin"));
+    if(!d.ok){ HERO.pend=null; heroCtlPaint(); alertNote(d.error||"Amarka lama diri karin."); }
+  }catch(e){ HERO.pend=null; heroCtlPaint(); alertNote("Internet ma jiro — amarka lama dirin."); }
+  tick();
+}
+function alertNote(t){ const s=$("#pwrS"); if(s){ s.textContent="⚠️ "+t; } }
+function heroCtlPaint(){
+  const sw=$("#pwrSw"), t=$("#pwrT"), s=$("#pwrS"); if(!sw) return;
+  if(HERO.pend && Date.now()-HERO.pend.t>45000) HERO.pend=null;
+  if(HERO.pend && HERO.on!==null && HERO.on===HERO.pend.want) HERO.pend=null;
+  const on=HERO.pend?HERO.pend.want:HERO.on;
+  sw.classList.toggle("off",on===false); sw.classList.toggle("na",on===null); sw.classList.toggle("pend",!!HERO.pend);
+  sw.setAttribute("aria-pressed",on?"true":"false");
+  { const hr=document.querySelector(".hero.hfull"); if(hr) hr.classList.toggle("hoff",on===false); }
+  if(on===null){ t.textContent="OFFLINE"; s.textContent="bot-ku ma xidhiidhsana"; }
+  else if(HERO.pend){ t.textContent=on?"SHIDAYA…":"DAMINAYA…"; s.textContent="EA-da ayaa qaadanaysa (3–5s)"; }
+  else { t.textContent=on?"SHIDAN":"DAMMAN"; s.textContent=on?"taabo → dami":"taabo → shid"; }
+  const xb=$("#xidB"), xs=$("#xidS"), n=HERO.open.length;
+  if(xs) xs.textContent=n?(n+" trade\\n"+(HERO.flo>=0?"+":"−")+"$"+Math.abs(HERO.flo).toFixed(2)):"trade furan\\nma jiro";
+  if(xb && permOK("close")) xb.disabled=(n===0);
+}
+function heroPaint(d){
+  const x=d.data||{}, RS=runState(d);
+  HERO.on=d.online?(RS.short!=="LA DAMIYAY"):null;
+  if(!d.online && d.data && x.status) HERO.on=(String(x.status)!=="STOPPED");
+  const rows=Array.isArray(x.trades)?x.trades:[];
+  HERO.open=rows.filter(t=>String(t.st||"OPEN").toUpperCase()==="OPEN");
+  HERO.flo=HERO.open.reduce((a,t)=>a+(Number(t.profit)||0),0);
+  heroCtlPaint();
+}
+if($("#pwrSw")) $("#pwrSw").addEventListener("click",()=>{
+  const sw=$("#pwrSw"); if(sw.disabled) return;
+  const on=HERO.pend?HERO.pend.want:HERO.on;
+  if(on===false || on===null){ HERO.pend={want:true,t:Date.now()}; heroCtlPaint(); heroCmd("START"); return; }
+  cfmOpen({title:"⏻ Bot-ka dami?",html:"Trade <b>cusub ma furmo</b> (chart-yada oo dhan). Trade-yada hadda furan <b>waa la sii maamulayaa</b> — SL · BE · trailing way shaqeynayaan.",
+    ok:"⏻ DAMI",okCls:"d",onOk:()=>{ HERO.pend={want:false,t:Date.now()}; heroCtlPaint(); heroCmd("STOP"); }});
+});
+if($("#xidB")) $("#xidB").addEventListener("click",()=>{
+  const n=HERO.open.length; if(!n) return;
+  const list=HERO.open.slice(0,20).map(t=>{ const p=Number(t.profit)||0; return '<span><b>'+esc(t.sym||t.symbol||"")+'</b> · '+esc(String(t.type||""))+'<b class="'+(p>=0?'pos':'neg')+'">'+(p>=0?"+":"−")+Math.abs(p).toFixed(2)+'</b></span>'; }).join("");
+  cfmOpen({title:"✕ Xidh dhammaan trade-yada?",html:"<b>"+n+" trade</b> ayaa furan · hadda <b class=\\""+(HERO.flo>=0?"pos":"neg")+"\\">"+(HERO.flo>=0?"+":"−")+"$"+Math.abs(HERO.flo).toFixed(2)+"</b>. Dhammaan isla markiiba waa la xidhayaa. Bot-ku <b>wuu sii shidnaanayaa</b>.",
+    list:list, ok:"✕ XIDH DHAMMAAN", okCls:"o", onOk:()=>heroCmd("CLOSE_ALL"),
+    alt:permOK("close")?"📈 Faa'iidada oo keliya xidh":"", onAlt:()=>heroCmd("CLOSE_PROFIT")});
+});
+/* ⋯ menu: account · Admin · Maamul · Password · Bax */
+(function(){
+  const b=$("#heroMenuB"), m=$("#heroMenu"); if(!b||!m) return;
+  b.addEventListener("click",e=>{ e.stopPropagation(); m.hidden=!m.hidden; b.setAttribute("aria-expanded",m.hidden?"false":"true"); });
+  document.addEventListener("click",e=>{ if(!m.hidden && !m.contains(e.target) && e.target!==b){ m.hidden=true; b.setAttribute("aria-expanded","false"); } });
+  addEventListener("keydown",e=>{ if(e.key==="Escape") m.hidden=true; });
+})();
+
+/* ---- 🎵 player-ka: jiid (⋮⋮) · – qari (saxan yar) · ✕ jooji + xidh ---- */
+const MUP={mode:"bar",y:null,bx:"R",by:0.55};
+try{ const v=JSON.parse(localStorage.getItem("mp_mu_pos")||"null"); if(v){ if(v.mode==="bub") MUP.mode="bub"; if(typeof v.y==="number") MUP.y=Math.max(0,Math.min(1,v.y)); if(v.bx==="L") MUP.bx="L"; if(typeof v.by==="number") MUP.by=Math.max(0,Math.min(1,v.by)); } }catch(e){}
+function mupSave(){ try{ localStorage.setItem("mp_mu_pos",JSON.stringify(MUP)); }catch(e){} }
+function mupBounds(h){ const ab=document.querySelector(".appbar"), bot=(ab?ab.offsetHeight:60)+6; return {min:8,max:Math.max(8,innerHeight-bot-h)}; }
+function mupPlaceBar(){
+  const b=mu$("muBar"); if(!b || b.hidden) return;
+  const ab=document.querySelector(".appbar");
+  if(MUP.y===null){ b.style.top="auto"; b.style.bottom=((ab?ab.offsetHeight:60)+6)+"px"; return; }
+  const B=mupBounds(b.offsetHeight||62); b.style.bottom="auto"; b.style.top=Math.round(B.min+MUP.y*(B.max-B.min))+"px";
+}
+function mupPlaceBub(){
+  const u=mu$("muBub"); if(!u || u.hidden) return;
+  const B=mupBounds(62), x=(MUP.bx==="L")?10:(innerWidth-62-10);
+  u.style.left=x+"px"; u.style.top=Math.round(B.min+MUP.by*(B.max-B.min))+"px";
+}
+function mupDrag(el,onMove,onEnd,onTap){
+  let st=null;
+  el.addEventListener("pointerdown",e=>{ if(e.button!==undefined && e.button>0) return; st={x:e.clientX,y:e.clientY,id:e.pointerId,mv:false}; try{ el.setPointerCapture(e.pointerId); }catch(err){} });
+  el.addEventListener("pointermove",e=>{ if(!st || e.pointerId!==st.id) return; const dx=e.clientX-st.x, dy=e.clientY-st.y; if(!st.mv && Math.hypot(dx,dy)<8) return; st.mv=true; e.preventDefault(); onMove(e,dx,dy); });
+  const end=e=>{ if(!st) return; const s=st; st=null; try{ el.releasePointerCapture(s.id); }catch(err){} if(s.mv) onEnd(e); else if(onTap) onTap(e); };
+  el.addEventListener("pointerup",end); el.addEventListener("pointercancel",end);
+}
+(function(){
+  const b=mu$("muBar"), hd=mu$("muHd"), u=mu$("muBub"); if(!b||!hd||!u) return;
+  let y0=0;
+  hd.addEventListener("pointerdown",()=>{ y0=b.getBoundingClientRect().top; });
+  mupDrag(hd,(e,dx,dy)=>{ b.classList.add("drag"); const B=mupBounds(b.offsetHeight); b.style.bottom="auto"; b.style.top=Math.max(B.min,Math.min(B.max,y0+dy))+"px"; document.body.classList.remove("mu-on"); muLayout(); },
+    ()=>{ b.classList.remove("drag"); const B=mupBounds(b.offsetHeight), t=b.getBoundingClientRect().top;
+      MUP.y=(B.max-t<40)?null:((B.max>B.min)?(t-B.min)/(B.max-B.min):0); mupSave(); muBar(); });
+  let p0=null;
+  u.addEventListener("pointerdown",()=>{ const r=u.getBoundingClientRect(); p0={x:r.left,y:r.top}; });
+  mupDrag(u,(e,dx,dy)=>{ u.classList.add("drag"); const B=mupBounds(62); u.style.left=Math.max(4,Math.min(innerWidth-66,p0.x+dx))+"px"; u.style.top=Math.max(B.min,Math.min(B.max,p0.y+dy))+"px"; muLayout(); },
+    ()=>{ u.classList.remove("drag"); const r=u.getBoundingClientRect(), B=mupBounds(62); MUP.bx=(r.left+31<innerWidth/2)?"L":"R"; MUP.by=(B.max>B.min)?(r.top-B.min)/(B.max-B.min):0; mupSave(); mupPlaceBub(); muLayout(); },
+    ()=>{ MUP.mode="bar"; mupSave(); muBar(); });
+  mu$("muMin").addEventListener("click",e=>{ e.stopPropagation(); MUP.mode="bub"; mupSave(); muBar(); });
+  mu$("muX").addEventListener("click",e=>{ e.stopPropagation(); muHalt(""); MU.cur=""; MU.it=null; MU.kind=""; MU.playing=false; MU.last=""; muSave(); MUP.mode="bar"; mupSave(); muShowKind(); muBar(); muRender(); });
+  addEventListener("resize",()=>{ mupPlaceBar(); mupPlaceBub(); });
+})();
 
 /* ---- Tabs ---- */
 function tab(n){
