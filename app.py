@@ -20,6 +20,7 @@ Web (session auth):
   /login /register /logout /dashboard /admin
   GET  /api/state         -> xogta account-ka user-ka
   POST /api/command       -> amar loo diro EA-da
+  v13.1: 🎚 SHIDAN = jiid (midig shid · bidix dami) · ✕ XIDH = hay 1 ilbiriqsi · MT5 wareeg dahab · BALANCE · EQUITY · MAANTA · FAA'IIDO -> SHIDAN hoostiisa
   v13.0: 🧩 2 CORE - ⚡ CORE 1 SCALP (TICK · GOLD BASKET · GRID) · 🎯 CORE 2 SR/SMC (SR/SD · SMC · LABADA) · 🌅 ASIA waa la saaray · Input core → xeelad · 📒 Journal (maanta · todobaad · bil · sanad · sanadada) - EA v72.0
   v12.33: 🧭 GRID TREND EMA (baaritaanka B) - EMA 20/50 M15 · masaafo % · TP / quful / SL × masaafo · saacadaha GMT - EA v71.8
   v12.32: 🔁 GRID FLIP (account netting) - GRLBM AUTO / HEDGE / FLIP · GRFMAX · kaarka - EA v71.7
@@ -5451,6 +5452,43 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 .j2csv{display:block;text-align:center;text-decoration:none;color:var(--ink);font-weight:800;font-size:13.5px;border:1px solid var(--line);border-radius:14px;padding:13px;margin:0 0 10px;background:#161615}
 .j2empty{padding:14px 4px;text-align:center;color:var(--ink3);font-size:13px}
 .j2load{opacity:.55;transition:opacity .15s}
+/* ===== v13.1: 🎚 SHIDAN jiid · ✕ XIDH hay · calaamadda MT5 wareeg dahab ===== */
+.hero-in .mtsw{touch-action:none;user-select:none;-webkit-user-select:none}
+.hero-in .mtsw .knob{box-shadow:0 0 0 3px #e8b44a,0 0 0 6px rgba(253,230,138,.28),0 0 22px rgba(250,204,21,.65)}
+.hero-in .mtsw.off .knob{box-shadow:0 0 0 3px #b8923a,0 0 0 6px rgba(253,230,138,.16),0 0 16px rgba(239,68,68,.45);filter:saturate(.45) brightness(.82)}
+.hero-in .mtsw.na .knob{box-shadow:0 0 0 3px #8a7a55;filter:grayscale(1) brightness(.7)}
+.hero-in .mtsw.drag .knob{transition:none}
+.hero-in .mtsw.drag.toon .knob{filter:none;box-shadow:0 0 0 3px #fde68a,0 0 26px rgba(34,197,94,.8)}
+.hero-in .mtsw.drag.tooff .knob{box-shadow:0 0 0 3px #fde68a,0 0 26px rgba(239,68,68,.8)}
+.hero-in .mtsw.nudge .knob{animation:mtnudge .45s ease}
+@keyframes mtnudge{25%{transform:translateX(-7px)}60%{transform:translateX(5px)}}
+.hero-in .mtsw.off:after{content:"▶▶";position:absolute;right:16px;top:50%;transform:translateY(-50%);z-index:2;color:#facc15;font-size:13px;font-weight:900;letter-spacing:-3px;opacity:.75;animation:mthint 1.6s ease-in-out infinite;pointer-events:none}
+@keyframes mthint{50%{opacity:.25;transform:translate(4px,-50%)}}
+@media (prefers-reduced-motion:reduce){.mtsw.off:after,.mtsw.nudge .knob{animation:none}}
+.hero-in .mtsw.off .lbl{right:44px}
+.hero-in .hxid{display:flex;flex-direction:row;justify-content:flex-start;align-items:center;flex-wrap:nowrap;position:relative;overflow:hidden;gap:10px;padding:0 10px 0 6px;border-radius:24px;border:2px solid #5a4a2a;background:linear-gradient(145deg,#1d1517,#121014);touch-action:none;user-select:none;-webkit-user-select:none}
+.hero-in .hxid .xi{position:relative;display:block;width:56px;height:56px;flex:0 0 56px;border:none;padding:3px;background:conic-gradient(from 200deg,#fde68a,#d4a73a,#8a6a1c,#fde68a,#d4a73a);color:#fff;font-size:0}
+.hero-in .hxid .xi:before{content:"✕";display:flex;width:100%;height:100%;border-radius:50%;align-items:center;justify-content:center;font-size:23px;font-weight:900;color:#fff;background:radial-gradient(circle at 35% 30%,#ff7a7a,#b91c1c 68%,#5f0b0b);box-shadow:inset 0 -5px 10px rgba(0,0,0,.35),inset 0 3px 7px rgba(255,255,255,.25)}
+.hero-in .hxid .xi svg{position:absolute;inset:-2px;width:60px;height:60px;transform:rotate(-90deg);pointer-events:none}
+.hero-in .hxid .xi svg circle{fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round;stroke-dasharray:176;stroke-dashoffset:176}
+.hero-in .hxid.hold .xi svg circle{animation:xhold 1s linear forwards}
+@keyframes xhold{to{stroke-dashoffset:0}}
+.hero-in .hxid .pt b{color:#fecaca;font-size:15px}.hxid .pt small{color:#fca5a5}
+.hero-in .hxid:disabled{opacity:1}.hxid:disabled .xi{filter:grayscale(.75) brightness(.7)}.hxid:disabled .pt b{color:#9c8a7a}.hxid:disabled .pt small{color:#7d6d62}
+.hero-in .hxid.act{border-color:#d4a73a;background:linear-gradient(145deg,#3a0f14,#1c0b0e 65%);box-shadow:0 0 20px rgba(239,68,68,.35)}
+.hero-in .hxid.act .xi{box-shadow:0 0 14px rgba(250,204,21,.45)}
+.hero-in .hxid.hold{border-color:#fbbf24;box-shadow:0 0 26px rgba(251,191,36,.5);background:linear-gradient(145deg,#4c1117,#220b0f 65%)}
+.hero-in .hxid.hold .pt b{color:#fff}
+.hero-in .hxid .pt small .pos{color:#4ade80;font-weight:900}.hxid .pt small .neg{color:#f87171;font-weight:900}
+.htoast{grid-column:1/-1;margin-top:2px;font-size:12px;color:#86efac;background:rgba(10,30,18,.85);border:1px solid rgba(74,222,128,.35);border-radius:12px;padding:7px 10px}
+.htoast.bad{color:#fca5a5;border-color:rgba(248,113,113,.4);background:rgba(40,10,12,.85)}
+/* ---- Guud: balance · faa'iido (SHIDAN hoostiisa) ---- */
+.ggrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+.ggrid .tile{padding:13px 15px;border-radius:18px}
+.ggrid .tile .v{font-size:24px}
+.ggrid .tile .s{font-size:11px;color:var(--ink3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ggrid .w{grid-column:1/-1}
+.ggrid .tile.big .v{font-size:27px}
 /* v12.19: 🧭 JIHADA SUUQA */
 .tkjd{margin-top:6px;border-radius:12px;padding:10px;text-align:center;border:1px solid var(--line);background:#141413}
 .tkjd b{display:block;font-size:17px;font-weight:900;letter-spacing:.05em}.tkjd small{display:block;font-size:11px;color:var(--ink3);margin-top:3px}
@@ -6368,14 +6406,10 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
     <span class="hacc"><span id="heroAcc">—</span> · MT5</span>
     <h1>MOHA PRO <b id="heroVer"></b></h1>
     <div class="hst"><span class="dot" id="dot"></span><span id="st">Xiriirinaya…</span></div>
-    <div class="hstats">
-      <div><small>BALANCE</small><b class="v neu" id="bal">—</b></div>
-      <div><small>EQUITY</small><b class="v neu" id="eq">—</b></div>
-      <div><small>MAANTA</small><b class="v" id="pf">—</b></div>
-    </div>
     <div class="hctl">
       <button class="mtsw na" id="pwrSw" type="button" data-perm="run" aria-label="Bot-ka shid / dami" aria-pressed="false"><span class="lbl"><b id="pwrT">—</b><small id="pwrS">—</small></span><span class="knob" aria-hidden="true"></span></button>
-      <button class="hxid" id="xidB" type="button" data-perm="close" aria-label="Xidh trade-yada furan" disabled><span class="xi" aria-hidden="true">✕</span><span class="pt"><b>XIDH</b><small id="xidS">—</small></span></button>
+      <button class="hxid" id="xidB" type="button" data-perm="close" aria-label="Xidh trade-yada furan (riix oo hay 1 ilbiriqsi)" disabled><span class="xi" aria-hidden="true">✕<svg viewBox="0 0 60 60"><circle cx="30" cy="30" r="28"/></svg></span><span class="pt"><b>XIDH</b><small id="xidS">—</small></span></button>
+      <div class="htoast" id="hToast" hidden></div>
     </div>
   </div>
 </div>
@@ -6402,9 +6436,12 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
     <!-- v12.22 (EA v70.8): 💱 LAMAANAHA -->
     <div class="prstrip" id="prStrip" hidden role="tablist" aria-label="Lamaanaha"></div>
     <div class="prflt" id="prFlt" hidden><span>💱 <b id="prFltS">—</b> oo keliya · Trade-yada</span><button type="button" id="prFltX">✕ Dhammaan</button></div>
-    <div class="grid">
-      <div class="tile"><div class="k">Faa'iido furan (float)</div><div class="v" id="fl">—</div></div>
-      <div class="tile"><div class="k">Wadarta hadda</div><div class="v" id="tot">—</div></div>
+    <div class="ggrid">   <!-- v13.1: balance · faa'iido (SHIDAN hoostiisa) -->
+      <div class="tile"><div class="k">Balance</div><div class="v neu" id="bal">—</div></div>
+      <div class="tile"><div class="k">Equity</div><div class="v neu" id="eq">—</div></div>
+      <div class="tile"><div class="k">Maanta</div><div class="v" id="pf">—</div><div class="s">trade xidhmay maanta</div></div>
+      <div class="tile"><div class="k">Faa'iido furan (float)</div><div class="v" id="fl">—</div><div class="s" id="flS">trade-yada furan</div></div>
+      <div class="tile w big"><div class="k">Wadarta hadda</div><div class="v" id="tot">—</div><div class="s">maanta + float</div></div>
       <div class="tile"><div class="k">Win rate</div><div class="v neu" id="wr">—</div></div>
       <div class="tile"><div class="k">Drawdown</div><div class="v" id="dd">—</div></div>
       <div class="tile"><div class="k">Trade furan</div><div class="v neu" id="ot">—</div></div>
@@ -7503,7 +7540,9 @@ function paint(d){
       ((gp-gl)>0?"+":"")+money(gp-gl);
   }
 
-  const flo=open.reduce((a,t)=>a+Number(t.profit||0),0);
+  const openAll=(Array.isArray(x.trades)?x.trades:[]).filter(t=>!PRF||String(t.symbol||t.sym||"")===PRF).filter(isOpen);   // v13.1: core filter-ka Trade-ka Guud ma saameeyo
+  const flo=openAll.reduce((a,t)=>a+Number(t.profit||0),0);
+  if($("#flS")) $("#flS").textContent=openAll.length?(openAll.length+" trade furan"):"trade furan ma jiro";
   $("#fl").textContent=(flo>0?"+":"")+money(flo); $("#fl").className="v "+cls(flo);
   const all=p+flo;
   $("#tot").textContent=(all>0?"+":"")+money(all); $("#tot").className="v "+cls(all);
@@ -8234,8 +8273,9 @@ function runState(d){
   return {ok:true,short:"ONLINE",long:"SHAQEYNAYA"+(n>1?(" · "+n+" chart"):"")};
 }
 function verOf(d){
-  const vs=chartRows(d).map(a=>a.ver).filter(Boolean);
-  return vs.length?vs.sort().slice(-1)[0]:((d.data||{}).ver||"");
+  const vs=chartRows(d).map(a=>a.ver).concat([(d.data||{}).ver]).filter(Boolean).map(String);   // v13.1: tirsi (hore: qoraal)
+  const k=v=>v.split(".").map(n=>parseInt(n,10)||0).reduce((a,n,i)=>a+n*Math.pow(1000,3-i),0);
+  return vs.length?vs.sort((a,b)=>k(a)-k(b)).slice(-1)[0]:"";
 }
 const FR_NM=["News","Session","Regime/ADX","MTF","EMA200","Correlation","Hal trade/H1","Spread/trade furan","ATR yar","RR yar","SL/TP"];
 
@@ -11334,7 +11374,7 @@ document.querySelectorAll("#znEye button").forEach(b=>b.addEventListener("click"
 
 
 /* ================= v12.23: 🖼 wajiga hore · ⏻ MT5 SHID/DAMI · ✕ XIDH · ⋯ menu ================= */
-const HERO={on:null,pend:null,open:[],flo:0};
+const HERO={on:null,pend:null,open:[],flo:0,hint:0,xh:0,tt:0};
 function cfmOpen(o){
   const c=$("#cfm"); if(!c) return;
   $("#cfmT").textContent=o.title||""; $("#cfmB").innerHTML=o.html||""; $("#cfmL").innerHTML=o.list||""; $("#cfmL").hidden=!o.list; $("#cfmN").textContent="";
@@ -11371,10 +11411,11 @@ function heroCtlPaint(){
   { const hr=document.querySelector(".hero.hfull"); if(hr) hr.classList.toggle("hoff",on===false); }
   if(on===null){ t.textContent="OFFLINE"; s.textContent="bot-ku ma xidhiidhsana"; }
   else if(HERO.pend){ t.textContent=on?"SHIDAYA…":"DAMINAYA…"; s.textContent="EA-da ayaa qaadanaysa (3–5s)"; }
-  else { t.textContent=on?"SHIDAN":"DAMMAN"; s.textContent=on?"taabo → dami":"taabo → shid"; }
+  else { t.textContent=on?"SHIDAN":"DAMMAN"; if(!HERO.hint || Date.now()-HERO.hint>3000) s.textContent=on?"◀◀ jiid bidix = dami":"jiid midig = shid"; }
   const xb=$("#xidB"), xs=$("#xidS"), n=HERO.open.length;
-  if(xs) xs.textContent=n?(n+" trade\\n"+(HERO.flo>=0?"+":"−")+"$"+Math.abs(HERO.flo).toFixed(2)):"trade furan\\nma jiro";
+  if(xs && !(HERO.xh && Date.now()-HERO.xh<3000)) xs.innerHTML=n?(n+" trade<br><span class=\\""+(HERO.flo>=0?"pos":"neg")+"\\">"+(HERO.flo>=0?"+":"−")+"$"+Math.abs(HERO.flo).toFixed(2)+"</span>"):"trade furan<br>ma jiro";
   if(xb && permOK("close")) xb.disabled=(n===0);
+  if(xb) xb.classList.toggle("act",n>0 && !xb.disabled);
 }
 function heroPaint(d){
   const x=d.data||{}, RS=runState(d);
@@ -11385,20 +11426,74 @@ function heroPaint(d){
   HERO.flo=HERO.open.reduce((a,t)=>a+(Number(t.profit)||0),0);
   heroCtlPaint();
 }
-if($("#pwrSw")) $("#pwrSw").addEventListener("click",()=>{
-  const sw=$("#pwrSw"); if(sw.disabled) return;
-  const on=HERO.pend?HERO.pend.want:HERO.on;
-  if(on===false || on===null){ HERO.pend={want:true,t:Date.now()}; heroCtlPaint(); heroCmd("START"); return; }
-  cfmOpen({title:"⏻ Bot-ka dami?",html:"Trade <b>cusub ma furmo</b> (chart-yada oo dhan). Trade-yada hadda furan <b>waa la sii maamulayaa</b> — SL · BE · trailing way shaqeynayaan.",
-    ok:"⏻ DAMI",okCls:"d",onOk:()=>{ HERO.pend={want:false,t:Date.now()}; heroCtlPaint(); heroCmd("STOP"); }});
-});
-if($("#xidB")) $("#xidB").addEventListener("click",()=>{
+if($("#xidB")) $("#xidB").addEventListener("click",e=>{
+  if(e.detail!==0) return;   // v13.1: farta = riix oo hay 1s (hero.js) · keyboard / Trade-ka -> xaqiiji
   const n=HERO.open.length; if(!n) return;
   const list=HERO.open.slice(0,20).map(t=>{ const p=Number(t.profit)||0; return '<span><b>'+esc(t.sym||t.symbol||"")+'</b> · '+esc(String(t.type||""))+'<b class="'+(p>=0?'pos':'neg')+'">'+(p>=0?"+":"−")+Math.abs(p).toFixed(2)+'</b></span>'; }).join("");
   cfmOpen({title:"✕ Xidh dhammaan trade-yada?",html:"<b>"+n+" trade</b> ayaa furan · hadda <b class=\\""+(HERO.flo>=0?"pos":"neg")+"\\">"+(HERO.flo>=0?"+":"−")+"$"+Math.abs(HERO.flo).toFixed(2)+"</b>. Dhammaan isla markiiba waa la xidhayaa. Bot-ku <b>wuu sii shidnaanayaa</b>.",
     list:list, ok:"✕ XIDH DHAMMAAN", okCls:"o", onOk:()=>heroCmd("CLOSE_ALL"),
     alt:permOK("close")?"📈 Faa'iidada oo keliya xidh":"", onAlt:()=>heroCmd("CLOSE_PROFIT")});
 });
+/* v13.1: 🎚 SHIDAN = jiid (midig = shid · bidix = dami · taabasho = waxba) · ✕ XIDH = riix oo hay 1 ilbiriqsi */
+function heroHint(t){ const s=$("#pwrS"); if(!s) return; s.textContent=t; HERO.hint=Date.now(); }
+function heroToast(t,bad){ const e=$("#hToast"); if(!e) return; e.textContent=t; e.className="htoast"+(bad?" bad":""); e.hidden=false; clearTimeout(HERO.tt); HERO.tt=setTimeout(()=>{ e.hidden=true; },6000); }
+function heroBuzz(ms){ try{ if(navigator.vibrate) navigator.vibrate(ms||35); }catch(e){} }
+function heroSet(want){
+  if(want){ HERO.pend={want:true,t:Date.now()}; heroCtlPaint(); heroCmd("START"); heroBuzz(40); heroToast("⏻ Bot-ka waa la shiday · EA-da 3–5s gudahood"); }
+  else { HERO.pend={want:false,t:Date.now()}; heroCtlPaint(); heroCmd("STOP"); heroBuzz([30,40,30]); heroToast("⏸ Bot-ka waa la damiyay · trade-yada furan waa la sii maamulaa"); }
+}
+(function(){
+  const sw=$("#pwrSw"); if(!sw) return;
+  const kn=sw.querySelector(".knob"); let D=null;
+  const cur=()=>{ const o=HERO.pend?HERO.pend.want:HERO.on; return o===true; };
+  const span=()=>Math.max(1,sw.clientWidth-kn.offsetWidth-4);
+  sw.addEventListener("pointerdown",e=>{
+    if(sw.disabled || (HERO.on===null && !HERO.pend)) return;
+    D={x:e.clientX,y:e.clientY,on:cur(),mv:false,id:e.pointerId,p:cur()?1:0};
+    try{ sw.setPointerCapture(e.pointerId); }catch(_){}
+    sw.classList.add("drag");
+  });
+  sw.addEventListener("pointermove",e=>{
+    if(!D || e.pointerId!==D.id) return;
+    const dx=e.clientX-D.x; if(Math.abs(dx)>6) D.mv=true;
+    const p=Math.max(0,Math.min(1,(D.on?1:0)+dx/span())); D.p=p;
+    kn.style.left=(2+p*span())+"px";
+    sw.classList.toggle("toon",p>0.5); sw.classList.toggle("tooff",p<=0.5);
+  });
+  const end=e=>{
+    if(!D || (e && e.pointerId!==D.id)) return;
+    const d=D; D=null; sw.classList.remove("drag","toon","tooff"); kn.style.left="";
+    if(!d.mv){ heroHint(d.on?"◀◀ bidix u jiid = dami":"▶▶ midig u jiid = shid"); sw.classList.add("nudge"); setTimeout(()=>sw.classList.remove("nudge"),450); return; }
+    if(d.on && d.p<=0.15) heroSet(false);
+    else if(!d.on && d.p>=0.85) heroSet(true);
+    else heroCtlPaint();   // dhexda -> meeshiisii
+  };
+  sw.addEventListener("pointerup",end); sw.addEventListener("pointercancel",end);
+  sw.addEventListener("click",e=>{   // keyboard (Enter / Space) oo keliya - farta: jiid
+    if(e.detail!==0 || sw.disabled) return;
+    const on=cur();
+    if(!on){ heroSet(true); return; }
+    cfmOpen({title:"⏻ Bot-ka dami?",html:"Trade <b>cusub ma furmo</b> (chart-yada oo dhan). Trade-yada hadda furan <b>waa la sii maamulayaa</b>.",ok:"⏻ DAMI",okCls:"d",onOk:()=>heroSet(false)});
+  });
+})();
+(function(){
+  const xb=$("#xidB"); if(!xb) return;
+  let H=null;
+  const stop=(done)=>{ if(!H) return; clearTimeout(H.t); xb.classList.remove("hold"); const h=H; H=null;
+    if(!done && Date.now()-h.s<1000){ const s=$("#xidS"); if(s){ s.textContent="hay 1 ilbiriqsi\\n→ xidh"; HERO.xh=Date.now(); } } };
+  xb.addEventListener("pointerdown",e=>{
+    if(xb.disabled || !HERO.open.length) return;
+    try{ xb.setPointerCapture(e.pointerId); }catch(_){}
+    H={s:Date.now(),id:e.pointerId,t:setTimeout(()=>{
+      const n=HERO.open.length, f=HERO.flo; stop(true); heroBuzz([60,40,60]);
+      heroCmd("CLOSE_ALL"); heroToast("✓ "+n+" trade ayaa la xidhayaa · "+(f>=0?"+":"−")+"$"+Math.abs(f).toFixed(2)+" · bot-ku 3–5s");
+    },1000)};
+    xb.classList.remove("hold"); void xb.offsetWidth; xb.classList.add("hold"); heroBuzz(15);
+  });
+  ["pointerup","pointercancel","pointerleave"].forEach(ev=>xb.addEventListener(ev,()=>stop(false)));
+  xb.addEventListener("contextmenu",e=>e.preventDefault());
+})();
+
 /* ⋯ menu: account · Admin · Maamul · Password · Bax */
 (function(){
   const b=$("#heroMenuB"), m=$("#heroMenu"); if(!b||!m) return;
