@@ -20,6 +20,8 @@ Web (session auth):
   /login /register /logout /dashboard /admin
   GET  /api/state         -> xogta account-ka user-ka
   POST /api/command       -> amar loo diro EA-da
+  v13.9: 🔴 LIVE - trade furan / grid diyaar: P/L · equity · grid 3s kasta (/api/live · EA v72.1.5 5s) - app-ku MT5 la socdaa
+  v13.8: Maamul › AMARRADA (SHID · DAMI · XIDH · XIDH FAA'IIDO) waa la saaray (Guud › SHIDAN / XIDH · Trade ayaa haya)
   v13.7: amarrada duugoobay (EA aan qaadan) mar dambe ma xannibaan app-ka ("Amaro badan ayaa safka ku jira") · nadiifin toos ah
   v13.6: ✕ XIDH la hubiyaa (30s -> weli furan -> ⚠️ digniin + sababta) · P/L-ka XIDH ma kala jabo - EA v72.1.4 (Algo damman -> amar ma qaato)
   v13.5: 📴 OFFLINE - internet go'o / app khad la'aan la furo -> xogtii ugu dambeysay (daawasho) · maamul ▣ xidhan · khadka soo noqdo -> live
@@ -3728,6 +3730,50 @@ def _visible_account(u):
     return u["account"]
 
 
+@app.post("/api/live")
+def ea_live():
+    """v13.9 (EA v72.1.5): 🔴 LIVE - xog yar 5s kasta (equity · trade-yada furan · grid) marka trade furan yahay / grid diyaar."""
+    if not token_ok():
+        return jsonify(ok=False, error="bad token"), 401
+    d = _ea_body()
+    if getattr(g, "_ebad", False):
+        return _ea_bad_body()
+    acc = clean_account(d.get("account"))
+    if not acc:
+        return jsonify(ok=False, error="account"), 400
+    if not ea_bind(acc):
+        return _bad_key()
+    now = time.time()
+    tr = [t for t in (d.get("trades") or []) if isinstance(t, dict) and str(t.get("st") or "OPEN").upper() == "OPEN"][:40]
+    out = {"ts": now, "eq": _bsk_num(d.get("equity")), "bal": _bsk_num(d.get("balance")), "trades": tr,
+           "chart": re.sub(r"[^A-Za-z0-9_.#-]", "", str(d.get("chart") or ""))[:40]}
+    with db() as con:
+        con.execute("INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                    ("live:" + acc, json.dumps(out, separators=(",", ":"), ensure_ascii=False)))
+        if isinstance(d.get("grid"), dict):
+            _save_grid(con, acc, d.get("grid"))
+    return jsonify(ok=True)
+
+
+@app.get("/api/live")
+@login_required
+def api_live():
+    """v13.9: app-ka -> xogta LIVE (yar) · 3s kasta marka trade furan yahay."""
+    u = request.user
+    acc = _visible_account(u)
+    now = time.time()
+    with db() as con:
+        lr = con.execute("SELECT v FROM kv WHERE k=?", ("live:" + acc,)).fetchone()
+        gr = con.execute("SELECT v FROM kv WHERE k=?", ("grid:" + acc,)).fetchone()
+    lv = _jload(lr["v"]) if lr else None
+    grd = _jload(gr["v"]) if gr else None
+    if isinstance(lv, dict):
+        lv["age"] = int(now - float(lv.get("ts") or 0))
+    if isinstance(grd, dict):
+        grd["age"] = int(now - float(grd.get("ts") or 0))
+    return jsonify(ok=True, live=lv if isinstance(lv, dict) else None, grid=grd if isinstance(grd, dict) else None)
+
+
 @app.get("/api/state")
 @login_required
 def api_state():
@@ -6751,7 +6797,7 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
         <li>Kadib app-ka ka shid lamaanaha — bot-ka 👑 ayaa chart-ka u furaya.</li>
       </ol></details>
     </div>
-    <div class="card" style="margin-bottom:16px">
+    <div class="card" id="cmdCard" hidden style="display:none;margin-bottom:16px">   <!-- v13.8: la saaray (Guud · Trade ayaa haya) -->
       <p class="sec-t">Amarrada</p>
       <div class="acts">
         <button class="act go" data-cmd="START" data-perm="run">
@@ -7843,6 +7889,30 @@ function offSet(off,at){
   window.fetch=function(u,o){ const m=String((o&&o.method)||"GET").toUpperCase(); if(OFFL && m!=="GET"){ offToast(); return Promise.reject(new Error("offline")); } return _f0(u,o); }; }
 addEventListener("online",()=>{ setTimeout(tick,300); });
 addEventListener("offline",()=>{ offSet(true,LAST_OK); });
+/* v13.9: 🔴 LIVE - trade furan / grid diyaar -> 3s kasta xog yar (/api/live) -> P/L · equity · grid MT5 la socda */
+let LASTD=null, LASTD_AT=0, LIVE_TS=0, LIVE=null;
+function liveMerge(d,lv,gj){
+  const x=Object.assign({},d.data||{}), old=Array.isArray(x.trades)?x.trades:[];
+  x.trades=(Array.isArray(lv.trades)?lv.trades:[]).concat(old.filter(t=>String(t.st||"OPEN").toUpperCase()!=="OPEN"));
+  if(lv.eq) x.equity=lv.eq; if(lv.bal) x.balance=lv.bal; x.opentrades=(lv.trades||[]).length;
+  const d2=Object.assign({},d,{data:x,age:Math.max(0,Math.round(Date.now()/1000-Number(lv.ts)))});
+  if(gj) d2.grid=Object.assign({},d.grid||{},gj,{gh:(d.grid||{}).gh||gj.gh});
+  return d2;
+}
+async function liveTick(){
+  if(OFFL || document.hidden || !LASTD || !LASTD.data) return;
+  if(!(HERO.open.length>0 || HERO.nx)) return;
+  try{
+    const q=accSel?("?account="+encodeURIComponent(accSel.value)):"";
+    const r=await fetch("/api/live"+q,{headers:{"Accept":"application/json"}});
+    if(!r.ok || r.headers.get("X-Mp-Offline")==="1") return;
+    const j=await r.json(); const lv=j&&j.live;
+    if(!lv || !(Number(lv.ts)>LIVE_TS) || Number(lv.age)>30 || Number(lv.ts)<=LASTD_AT) return;
+    LIVE_TS=Number(lv.ts); LIVE={lv:lv,g:j.grid||null};
+    paint(liveMerge(LASTD,lv,j.grid||null));
+  }catch(e){ console.error(e); }
+}
+setInterval(liveTick,3000);
 async function tick(){
   try{
     const q=accSel?("?account="+encodeURIComponent(accSel.value)):"";
@@ -7850,7 +7920,8 @@ async function tick(){
     if(r.status===401){location.href="/login";return;}
     const d=await r.json();
     const offc=(r.headers.get("X-Mp-Offline")==="1");   /* v13.5: kaydka SW */
-    if(d.ok)paint(d);
+    if(d.ok){ LASTD=d; LASTD_AT=Date.now()/1000-(Number(d.age)||0); }   /* v13.9: 🔴 LIVE */
+    if(d.ok)paint((LIVE && Number(LIVE.lv.ts)>LASTD_AT)?liveMerge(d,LIVE.lv,LIVE.g):d);   /* live ka cusub -> ha dul qorin */
     offSet(offc, offc?(Number(r.headers.get("X-Mp-At"))||LAST_OK):0);
   }catch(e){
     $("#dot").className="dot off"; $("#st").textContent="Xiriir la'aan";
