@@ -20,6 +20,7 @@ Web (session auth):
   /login /register /logout /dashboard /admin
   GET  /api/state         -> xogta account-ka user-ka
   POST /api/command       -> amar loo diro EA-da
+  v13.4: Guud › XIDH: ◷ SUGAYA (trade-ka xiga · $ u jira) · ◉ IDHOW · ● FURAN (P/L) · ✓ LA XIDHAY + chip (v72.1 agtiisa) - EA v72.1.3
   v13.3: 🔒 quful sax (🔁 FLIP = shidan · ⇅ HEDGE = damman) · Trade › GRID quful dhab ah · switch-yada telefoonka (font weyn) sax - EA v72.1.2
   v13.2: 🧭 GRID EMA shid / dami (Input · Guud · chart) · 🔒 BE (2×) · default TREND EMA + quful BE - EA v72.1
   v13.1: 🎚 SHIDAN = jiid (midig shid · bidix dami) · ✕ XIDH = hay 1 ilbiriqsi · MT5 wareeg dahab · BALANCE · EQUITY · MAANTA · FAA'IIDO -> SHIDAN hoostiisa
@@ -2954,7 +2955,8 @@ def _save_grid(con, acc, g):
            "rp": 1 if g.get("rp") else 0, "pd": int(n(g.get("pd"), 0, 0, 1000)),   # v12.29: amarro dhab
            "fm": 1 if g.get("fm") else 0, "fp": int(n(g.get("fp"), 0, 0, 100)), "fpl": n(g.get("fpl"), dg, 0, 1e9), "net": 1 if g.get("net") else 0,   # v12.32: 🔁 FLIP
            "lkd": n(g.get("lkd"), 2, 0, 1e9), "ej": int(n(g.get("ej"), 0, -1, 1)), "e1": n(g.get("e1"), dg, 0, 1e9), "e2": n(g.get("e2"), dg, 0, 1e9),   # v12.33: 🧭 TREND EMA
-           "stn": n(g.get("stn"), dg, 0, 1e7), "vu": n(g.get("vu"), 4, 0, 1e7), "px": n(g.get("px"), dg, 0, 1e9)}
+           "stn": n(g.get("stn"), dg, 0, 1e7), "vu": n(g.get("vu"), 4, 0, 1e7), "px": n(g.get("px"), dg, 0, 1e9),
+           "nxb": n(g.get("nxb"), dg, 0, 1e9), "nxs": n(g.get("nxs"), dg, 0, 1e9), "bid": n(g.get("bid"), dg, 0, 1e9), "ask": n(g.get("ask"), dg, 0, 1e9)}   # v13.4: trade-ka xiga (EA v72.1.3)
     dy = g.get("day") if isinstance(g.get("day"), dict) else {}
     out["day"] = {"n": int(n(dy.get("n"), 0, 0, 1e6)), "w": int(n(dy.get("w"), 0, 0, 1e6)), "pl": n(dy.get("pl"))}
     rj = g.get("rj") if isinstance(g.get("rj"), list) else []
@@ -5484,6 +5486,29 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 .hero-in .hxid.hold{border-color:#fbbf24;box-shadow:0 0 26px rgba(251,191,36,.5);background:linear-gradient(145deg,#4c1117,#220b0f 65%)}
 .hero-in .hxid.hold .pt b{color:#fff}
 .hero-in .hxid .pt small .pos{color:#4ade80;font-weight:900}.hxid .pt small .neg{color:#f87171;font-weight:900}
+/* v13.4: chip (v72.1 agtiisa) + XIDH: sugaya · idhow · furan · la xidhay */
+.hero-in>.hchip{position:absolute;top:-1px;right:2px;display:inline-flex;align-items:center;padding:4px 11px;border-radius:999px;font-size:14px;font-weight:800;letter-spacing:0;white-space:nowrap;border:2px solid;line-height:1.2;z-index:3}
+.hero-in>.hchip[hidden]{display:none}
+.hchip.w{color:#fbbf24;border-color:#fbbf24;background:rgba(40,30,8,.85)}
+.hchip.n{color:#fb923c;border-color:#fb923c;background:rgba(48,24,8,.88);animation:hpulse 1s ease-in-out infinite}
+.hchip.p{color:#4ade80;border-color:#4ade80;background:rgba(8,36,20,.85)}
+.hchip.l{color:#f87171;border-color:#f87171;background:rgba(44,10,12,.85)}
+@keyframes hpulse{50%{box-shadow:0 0 16px rgba(251,146,60,.75)}}
+.hero-in .hxid.wait{border-color:#fbbf24;background:linear-gradient(145deg,#2a2210,#141008 65%)}
+.hero-in .hxid.near{border-color:#fb923c;background:linear-gradient(145deg,#33200c,#160e06 65%);animation:hpulse 1s ease-in-out infinite}
+.hero-in .hxid.done{border-color:#4ade80;background:linear-gradient(145deg,#0f2a19,#0b130e 65%)}
+.hero-in .hxid.wait:disabled .xi,.hero-in .hxid.near:disabled .xi,.hero-in .hxid.done:disabled .xi{filter:none}
+.hero-in .hxid.wait .xi,.hero-in .hxid.near .xi{background:#4a3a14}
+.hero-in .hxid.wait .xi:before,.hero-in .hxid.near .xi:before{content:attr(data-d);font-size:13px;font-weight:900;color:#fbbf24;background:radial-gradient(circle at 35% 30%,#3a2c10,#171207 72%)}
+.hero-in .hxid.near .xi:before{color:#fb923c}
+.hero-in .hxid.wait .xi svg circle,.hero-in .hxid.near .xi svg circle{stroke:#fbbf24;stroke-dashoffset:var(--xp,176);transition:stroke-dashoffset .6s}
+.hero-in .hxid.near .xi svg circle{stroke:#fb923c}
+.hero-in .hxid.done .xi:before{content:"✓";background:radial-gradient(circle at 35% 30%,#4ade80,#15803d 68%,#0b3d1f)}
+.hero-in .hxid.wait .pt b{color:#fbbf24}.hero-in .hxid.near .pt b{color:#fb923c}.hero-in .hxid.done .pt b{color:#4ade80}
+.hero-in .hxid.wait .pt small,.hero-in .hxid.near .pt small,.hero-in .hxid.done .pt small{color:#d6c9bd}
+.hero-in .hxid .pt small .bp{color:#4ade80;font-weight:800}.hero-in .hxid .pt small .sp2{color:#f87171;font-weight:800}
+.hero-in .hxid .pt small .big{display:block;font-size:18px;font-weight:900;line-height:1.15;letter-spacing:0}
+.hero-in .hxid .pt small .big.pos{color:#4ade80}.hero-in .hxid .pt small .big.neg{color:#f87171}
 .htoast{grid-column:1/-1;margin-top:2px;font-size:12px;color:#86efac;background:rgba(10,30,18,.85);border:1px solid rgba(74,222,128,.35);border-radius:12px;padding:7px 10px}
 .htoast.bad{color:#fca5a5;border-color:rgba(248,113,113,.4);background:rgba(40,10,12,.85)}
 /* ---- Guud: balance · faa'iido (SHIDAN hoostiisa) ---- */
@@ -6411,6 +6436,7 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
   </div>
   <div class="hero-in">   <!-- v12.23: wajiga hore -->
     <span class="hacc"><span id="heroAcc">—</span> · MT5</span>
+    <span class="hchip" id="hChip" hidden></span>   <!-- v13.4: chip (sugaya · idhow · P/L) -->
     <h1>MOHA PRO <b id="heroVer"></b></h1>
     <div class="hst"><span class="dot" id="dot"></span><span id="st">Xiriirinaya…</span></div>
     <div class="hctl">
@@ -11398,7 +11424,7 @@ document.querySelectorAll("#znEye button").forEach(b=>b.addEventListener("click"
 
 
 /* ================= v12.23: 🖼 wajiga hore · ⏻ MT5 SHID/DAMI · ✕ XIDH · ⋯ menu ================= */
-const HERO={on:null,pend:null,open:[],flo:0,hint:0,xh:0,tt:0};
+const HERO={on:null,pend:null,open:[],flo:0,hint:0,xh:0,tt:0,nx:null,done:null,pn:0,pf:0};   /* v13.4: nx · done */
 function cfmOpen(o){
   const c=$("#cfm"); if(!c) return;
   $("#cfmT").textContent=o.title||""; $("#cfmB").innerHTML=o.html||""; $("#cfmL").innerHTML=o.list||""; $("#cfmL").hidden=!o.list; $("#cfmN").textContent="";
@@ -11437,7 +11463,26 @@ function heroCtlPaint(){
   else if(HERO.pend){ t.textContent=on?"SHIDAYA…":"DAMINAYA…"; s.textContent="EA-da ayaa qaadanaysa (3–5s)"; }
   else { t.textContent=on?"SHIDAN":"DAMMAN"; if(!HERO.hint || Date.now()-HERO.hint>3000) s.textContent=on?"◀◀ jiid bidix = dami":"jiid midig = shid"; }
   const xb=$("#xidB"), xs=$("#xidS"), n=HERO.open.length;
-  if(xs && !(HERO.xh && Date.now()-HERO.xh<3000)) xs.innerHTML=n?(n+" trade<br><span class=\\""+(HERO.flo>=0?"pos":"neg")+"\\">"+(HERO.flo>=0?"+":"−")+"$"+Math.abs(HERO.flo).toFixed(2)+"</span>"):"trade furan<br>ma jiro";
+  const mny=v=>(v>=0?"+":"−")+"$"+Math.abs(v).toFixed(2);   /* v13.4 */
+  const done=(!n && HERO.done && Date.now()-HERO.done.t<8000)?HERO.done:null, nx=(!n && !done)?HERO.nx:null;
+  if(done){ clearTimeout(HERO.dt); HERO.dt=setTimeout(heroCtlPaint,Math.max(200,8050-(Date.now()-done.t))); }   /* 8s kadib -> SUGAYA */
+  if(xb){ xb.classList.toggle("wait",!!nx && !nx.near); xb.classList.toggle("near",!!nx && nx.near); xb.classList.toggle("done",!!done); }
+  { const pb=xb?xb.querySelector(".pt b"):null; if(pb) pb.textContent=n?"XIDH":(done?"XIDHAN":(nx?(nx.near?"IDHOW!":"SUGAYA"):"XIDH")); }
+  { const xi=xb?xb.querySelector(".xi"):null; if(xi){ if(nx){ xi.setAttribute("data-d","$"+(nx.d<10?nx.d.toFixed(1):nx.d.toFixed(0))); xi.style.setProperty("--xp",(176*(nx.st>0?Math.min(1,nx.d/nx.st):1)).toFixed(0)); } else { xi.removeAttribute("data-d"); xi.style.removeProperty("--xp"); } } }
+  if(xs && !(HERO.xh && Date.now()-HERO.xh<3000)){
+    if(n){ const nb=HERO.open.filter(t=>String(t.type||"").toUpperCase().indexOf("BUY")===0).length, lot=HERO.open.reduce((a,t)=>a+(Number(t.lot)||0),0);
+      const sd=nb===n?"BUY":(nb===0?"SELL":"BUY+SELL");
+      xs.innerHTML="<span class='big "+(HERO.flo>=0?"pos":"neg")+"'>"+mny(HERO.flo)+"</span>"+sd+" ×"+n; }
+    else if(done) xs.innerHTML="<span class='big "+(done.v>=0?"pos":"neg")+"'>"+(done.ex?"":"≈")+mny(done.v)+"</span>natiijada";
+    else if(nx){ const f=v=>v.toFixed(nx.dg);
+      xs.innerHTML=(nx.b>0 && nx.s>0)?("<span class='bp'>▲ "+f(nx.b)+"</span><br><span class='sp2'>▼ "+f(nx.s)+"</span>"):((nx.b>0?"<span class='bp'>▲ "+f(nx.b)+"</span>":"<span class='sp2'>▼ "+f(nx.s)+"</span>")+"<br>"+nx.md); }
+    else xs.innerHTML="trade furan<br>ma jiro";
+  }
+  { const c=$("#hChip"); if(c){ let t="", k="";   /* v13.4: chip - v72.1 agtiisa */
+      if(n){ t="● "+mny(HERO.flo); k=HERO.flo>=0?"p":"l"; }
+      else if(done){ t="✓ "+mny(done.v); k=done.v>=0?"p":"l"; }
+      else if(nx){ if(nx.near){ t="◉ IDHOW $"+nx.d.toFixed(1); k="n"; } else { t="◷ "+((nx.b>0 && nx.s>0)?("▲"+nx.b.toFixed(1)+" ▼"+nx.s.toFixed(1)):(nx.b>0?"BUY "+nx.b.toFixed(1):"SELL "+nx.s.toFixed(1))); k="w"; } }
+      c.hidden=!t; c.textContent=t; c.className="hchip "+k; } }
   if(xb && permOK("close")) xb.disabled=(n===0);
   if(xb) xb.classList.toggle("act",n>0 && !xb.disabled);
 }
@@ -11448,6 +11493,25 @@ function heroPaint(d){
   const rows=Array.isArray(x.trades)?x.trades:[];
   HERO.open=rows.filter(t=>String(t.st||"OPEN").toUpperCase()==="OPEN");
   HERO.flo=HERO.open.reduce((a,t)=>a+(Number(t.profit)||0),0);
+  { const g=d.grid||null; HERO.nx=null;   /* v13.4: GRID trade-ka xiga (EA v72.1.3: nxb · nxs · bid · ask) */
+    if(g && !(Number(g.c)>0)){
+      const b=Number(g.nxb)||0, s=Number(g.nxs)||0, ask=Number(g.ask)||0, bid=Number(g.bid)||0, st=Number(g.step)||0, dg=Number(g.dg)||2;
+      if((b>0 || s>0) && ask>0 && bid>0){
+        const db=b>0?Math.max(0,b-ask):1e9, ds=s>0?Math.max(0,bid-s):1e9, dm=Math.min(db,ds), cf=g.cfg||{}, ej=Number(g.ej)||0;
+        const md=Number(cf.dir)===4?(ej>0?"EMA KOR":"EMA HOOS"):(Number(cf.dir)===3?"LABADA":"TREND");
+        HERO.nx={b:b,s:s,d:dm,st:st,dg:dg,md:md,near:(st>0?dm<=0.25*st:dm<=2)};
+      }
+    }
+    const n=HERO.open.length;
+    if(HERO.pn>0 && n===0){   /* trade-yadii way xidhmeen -> natiijada (grid hist ama float-kii ugu dambeeyay) */
+      let v=HERO.pf, ex=false; const hs=(g && Array.isArray(g.gh))?g.gh:((g && Array.isArray(g.hist))?g.hist:[]);   /* server: gh = taariikhda grid-ka */
+      let hb=null; hs.forEach(h=>{ if(!hb || Number(h.t)>Number(hb.t)) hb=h; });
+      const now=(g && Number(g.srv))?Number(g.srv):Date.now()/1000;
+      if(hb && now-Number(hb.t)<180){ v=Number(hb.pl)||0; ex=true; }
+      HERO.done={v:v,ex:ex,t:Date.now()};
+    }
+    if(n>0) HERO.done=null;
+    HERO.pn=n; HERO.pf=HERO.flo; }
   heroCtlPaint();
 }
 if($("#xidB")) $("#xidB").addEventListener("click",e=>{
