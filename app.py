@@ -20,6 +20,7 @@ Web (session auth):
   /login /register /logout /dashboard /admin
   GET  /api/state         -> xogta account-ka user-ka
   POST /api/command       -> amar loo diro EA-da
+  v13.10: 📴 OFFLINE banner 3s kadib wuu qarsoomaa -> pill yar "OFFLINE · HH:MM" (riix = banner) · xogta lama daboolo
   v13.9: 🔴 LIVE - trade furan / grid diyaar: P/L · equity · grid 3s kasta (/api/live · EA v72.1.5 5s) - app-ku MT5 la socdaa
   v13.8: Maamul › AMARRADA (SHID · DAMI · XIDH · XIDH FAA'IIDO) waa la saaray (Guud › SHIDAN / XIDH · Trade ayaa haya)
   v13.7: amarrada duugoobay (EA aan qaadan) mar dambe ma xannibaan app-ka ("Amaro badan ayaa safka ku jira") · nadiifin toos ah
@@ -5582,7 +5583,7 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 .offban.back{background:rgba(10,44,26,.96);border-color:#4ade80}.offban.back b{color:#4ade80}
 .offban.shake{animation:offsh .4s}
 @keyframes offsh{25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
-body.offl .hero.hfull{padding-top:118px}
+body.offl #st2{color:#fdba74;font-weight:800}body.offl .chip:has(#st2){border-color:#fb923c;cursor:pointer}   /* v13.10: chip-ka kore = OFFLINE · HH:MM */
 body.offl #pwrSw,body.offl #xidB,body.offl [data-perm],body.offl #mSend,body.offl .sw,body.offl #grEma,body.offl .tmgb .bb button,body.offl #tmXall,body.offl .insw,body.offl #mGRPre button{opacity:.45;filter:grayscale(.7)}
 /* v13.4: chip (v72.1 agtiisa) + XIDH: sugaya · idhow · furan · la xidhay */
 .hero-in>.hchip{position:absolute;top:-1px;right:2px;display:inline-flex;align-items:center;padding:4px 11px;border-radius:999px;font-size:14px;font-weight:800;letter-spacing:0;white-space:nowrap;border:2px solid;line-height:1.2;z-index:3}
@@ -7861,15 +7862,18 @@ try{ LAST_OK=Number(localStorage.getItem("mp_lastok"))||0; }catch(e){}
 const OFF_SEL="#pwrSw,#xidB,[data-perm],#mSend,.sw,#grEma,.tmgb .bb button,#tmXall,.insw,#mGRPre button";
 function offHM(t){ if(!t) return "—"; const d=new Date(t), n=new Date(), p=x=>String(x).padStart(2,"0"); return (d.toDateString()===n.toDateString()?"":(p(d.getDate())+"/"+p(d.getMonth()+1)+" "))+p(d.getHours())+":"+p(d.getMinutes()); }
 function offBan(k,t){
-  const b=$("#offBan"); if(!b) return; clearTimeout(offBan.tm);
-  if(k==="off"){ b.className="offban"; $("#offBanT").textContent="KHADKA WAA GO'AY · DAAWASHO OO KELIYA"; $("#offBanS").textContent="xogtii ugu dambeysay "+offHM(t)+" · bot-ku VPS / MT5 wuu sii shaqeynayaa"; b.hidden=false; }
-  else if(k==="back"){ b.className="offban back"; $("#offBanT").textContent="✓ KHADKA WAA SOO NOQDAY"; $("#offBanS").textContent="xogta waa la cusbooneysiiyay · maamulku waa furan yahay"; b.hidden=false; offBan.tm=setTimeout(()=>{ b.hidden=true; },4000); }
-  else b.hidden=true;
+  const b=$("#offBan"), p=null; if(!b) return; clearTimeout(offBan.tm);
+  if(k==="off"){ b.className="offban"; $("#offBanT").textContent="KHADKA WAA GO'AY · DAAWASHO OO KELIYA"; $("#offBanS").textContent="xogtii ugu dambeysay "+offHM(t)+" · bot-ku VPS / MT5 wuu sii shaqeynayaa"; b.hidden=false;
+    offBan.tm=setTimeout(()=>{ b.hidden=true; if(p && OFFL) p.hidden=false; },3000); }   /* v13.10: 3s -> pill yar */
+  else if(k==="back"){ if(p) p.hidden=true; b.className="offban back"; $("#offBanT").textContent="✓ KHADKA WAA SOO NOQDAY"; $("#offBanS").textContent="xogta waa la cusbooneysiiyay · maamulku waa furan yahay"; b.hidden=false; offBan.tm=setTimeout(()=>{ b.hidden=true; },3000); }
+  else { b.hidden=true; if(p) p.hidden=true; }
 }
 function offToast(){
-  const b=$("#offBan"); if(!b || b.hidden) return; const sEl=$("#offBanS"), old=sEl.textContent;
-  sEl.textContent="▣ khad la'aan — amar lama diri karo (daawasho oo keliya)"; b.classList.remove("shake"); void b.offsetWidth; b.classList.add("shake");
-  clearTimeout(offToast.tm); offToast.tm=setTimeout(()=>{ if(OFFL) sEl.textContent=old; },2600);
+  const b=$("#offBan"), p=null; if(!b) return; const sEl=$("#offBanS");
+  clearTimeout(offBan.tm); b.className="offban"; $("#offBanT").textContent="KHADKA WAA GO'AY · DAAWASHO OO KELIYA";
+  sEl.textContent="▣ khad la'aan — amar lama diri karo (daawasho oo keliya)"; b.hidden=false; if(p) p.hidden=true;
+  b.classList.remove("shake"); void b.offsetWidth; b.classList.add("shake");
+  offBan.tm=setTimeout(()=>{ b.hidden=true; if(p && OFFL) p.hidden=false; },2600);   /* v13.10 */
 }
 function offSet(off,at){
   if(!off){
@@ -7877,9 +7881,10 @@ function offSet(off,at){
     LAST_OK=Date.now(); try{ localStorage.setItem("mp_lastok",String(LAST_OK)); }catch(e){}
     return;
   }
-  const t=at||LAST_OK; OFFL=true; document.body.classList.add("offl"); offBan("off",t);
+  const t=at||LAST_OK, first=!OFFL; OFFL=true; document.body.classList.add("offl");
+  if(first) offBan("off",t);   /* v13.10: banner hal mar oo keliya (3s) */
   const st=$("#st"), dt=$("#dot"); if(st) st.textContent="◷ xogtii "+offHM(t)+" · khad ma jiro"; if(dt) dt.className="dot off";
-  const s2=$("#st2"); if(s2) s2.textContent="OFFLINE";
+  const s2=$("#st2"), d2=$("#dot2"); if(s2) s2.textContent="📴 OFFLINE · "+offHM(t); if(d2) d2.className="dot off";   /* v13.10 */
 }
 ["pointerdown","click"].forEach(ev=>document.addEventListener(ev,e=>{
   if(!OFFL) return; const el=e.target && e.target.closest ? e.target.closest(OFF_SEL) : null; if(!el) return;
@@ -7888,6 +7893,7 @@ function offSet(off,at){
 { const _f0=window.fetch.bind(window);   /* khad la'aan -> amar (POST) ma baxo */
   window.fetch=function(u,o){ const m=String((o&&o.method)||"GET").toUpperCase(); if(OFFL && m!=="GET"){ offToast(); return Promise.reject(new Error("offline")); } return _f0(u,o); }; }
 addEventListener("online",()=>{ setTimeout(tick,300); });
+{ const c=$("#st2"), p=c?c.closest(".chip"):null; if(p) p.addEventListener("click",()=>{ if(OFFL) offBan("off",LAST_OK); }); }   /* v13.10: chip-ka OFFLINE riix -> banner 3s */
 addEventListener("offline",()=>{ offSet(true,LAST_OK); });
 /* v13.9: 🔴 LIVE - trade furan / grid diyaar -> 3s kasta xog yar (/api/live) -> P/L · equity · grid MT5 la socda */
 let LASTD=null, LASTD_AT=0, LIVE_TS=0, LIVE=null;
