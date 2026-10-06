@@ -20,6 +20,7 @@ Web (session auth):
   /login /register /logout /dashboard /admin
   GET  /api/state         -> xogta account-ka user-ka
   POST /api/command       -> amar loo diro EA-da
+  v13.6: ✕ XIDH la hubiyaa (30s -> weli furan -> ⚠️ digniin + sababta) · P/L-ka XIDH ma kala jabo - EA v72.1.4 (Algo damman -> amar ma qaato)
   v13.5: 📴 OFFLINE - internet go'o / app khad la'aan la furo -> xogtii ugu dambeysay (daawasho) · maamul ▣ xidhan · khadka soo noqdo -> live
   v13.4: Guud › XIDH: ◷ SUGAYA (trade-ka xiga · $ u jira) · ◉ IDHOW · ● FURAN (P/L) · ✓ LA XIDHAY + chip (v72.1 agtiisa) - EA v72.1.3
   v13.3: 🔒 quful sax (🔁 FLIP = shidan · ⇅ HEDGE = damman) · Trade › GRID quful dhab ah · switch-yada telefoonka (font weyn) sax - EA v72.1.2
@@ -5552,7 +5553,8 @@ body.offl #pwrSw,body.offl #xidB,body.offl [data-perm],body.offl #mSend,body.off
 .hero-in .hxid.wait .pt b{color:#fbbf24}.hero-in .hxid.near .pt b{color:#fb923c}.hero-in .hxid.done .pt b{color:#4ade80}
 .hero-in .hxid.wait .pt small,.hero-in .hxid.near .pt small,.hero-in .hxid.done .pt small{color:#d6c9bd}
 .hero-in .hxid .pt small .bp{color:#4ade80;font-weight:800}.hero-in .hxid .pt small .sp2{color:#f87171;font-weight:800}
-.hero-in .hxid .pt small .big{display:block;font-size:18px;font-weight:900;line-height:1.15;letter-spacing:0}
+.hero-in .hxid .pt{min-width:0;overflow:hidden}.hero-in .hxid .pt small{white-space:nowrap}   /* v13.6 */
+.hero-in .hxid .pt small .big{display:block;white-space:nowrap;font-size:17px;font-weight:900;line-height:1.15;letter-spacing:0}
 .hero-in .hxid .pt small .big.pos{color:#4ade80}.hero-in .hxid .pt small .big.neg{color:#f87171}
 .htoast{grid-column:1/-1;margin-top:2px;font-size:12px;color:#86efac;background:rgba(10,30,18,.85);border:1px solid rgba(74,222,128,.35);border-radius:12px;padding:7px 10px}
 .htoast.bad{color:#fca5a5;border-color:rgba(248,113,113,.4);background:rgba(40,10,12,.85)}
@@ -11507,7 +11509,7 @@ document.querySelectorAll("#znEye button").forEach(b=>b.addEventListener("click"
 
 
 /* ================= v12.23: 🖼 wajiga hore · ⏻ MT5 SHID/DAMI · ✕ XIDH · ⋯ menu ================= */
-const HERO={on:null,pend:null,open:[],flo:0,hint:0,xh:0,tt:0,nx:null,done:null,pn:0,pf:0};   /* v13.4: nx · done */
+const HERO={on:null,pend:null,open:[],flo:0,hint:0,xh:0,tt:0,nx:null,done:null,pn:0,pf:0,cx:null};   /* v13.6: cx = XIDH la diray */   /* v13.4: nx · done */
 function cfmOpen(o){
   const c=$("#cfm"); if(!c) return;
   $("#cfmT").textContent=o.title||""; $("#cfmB").innerHTML=o.html||""; $("#cfmL").innerHTML=o.list||""; $("#cfmL").hidden=!o.list; $("#cfmN").textContent="";
@@ -11530,7 +11532,11 @@ async function heroCmd(cmd){
     const d=await r.json();
     if(note) note.textContent=d.ok?("Waa la diray: "+cmd+" — EA-du 3–5s gudahood buu qaadanayaa."):("Khalad: "+(d.error||"lama diri karin"));
     if(!d.ok){ HERO.pend=null; heroCtlPaint(); alertNote(d.error||"Amarka lama diri karin."); }
-  }catch(e){ HERO.pend=null; heroCtlPaint(); alertNote("Internet ma jiro — amarka lama dirin."); }
+    if(cmd==="CLOSE_ALL" || cmd==="CLOSE_PROFIT"){   /* v13.6: XIDH -> la hubiyaa */
+      if(d.ok){ HERO.cx={t:Date.now(),c:cmd}; [6000,14000,24000,33000].forEach(ms=>setTimeout(tick,ms)); }
+      else heroToast("⚠️ XIDH lama dirin: "+(d.error||"khalad"),true);
+    }
+  }catch(e){ HERO.pend=null; heroCtlPaint(); alertNote("Internet ma jiro — amarka lama dirin."); if(cmd==="CLOSE_ALL") heroToast("⚠️ Internet ma jiro — XIDH lama dirin",true); }
   tick();
 }
 function alertNote(t){ const s=$("#pwrS"); if(s){ s.textContent="⚠️ "+t; } }
@@ -11594,7 +11600,13 @@ function heroPaint(d){
       HERO.done={v:v,ex:ex,t:Date.now()};
     }
     if(n>0) HERO.done=null;
-    HERO.pn=n; HERO.pf=HERO.flo; }
+    HERO.pn=n; HERO.pf=HERO.flo;
+    if(HERO.cx){   /* v13.6: XIDH la diray -> la xidhay? */
+      const nP=HERO.cx.c==="CLOSE_PROFIT"?HERO.open.filter(t=>(Number(t.profit)||0)>0).length:n;
+      if(nP===0){ HERO.cx=null; }
+      else if(Date.now()-HERO.cx.t>30000){ HERO.cx=null;
+        heroToast("⚠️ "+n+" trade weli lama xidhin · MT5 / VPS: Algo Trading ma shidan yahay? · XIDH mar kale riix",true); }
+    } }
   heroCtlPaint();
 }
 if($("#xidB")) $("#xidB").addEventListener("click",e=>{
@@ -11657,7 +11669,7 @@ function heroSet(want){
     try{ xb.setPointerCapture(e.pointerId); }catch(_){}
     H={s:Date.now(),id:e.pointerId,t:setTimeout(()=>{
       const n=HERO.open.length, f=HERO.flo; stop(true); heroBuzz([60,40,60]);
-      heroCmd("CLOSE_ALL"); heroToast("✓ "+n+" trade ayaa la xidhayaa · "+(f>=0?"+":"−")+"$"+Math.abs(f).toFixed(2)+" · bot-ku 3–5s");
+      heroCmd("CLOSE_ALL"); heroToast("✕ XIDH waa la diray · "+n+" trade · "+(f>=0?"+":"−")+"$"+Math.abs(f).toFixed(2)+" · bot-ku 5–20s");   /* v13.6 */
     },1000)};
     xb.classList.remove("hold"); void xb.offsetWidth; xb.classList.add("hold"); heroBuzz(15);
   });
