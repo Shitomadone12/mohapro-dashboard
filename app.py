@@ -20,6 +20,7 @@ Web (session auth):
   /login /register /logout /dashboard /admin
   GET  /api/state         -> xogta account-ka user-ka
   POST /api/command       -> amar loo diro EA-da
+  v13.11: 🌙 "SUUQA XIDHAN" been ah waa la saxay - maalmaha shaqada EA-ga "mkt=0" keliya lama aamino (nasasho 17-18 NY / tick da' ah)
   v13.10: 📴 OFFLINE banner 3s kadib wuu qarsoomaa -> pill yar "OFFLINE · HH:MM" (riix = banner) · xogta lama daboolo
   v13.9: 🔴 LIVE - trade furan / grid diyaar: P/L · equity · grid 3s kasta (/api/live · EA v72.1.5 5s) - app-ku MT5 la socdaa
   v13.8: Maamul › AMARRADA (SHID · DAMI · XIDH · XIDH FAA'IIDO) waa la saaray (Guud › SHIDAN / XIDH · Trade ayaa haya)
@@ -7561,7 +7562,7 @@ function paint(d){
   $("#dot2").className="dot "+(d.online?(RS.ok?"on":"warn"):"off");
   $("#st2").textContent=d.online?RS.short:"OFFLINE";
   const MK=mktState(d);                                     // v12.4: suuqa xidhan
-  if(MK.closed){ $("#dot2").className="dot warn"; $("#st2").textContent="SUUQA XIDHAN"; }
+  if(MK.closed){ $("#dot2").className="dot warn"; $("#st2").textContent=MK.brk?"SUUQ NASASHO":"SUUQA XIDHAN"; }   /* v13.11 */
   const vv=verOf(d); $("#heroVer").textContent=vv?("v"+vv):"";
   $("#heroAcc").textContent="#"+d.account;
   setBrand(d.brand||"");   // v4.1: madhan -> kii hore ayaa la sii hayaa
@@ -7594,7 +7595,7 @@ function paint(d){
     :(d.age==null?"Xog lama helin":"OFFLINE · "+d.age+"s ka hor");
   if(MK.closed){
     if(!d.online && d.age!=null) $("#dot").className="dot warn";
-    $("#st").insertAdjacentHTML("beforeend",' · <b class="mkt">🌙 suuqa '+(MK.openAt?('wuxuu furmayaa '+esc(soWhen(MK.openAt))):'waa xidhan yahay')+'</b>');
+    $("#st").insertAdjacentHTML("beforeend",' · <b class="mkt">'+(MK.brk?'⏸ suuqa nasasho':'🌙 suuqa')+' '+(MK.openAt?('wuxuu furmayaa '+esc(soWhen(MK.openAt))):(MK.brk?'(qiimo ma socdo)':'waa xidhan yahay'))+'</b>');   /* v13.11 */
   }
   $("#bal").textContent=money(x.balance);
   $("#eq").textContent=money(x.equity);
@@ -8033,11 +8034,22 @@ function mktClock(ms){
   }
   return {closed:closed,openAt:openAt,closedAt:closedAt};
 }
-function mktState(d){
-  const c=mktClock(), x=(d&&d.data)||{};
+function mktState(d,now){
+  now=now||Date.now();
+  const c=mktClock(now), x=(d&&d.data)||{};
   const ea=(d&&d.online&&x.mkt!==undefined&&x.mkt!==null)?Number(x.mkt):null;
-  const closed=(ea===null)?c.closed:(ea===0);
-  return {closed:closed,openAt:c.openAt,closedAt:c.closedAt,src:(ea===null?"clock":"ea")};
+  const mks=(x.mks!==undefined&&x.mks!==null&&Number(x.mks)>=0)?Number(x.mks):null;   // v13.11: da'da tick-ga (EA v72.1.6)
+  /* v13.11: nasashada maalinlaha ah ee dahabka: 17:00-18:00 New York (Axad-Khamiis) */
+  const p=nyParts(now), m=p.h*60+p.mi, brk=(p.wd>=0&&p.wd<=4&&m>=16*60+55&&m<18*60+5);
+  let closed, brkOn=false;
+  if(ea===null || ea===1) closed=(ea===1)?false:c.closed;
+  else if(c.closed) closed=true;                       // weekend -> run
+  else if(brk || (mks!==null && mks>600)){ closed=true; brkOn=true; }   // nasasho / fasax (tick ma socdo)
+  else closed=false;                                   // maalin shaqo + qiimo socda -> FURAN (EA-gii hore been buu sheegay)
+  let openAt=c.openAt;
+  if(brkOn && brk){ const b=new Date(Date.UTC(p.y,p.mo-1,p.d)); openAt=nyToUtc(now,b.getUTCFullYear(),b.getUTCMonth()+1,b.getUTCDate(),18,0); }
+  else if(brkOn) openAt=null;
+  return {closed:closed,brk:brkOn,openAt:openAt,closedAt:(brkOn?null:c.closedAt),src:(ea===null?"clock":"ea")};
 }
 function soWhen(ms){ if(!ms) return ""; const t=new Date(ms);
   return SO_DAY[t.getDay()]+" "+String(t.getHours()).padStart(2,"0")+":"+String(t.getMinutes()).padStart(2,"0"); }
@@ -8051,7 +8063,11 @@ function healthChecks(d){
   // 1) xiriirka
   if(d.age==null){ add("red","Bot-ka xog lagama helin","EA-du weli wax uma dirin server-ka. Hubi EnableCloudDashboard = true iyo URL-ka WebRequest-ka (Tools → Options → Expert Advisors)."); return out; }
   const MK=mktState(d);                                                      // v12.4
-  if(MK.closed){
+  if(MK.closed && MK.brk){   /* v13.11: nasasho maalinle - ma aha weekend */
+    add("amb","⏸ Suuqa dahabku wuu nasanayaa",
+      "Dahabku maalin kasta ~1 saac ayuu nasto (17:00–18:00 New York"+(MK.openAt?(" · wuxuu furmayaa "+soWhen(MK.openAt)+" waqtigaaga"):"")+"). Trade cusub lama furo · tani waa caadi.");
+  }
+  else if(MK.closed){
     const hrs=MK.openAt?Math.max(0,Math.round((MK.openAt-Date.now())/3600000)):null;
     add("amb","🌙 Suuqa waa xidhan yahay (weekend)",
       (MK.closedAt?("Forex-ku wuxuu xidhmay "+soWhen(MK.closedAt)+" (waqtigaaga) · "):"")
