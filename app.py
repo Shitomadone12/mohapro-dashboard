@@ -20,6 +20,7 @@ Web (session auth):
   /login /register /logout /dashboard /admin
   GET  /api/state         -> xogta account-ka user-ka
   POST /api/command       -> amar loo diro EA-da
+  v13.5: 📴 OFFLINE - internet go'o / app khad la'aan la furo -> xogtii ugu dambeysay (daawasho) · maamul ▣ xidhan · khadka soo noqdo -> live
   v13.4: Guud › XIDH: ◷ SUGAYA (trade-ka xiga · $ u jira) · ◉ IDHOW · ● FURAN (P/L) · ✓ LA XIDHAY + chip (v72.1 agtiisa) - EA v72.1.3
   v13.3: 🔒 quful sax (🔁 FLIP = shidan · ⇅ HEDGE = damman) · Trade › GRID quful dhab ah · switch-yada telefoonka (font weyn) sax - EA v72.1.2
   v13.2: 🧭 GRID EMA shid / dami (Input · Guud · chart) · 🔒 BE (2×) · default TREND EMA + quful BE - EA v72.1
@@ -2168,7 +2169,7 @@ _PWA_ICONS_B64 = {
 }
 
 _PWA_ICONS = {k: _b64.b64decode("".join(v)) for k, v in _PWA_ICONS_B64.items()}
-PWA_VERSION = "moha-pwa-1"
+PWA_VERSION = "moha-pwa-2"   # v13.5: 📴 offline (bogga + /api/* kayd)
 
 _PWA_MANIFEST = {
     "name": "MOHA PRO",
@@ -2209,6 +2210,7 @@ const OFF = '<!doctype html><html lang="so"><head><meta charset="utf-8">'
  + '<button onclick="location.reload()">Isku day mar kale</button></div></body></html>';
 const PRE = ["/icons/icon-192.png"];
 
+const DC = V + "-d";   // v13.5: kaydka xogta (bogga dashboard + /api/*) -> offline
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(V).then(c => c.addAll(PRE)).catch(() => {}));
   self.skipWaiting();
@@ -2216,18 +2218,35 @@ self.addEventListener("install", e => {
 self.addEventListener("activate", e => {
   e.waitUntil((async () => {
     const ks = await caches.keys();
-    await Promise.all(ks.filter(k => k !== V).map(k => caches.delete(k)));
+    await Promise.all(ks.filter(k => k !== V && k !== DC).map(k => caches.delete(k)));
     await self.clients.claim();
   })());
 });
+self.addEventListener("message", e => { if (e.data === "mp-clear") caches.delete(DC); });
+function offPage() { return new Response(OFF, {headers: {"Content-Type": "text/html; charset=utf-8"}}); }
+async function stamp(res) {   // jawaab -> kayd (+ waqtiga)
+  const b = await res.clone().arrayBuffer();
+  return new Response(b, {headers: {"Content-Type": res.headers.get("Content-Type") || "application/json", "X-Mp-At": String(Date.now())}});
+}
 self.addEventListener("fetch", e => {
   const r = e.request;
   if (r.method !== "GET") return;
   const u = new URL(r.url);
   if (u.origin !== location.origin) return;
+  const dash = (u.pathname === "/dashboard" || u.pathname === "/");
   if (r.mode === "navigate") {
-    e.respondWith(fetch(r).catch(() =>
-      new Response(OFF, {headers: {"Content-Type": "text/html; charset=utf-8"}})));
+    if (u.pathname === "/logout") { e.waitUntil(caches.delete(DC)); return; }   // bax -> kaydka xogta tirtir
+    e.respondWith((async () => {
+      try {
+        const res = await fetch(r);
+        if (dash && res.ok && !res.redirected) { const c = await caches.open(DC); await c.put("/dashboard", await stamp(res)); }
+        else if (res.redirected && new URL(res.url).pathname === "/login") await caches.delete(DC);
+        return res;
+      } catch (err) {
+        if (dash) { const c = await caches.open(DC); const m = await c.match("/dashboard"); if (m) return new Response(await m.arrayBuffer(), {headers: {"Content-Type": "text/html; charset=utf-8"}}); }
+        return offPage();
+      }
+    })());
     return;
   }
   if (u.pathname.startsWith("/icons/") || u.pathname === "/favicon.ico" ||
@@ -2236,8 +2255,24 @@ self.addEventListener("fetch", e => {
       if (res.ok) c.put(r, res.clone());
       return res;
     }))));
+    return;
   }
-  // /api/* iyo wax kasta oo kale: network oo keliya -> xogtu mar walba waa mid cusub
+  // v13.5: /api/* -> network marka hore (xog cusub) · khad la'aan -> kaydkii ugu dambeeyay (X-Mp-Offline)
+  if (u.pathname.startsWith("/api/") && !u.pathname.startsWith("/api/export") && u.pathname.indexOf("/api/mus") !== 0) {
+    e.respondWith((async () => {
+      const c = await caches.open(DC);
+      try {
+        const res = await fetch(r);
+        if (res.ok) await c.put(r, await stamp(res));
+        else if (res.status === 401) await caches.delete(DC);
+        return res;
+      } catch (err) {
+        const m = await c.match(r);
+        if (m) return new Response(await m.arrayBuffer(), {headers: {"Content-Type": m.headers.get("Content-Type") || "application/json", "X-Mp-Offline": "1", "X-Mp-At": m.headers.get("X-Mp-At") || "0"}});
+        throw err;
+      }
+    })());
+  }
 });
 """.replace("__VER__", PWA_VERSION)
 
@@ -5486,6 +5521,16 @@ body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 .hero-in .hxid.hold{border-color:#fbbf24;box-shadow:0 0 26px rgba(251,191,36,.5);background:linear-gradient(145deg,#4c1117,#220b0f 65%)}
 .hero-in .hxid.hold .pt b{color:#fff}
 .hero-in .hxid .pt small .pos{color:#4ade80;font-weight:900}.hxid .pt small .neg{color:#f87171;font-weight:900}
+/* v13.5: 📴 OFFLINE banner + maamul xidhan */
+.offban{position:fixed;left:10px;right:10px;top:calc(8px + env(safe-area-inset-top));z-index:9990;display:flex;flex-direction:column;gap:2px;padding:9px 14px;border-radius:14px;
+  background:rgba(56,30,8,.96);border:2px solid #fb923c;box-shadow:0 8px 24px rgba(0,0,0,.45);color:#fff}
+.offban[hidden]{display:none}
+.offban b{font-size:13.5px;letter-spacing:.04em;color:#fb923c}.offban small{font-size:11.5px;color:#f3e8dc}
+.offban.back{background:rgba(10,44,26,.96);border-color:#4ade80}.offban.back b{color:#4ade80}
+.offban.shake{animation:offsh .4s}
+@keyframes offsh{25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
+body.offl .hero.hfull{padding-top:118px}
+body.offl #pwrSw,body.offl #xidB,body.offl [data-perm],body.offl #mSend,body.offl .sw,body.offl #grEma,body.offl .tmgb .bb button,body.offl #tmXall,body.offl .insw,body.offl #mGRPre button{opacity:.45;filter:grayscale(.7)}
 /* v13.4: chip (v72.1 agtiisa) + XIDH: sugaya · idhow · furan · la xidhay */
 .hero-in>.hchip{position:absolute;top:-1px;right:2px;display:inline-flex;align-items:center;padding:4px 11px;border-radius:999px;font-size:14px;font-weight:800;letter-spacing:0;white-space:nowrap;border:2px solid;line-height:1.2;z-index:3}
 .hero-in>.hchip[hidden]{display:none}
@@ -6416,6 +6461,7 @@ body.mu-on{padding-bottom:calc(136px + env(safe-area-inset-bottom))}
 body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
 </style></head><body>
 
+<div class="offban" id="offBan" hidden><b id="offBanT">KHADKA WAA GO'AY · DAAWASHO OO KELIYA</b><small id="offBanS">—</small></div>   <!-- v13.5: 📴 -->
 <div class="hero hfull">
   <div class="hero-ph"></div>
   <div class="hero-photo" id="heroPhoto"></div>
@@ -7755,16 +7801,53 @@ function shrink(file,maxW,q){
   });
 }
 
+/* v13.5: 📴 OFFLINE - xogtii ugu dambeysay (kaydka SW) · maamul xidhan · amar (POST) lama diro */
+let OFFL=false, LAST_OK=0;
+try{ LAST_OK=Number(localStorage.getItem("mp_lastok"))||0; }catch(e){}
+const OFF_SEL="#pwrSw,#xidB,[data-perm],#mSend,.sw,#grEma,.tmgb .bb button,#tmXall,.insw,#mGRPre button";
+function offHM(t){ if(!t) return "—"; const d=new Date(t), n=new Date(), p=x=>String(x).padStart(2,"0"); return (d.toDateString()===n.toDateString()?"":(p(d.getDate())+"/"+p(d.getMonth()+1)+" "))+p(d.getHours())+":"+p(d.getMinutes()); }
+function offBan(k,t){
+  const b=$("#offBan"); if(!b) return; clearTimeout(offBan.tm);
+  if(k==="off"){ b.className="offban"; $("#offBanT").textContent="KHADKA WAA GO'AY · DAAWASHO OO KELIYA"; $("#offBanS").textContent="xogtii ugu dambeysay "+offHM(t)+" · bot-ku VPS / MT5 wuu sii shaqeynayaa"; b.hidden=false; }
+  else if(k==="back"){ b.className="offban back"; $("#offBanT").textContent="✓ KHADKA WAA SOO NOQDAY"; $("#offBanS").textContent="xogta waa la cusbooneysiiyay · maamulku waa furan yahay"; b.hidden=false; offBan.tm=setTimeout(()=>{ b.hidden=true; },4000); }
+  else b.hidden=true;
+}
+function offToast(){
+  const b=$("#offBan"); if(!b || b.hidden) return; const sEl=$("#offBanS"), old=sEl.textContent;
+  sEl.textContent="▣ khad la'aan — amar lama diri karo (daawasho oo keliya)"; b.classList.remove("shake"); void b.offsetWidth; b.classList.add("shake");
+  clearTimeout(offToast.tm); offToast.tm=setTimeout(()=>{ if(OFFL) sEl.textContent=old; },2600);
+}
+function offSet(off,at){
+  if(!off){
+    if(OFFL){ OFFL=false; document.body.classList.remove("offl"); offBan("back"); }
+    LAST_OK=Date.now(); try{ localStorage.setItem("mp_lastok",String(LAST_OK)); }catch(e){}
+    return;
+  }
+  const t=at||LAST_OK; OFFL=true; document.body.classList.add("offl"); offBan("off",t);
+  const st=$("#st"), dt=$("#dot"); if(st) st.textContent="◷ xogtii "+offHM(t)+" · khad ma jiro"; if(dt) dt.className="dot off";
+  const s2=$("#st2"); if(s2) s2.textContent="OFFLINE";
+}
+["pointerdown","click"].forEach(ev=>document.addEventListener(ev,e=>{
+  if(!OFFL) return; const el=e.target && e.target.closest ? e.target.closest(OFF_SEL) : null; if(!el) return;
+  e.preventDefault(); e.stopPropagation(); if(ev==="click" || e.pointerType!=="mouse") offToast();
+},true));
+{ const _f0=window.fetch.bind(window);   /* khad la'aan -> amar (POST) ma baxo */
+  window.fetch=function(u,o){ const m=String((o&&o.method)||"GET").toUpperCase(); if(OFFL && m!=="GET"){ offToast(); return Promise.reject(new Error("offline")); } return _f0(u,o); }; }
+addEventListener("online",()=>{ setTimeout(tick,300); });
+addEventListener("offline",()=>{ offSet(true,LAST_OK); });
 async function tick(){
   try{
     const q=accSel?("?account="+encodeURIComponent(accSel.value)):"";
     const r=await fetch("/api/state"+q,{headers:{"Accept":"application/json"}});
     if(r.status===401){location.href="/login";return;}
     const d=await r.json();
+    const offc=(r.headers.get("X-Mp-Offline")==="1");   /* v13.5: kaydka SW */
     if(d.ok)paint(d);
+    offSet(offc, offc?(Number(r.headers.get("X-Mp-At"))||LAST_OK):0);
   }catch(e){
     $("#dot").className="dot off"; $("#st").textContent="Xiriir la'aan";
     $("#dot2").className="dot off"; $("#st2").textContent="OFFLINE";
+    offSet(true,LAST_OK);   /* v13.5: xogta muuqata way sii jirtaa · maamul xidhan */
   }
 }
 /* ---- v8: PWA - badhanka "Install" (Android + PC Chrome/Edge) ---- */
