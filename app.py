@@ -20,6 +20,7 @@ Web (session auth):
   /login /register /logout /dashboard /admin
   GET  /api/state         -> xogta account-ka user-ka
   POST /api/command       -> amar loo diro EA-da
+  v13.7: amarrada duugoobay (EA aan qaadan) mar dambe ma xannibaan app-ka ("Amaro badan ayaa safka ku jira") · nadiifin toos ah
   v13.6: ✕ XIDH la hubiyaa (30s -> weli furan -> ⚠️ digniin + sababta) · P/L-ka XIDH ma kala jabo - EA v72.1.4 (Algo damman -> amar ma qaato)
   v13.5: 📴 OFFLINE - internet go'o / app khad la'aan la furo -> xogtii ugu dambeysay (daawasho) · maamul ▣ xidhan · khadka soo noqdo -> live
   v13.4: Guud › XIDH: ◷ SUGAYA (trade-ka xiga · $ u jira) · ◉ IDHOW · ● FURAN (P/L) · ✓ LA XIDHAY + chip (v72.1 agtiisa) - EA v72.1.3
@@ -4082,10 +4083,15 @@ def api_command():
         if not need or not lic["perms"].get(need):
             return jsonify(ok=False, error="Amarkan admin-ka ayaa leh."), 403
     with db() as con:
-        n = con.execute("SELECT COUNT(*) c FROM commands WHERE account=? AND taken_at IS NULL",
-                        (acc,)).fetchone()["c"]
-        if n >= 24:   # v5: sitinka hal mar 7 amar ayuu noqon karaa
-            return jsonify(ok=False, error="Amaro badan ayaa safka ku jira."), 429
+        now = time.time()
+        # v13.7: amar duugoobay (CMD_TTL) EA-du ma qaadan karto -> hadda ha tirin · calaamadee (-1) · 7 maalmood kadib tirtir
+        con.execute("UPDATE commands SET taken_at=-1 WHERE account=? AND taken_at IS NULL AND created_at<?", (acc, now - CMD_TTL))
+        if _should_prune("cmdp:" + acc):
+            con.execute("DELETE FROM commands WHERE account=? AND created_at<?", (acc, now - 7 * 86400))
+        n = con.execute("SELECT COUNT(*) c FROM commands WHERE account=? AND taken_at IS NULL AND created_at>?",
+                        (acc, now - CMD_TTL)).fetchone()["c"]
+        if n >= 40:   # v5: sitinka hal mar 7 amar ayuu noqon karaa · v13.7: 24 -> 40 (10 daqiiqo gudahood)
+            return jsonify(ok=False, error="Amarro badan ayaa sugaya (EA-du ma qaadanayso) — MT5 / VPS hubi · 1–2 daqiiqo kadib isku day."), 429
         con.execute("INSERT INTO commands(account,cmd,by_account,created_at) VALUES(?,?,?,?)",
                     (acc, cmd, u["account"], time.time()))
     return jsonify(ok=True, cmd=cmd, account=acc)
