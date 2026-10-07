@@ -20,6 +20,7 @@ Web (session auth):
   /login /register /logout /dashboard /admin
   GET  /api/state         -> xogta account-ka user-ka
   POST /api/command       -> amar loo diro EA-da
+  v13.14: ⚡ BINARY (Deriv API) - tab cusub · Rise / Fall · RSI 30/70 M1 · bot-ku server-ka ayuu ku socdaa 24/7 · xad maalinle · martingale MA JIRO · DEMO (REAL = 300 trade + win > 55%)
   v13.13: ⇅ LABADA = GRID SPOT (EA v72.2) - range ±2% · 5 lakab · BUY hoos / TP lakab kor · KAR AL · SL · Maamul sitinka SPOT · Heerarka xariiqyada
   v13.12: 🛰 XAALADDA BOT-KA (Analiis): VPS / PC · HADDA (SUG · TRADE · JOOG) · hubinta · maanta + DHACDOOYINKA (EA v72.1.7)
           + xariiqda bilowga (Heerarka) · digniin marka VPS-ku istaago · PC (Algo damman) xogta VPS-ka ma dul qoro
@@ -48,6 +49,7 @@ Web (session auth):
   v12.23: wajiga hore (sawir shaashad buuxda · ⏻ MT5 SHID/DAMI · ✕ XIDH · ⋯) · 🎵 player la jiidi karo
   v12.22: 🎯 ZONE YAR (zn) · 💱 LAMAANAHA (pairs · SET:PAIRS=h..) - EA v70.8
   GET/POST /api/music     -> v12.20: 🎵 liiska heesaha (link-yo)
+  GET  /api/binary/state · POST /api/binary/connect|disconnect|config|run -> v13.14: ⚡ BINARY (Deriv)
 """
 
 import os, re, json, time, sqlite3, hmac, secrets, logging, threading
@@ -568,6 +570,11 @@ CREATE TABLE IF NOT EXISTS levels(
   data    TEXT NOT NULL,
   ts      REAL NOT NULL,
   UNIQUE(account, sym)
+);
+CREATE TABLE IF NOT EXISTS bin_lease(
+  id     INTEGER PRIMARY KEY,
+  holder TEXT NOT NULL DEFAULT '',
+  till   REAL NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS kv(
   k TEXT PRIMARY KEY,
@@ -4302,6 +4309,908 @@ def _kv_put(con, k, v):
                 (k, json.dumps(v, separators=(",", ":"), ensure_ascii=False)))
 
 
+# ======================================================================
+# v13.14: ⚡ BINARY BOT (Deriv API · Rise / Fall · DEMO)
+#   Bot-ku server-kan ayuu ku socdaa (thread) · Deriv WebSocket API · PC / VPS looma baahna.
+#   Signal: RSI(14) M1 < 30 -> RISE (CALL) · > 70 -> FALL (PUT) · hal trade mar kasta.
+#   Ilaalin: xad maalinle ($ + trade) · saacadaha GMT · martingale MA JIRO · REAL = xidhan
+#   (kaliya kadib 300 trade DEMO + win% > 55). Token: Read + Trade · encrypted (SECRET_KEY).
+#   kv: bincfg:<acc> (sitin + token) · binst:<acc> (xaaladda live) · binh:<acc> (taariikh)
+#   Gunicorn worker badan: hal worker oo keliya ayaa bot-ka wada (bin_lease).
+# ======================================================================
+import socket as _bsock, ssl as _bssl, struct as _bstruct, hashlib as _bhash
+from urllib.parse import urlparse as _burlp
+
+import urllib.error as _uerr
+BIN_WS_URL = (os.environ.get("DERIV_WS_URL") or "wss://ws.derivws.com/websockets/v3").strip()      # API-ga hore (legacy)
+BIN_LEGACY_APP = (os.environ.get("DERIV_LEGACY_APP_ID") or "1089").strip()
+BIN_REST = (os.environ.get("DERIV_REST_URL") or "https://api.derivws.com/trading/v1/").strip().rstrip("/") + "/"   # API-ga cusub
+BIN_APP_ENV = (os.environ.get("DERIV_APP_ID") or "").strip()                                           # App ID (developers.deriv.com)
+BIN_SYMS = {"XAU": ("frxXAUUSD", "XAU/USD", 2), "EUR": ("frxEURUSD", "EUR/USD", 5),
+            "GBP": ("frxGBPUSD", "GBP/USD", 5), "BTC": ("cryBTCUSD", "BTC/USD", 2)}
+BIN_DEF = {"on": 0, "sym": "XAU", "exp": 5, "stake": 1.0, "hs": 7, "he": 20, "dl": 5.0, "maxn": 20,
+           "mode": "demo", "rlo": 30, "rhi": 70}
+BIN_UNLOCK_N, BIN_UNLOCK_WR = 300, 55.0
+BIN_HCAP = 3000
+
+
+class _BinFatal(Exception):
+    """Khalad aan dib isku day lahayn (token khaldan · REAL xidhan) -> bot-ka dami."""
+
+
+class _BinRestart(Exception):
+    """Sitin muhiim ah ayaa isbeddelay (suuq) -> dib u xidh."""
+
+
+class _BinWS:
+    """WebSocket client yar (stdlib keliya · RFC 6455) - requirements cusub looma baahna."""
+
+    def __init__(self, url, timeout=15):
+        u = _burlp(url)
+        host = u.hostname
+        port = u.port or (443 if u.scheme == "wss" else 80)
+        path = (u.path or "/") + (("?" + u.query) if u.query else "")
+        raw = _bsock.create_connection((host, port), timeout=timeout)
+        if u.scheme == "wss":
+            raw = _bssl.create_default_context().wrap_socket(raw, server_hostname=host)
+        self.s = raw
+        self.buf = b""
+        self.wl = threading.Lock()
+        key = _b64.b64encode(os.urandom(16)).decode()
+        req = ("GET %s HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+               "Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\nOrigin: https://%s\r\n"
+               "User-Agent: MOHA-PRO/13.14\r\n\r\n") % (path, host, key, host)
+        self.s.sendall(req.encode())
+        while b"\r\n\r\n" not in self.buf:
+            ch = self.s.recv(4096)
+            if not ch:
+                raise ConnectionError("ws: handshake EOF")
+            self.buf += ch
+            if len(self.buf) > 65536:
+                raise ConnectionError("ws: handshake weyn")
+        head, self.buf = self.buf.split(b"\r\n\r\n", 1)
+        lines = head.decode("latin-1").split("\r\n")
+        if " 101 " not in lines[0] + " ":
+            raise ConnectionError("ws: " + lines[0][:80])
+        acc = _b64.b64encode(_bhash.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
+        hd = {ln.split(":", 1)[0].strip().lower(): ln.split(":", 1)[1].strip() for ln in lines[1:] if ":" in ln}
+        if hd.get("sec-websocket-accept") != acc:
+            raise ConnectionError("ws: accept khaldan")
+
+    def _rx(self, n):
+        while len(self.buf) < n:
+            ch = self.s.recv(65536)
+            if not ch:
+                raise ConnectionError("ws: xidhmay")
+            self.buf += ch
+        out, self.buf = self.buf[:n], self.buf[n:]
+        return out
+
+    def _tx(self, op, data):
+        hdr = bytes([0x80 | op])
+        n = len(data)
+        if n < 126:
+            hdr += bytes([0x80 | n])
+        elif n < 65536:
+            hdr += bytes([0x80 | 126]) + _bstruct.pack("!H", n)
+        else:
+            hdr += bytes([0x80 | 127]) + _bstruct.pack("!Q", n)
+        mk = os.urandom(4)
+        body = bytes(b ^ mk[i % 4] for i, b in enumerate(data))
+        with self.wl:
+            self.s.sendall(hdr + mk + body)
+
+    def send(self, obj):
+        self._tx(1, json.dumps(obj, separators=(",", ":")).encode())
+
+    def recv(self, timeout=None):
+        """JSON dict · None = waqtigii dhammaaday (timeout)."""
+        self.s.settimeout(timeout)
+        parts = []
+        try:
+            while True:
+                b0, b1 = self._rx(2)
+                op, n = b0 & 0x0F, b1 & 0x7F
+                if n == 126:
+                    n = _bstruct.unpack("!H", self._rx(2))[0]
+                elif n == 127:
+                    n = _bstruct.unpack("!Q", self._rx(8))[0]
+                mk = self._rx(4) if (b1 & 0x80) else None
+                data = self._rx(n) if n else b""
+                if mk:
+                    data = bytes(b ^ mk[i % 4] for i, b in enumerate(data))
+                if op == 9:
+                    self._tx(10, data)
+                    continue
+                if op == 10:
+                    continue
+                if op == 8:
+                    raise ConnectionError("ws: server-ku wuu xidhay")
+                if op in (0, 1, 2):
+                    parts.append(data)
+                    if b0 & 0x80:
+                        try:
+                            return json.loads(b"".join(parts).decode("utf-8", "replace"))
+                        except ValueError:
+                            parts = []
+                            continue
+        except (_bsock.timeout, TimeoutError):
+            if parts:
+                raise ConnectionError("ws: frame jaban")
+            return None
+
+    def close(self):
+        try:
+            self._tx(8, b"")
+        except Exception:
+            pass
+        try:
+            self.s.close()
+        except Exception:
+            pass
+
+
+def _bin_url():
+    u = BIN_WS_URL
+    if "app_id=" not in u:
+        u += ("&" if "?" in u else "?") + "app_id=" + BIN_LEGACY_APP + "&l=EN"
+    return u
+
+
+# ---- token: qarin (SECRET_KEY) - HMAC-SHA256 keystream + tag
+def _bin_key():
+    return _bhash.sha256(("moha-bin|" + (app.secret_key or "")).encode()).digest()
+
+
+def _bin_ks(key, nonce, n):
+    out = b""
+    i = 0
+    while len(out) < n:
+        out += hmac.new(key, nonce + _bstruct.pack("!I", i), _bhash.sha256).digest()
+        i += 1
+    return out[:n]
+
+
+def _bin_enc(tok):
+    key = _bin_key()
+    nonce = os.urandom(16)
+    pt = tok.encode()
+    ct = bytes(a ^ b for a, b in zip(pt, _bin_ks(key, nonce, len(pt))))
+    tag = hmac.new(key, b"tag" + nonce + ct, _bhash.sha256).digest()[:16]
+    return _b64.b64encode(nonce + tag + ct).decode()
+
+
+def _bin_dec(s):
+    try:
+        raw = _b64.b64decode(s or "")
+        nonce, tag, ct = raw[:16], raw[16:32], raw[32:]
+        key = _bin_key()
+        if not ct or not hmac.compare_digest(tag, hmac.new(key, b"tag" + nonce + ct, _bhash.sha256).digest()[:16]):
+            return None
+        return bytes(a ^ b for a, b in zip(ct, _bin_ks(key, nonce, len(ct)))).decode()
+    except Exception:
+        return None
+
+
+def _bin_cfg(con, acc):
+    c = _kv_get(con, "bincfg:" + acc) or {}
+    out = dict(BIN_DEF)
+    out.update({k: c[k] for k in c if k in BIN_DEF or k in ("tk", "t4", "acct", "api", "app")})
+    return out
+
+
+def _bin_clean(v):
+    """sitinka app-ka -> xad sax ah."""
+    o = {}
+
+    def num(k, lo, hi, cast=float):
+        if k in v:
+            try:
+                o[k] = cast(min(hi, max(lo, cast(v[k]))))
+            except (TypeError, ValueError):
+                pass
+    if v.get("sym") in BIN_SYMS:
+        o["sym"] = v["sym"]
+    if str(v.get("exp")) in ("1", "5", "15"):
+        o["exp"] = int(v["exp"])
+    num("stake", 0.35, 100.0)
+    if "stake" in o:
+        o["stake"] = round(o["stake"], 2)
+    num("hs", 0, 23, int)
+    num("he", 1, 24, int)
+    num("dl", 1.0, 1000.0)
+    num("maxn", 1, 200, int)
+    if v.get("mode") in ("demo", "real"):
+        o["mode"] = v["mode"]
+    return o
+
+
+def _bin_hist(con, acc):
+    h = _kv_get(con, "binh:" + acc) or {}
+    return h.get("l") if isinstance(h.get("l"), list) else []
+
+
+def _bin_day(hist, now):
+    d0 = int(now // 86400) * 86400
+    t = [x for x in hist if x.get("t", 0) >= d0]
+    w = sum(1 for x in t if x.get("w"))
+    return {"n": len(t), "w": w, "l": len(t) - w, "pl": round(sum(float(x.get("pr") or 0) for x in t), 2)}
+
+
+def _bin_unlock(hist):
+    d = [x for x in hist if x.get("v")]
+    n = len(d)
+    wr = (100.0 * sum(1 for x in d if x.get("w")) / n) if n else 0.0
+    return {"n": n, "wr": round(wr, 1), "need_n": BIN_UNLOCK_N, "need_wr": BIN_UNLOCK_WR,
+            "ok": n >= BIN_UNLOCK_N and wr > BIN_UNLOCK_WR}
+
+
+def _bin_rsi(closes, n=14):
+    if len(closes) < n + 2:
+        return None
+    a = 1.0 / n
+    up = dn = None
+    for i in range(1, len(closes)):
+        d = closes[i] - closes[i - 1]
+        u, w = (d if d > 0 else 0.0), (-d if d < 0 else 0.0)
+        if up is None:
+            up, dn = u, w
+        else:
+            up = a * u + (1 - a) * up
+            dn = a * w + (1 - a) * dn
+    if dn <= 1e-12:
+        return 100.0
+    return 100.0 - 100.0 / (1.0 + up / dn)
+
+
+def _bin_authorize(ws, token, timeout=12):
+    ws.send({"authorize": token, "req_id": 1})
+    end = time.time() + timeout
+    while time.time() < end:
+        m = ws.recv(timeout=max(0.5, end - time.time()))
+        if not m:
+            continue
+        if m.get("msg_type") == "authorize":
+            if m.get("error"):
+                e = m["error"]
+                raise _BinFatal("Token-ka waa khaldan (" + str(e.get("code") or "") + ": " + str(e.get("message") or "")[:120] + ")")
+            return m.get("authorize") or {}
+    raise ConnectionError("Deriv: jawaab ma iman (authorize)")
+
+
+def _bin_rest(method, path, token, appid, timeout=12):
+    """API-ga cusub ee Deriv (REST): Authorization Bearer <PAT> + Deriv-App-ID."""
+    req = _ureq.Request(BIN_REST + path, method=method, data=(b"{}" if method == "POST" else None),
+                        headers={"Authorization": "Bearer " + token, "Deriv-App-ID": appid, "Accept": "application/json",
+                                 "Content-Type": "application/json", "User-Agent": "MOHA-PRO/13.14"})
+    try:
+        with _ureq.urlopen(req, timeout=timeout) as r:
+            raw = r.read().decode("utf-8", "replace")
+    except _uerr.HTTPError as e:
+        try:
+            body = e.read().decode("utf-8", "replace")[:200]
+        except Exception:
+            body = ""
+        if e.code in (401, 403):
+            raise _BinFatal("Deriv: token-ka ama App ID-ga lama aqbalin (%d) %s" % (e.code, body))
+        raise ConnectionError("Deriv REST %d %s" % (e.code, body))
+    try:
+        return json.loads(raw or "{}")
+    except ValueError:
+        raise ConnectionError("Deriv REST: jawaab aan JSON ahayn")
+
+
+def _bin_accts(j):
+    def lst(x):
+        if isinstance(x, list) and x and isinstance(x[0], dict):
+            return x
+        if isinstance(x, dict):
+            for k in ("data", "accounts", "items", "result"):
+                if k in x:
+                    r = lst(x[k])
+                    if r:
+                        return r
+        return None
+    out = []
+    for a in lst(j) or []:
+        aid = a.get("account_id") or a.get("loginid") or a.get("login_id") or a.get("id")
+        if not aid:
+            continue
+        typ = str(a.get("account_type") or a.get("group") or "").lower()
+        virt = typ.startswith("demo") or typ == "virtual" or str(aid).upper().startswith("VRT") or bool(a.get("is_virtual"))
+        try:
+            bal = float(a.get("balance"))
+        except (TypeError, ValueError):
+            bal = None
+        st = str(a.get("status") or "active").lower()
+        out.append({"id": str(aid), "virt": virt, "cur": a.get("currency") or "USD", "bal": bal, "ok": st in ("active", "enabled", "")})
+    return out
+
+
+def _bin_wss(j):
+    if isinstance(j, str):
+        return j if j.startswith(("wss://", "ws://")) else None
+    if isinstance(j, dict):
+        for k in ("url", "data", "ws_url", "websocket_url", "result"):
+            if k in j:
+                r = _bin_wss(j[k])
+                if r:
+                    return r
+        for v in j.values():
+            r = _bin_wss(v)
+            if r:
+                return r
+    if isinstance(j, list):
+        for v in j:
+            r = _bin_wss(v)
+            if r:
+                return r
+    return None
+
+
+def _bin_open(token, appid, api, mode, unlock_ok, timeout=12):
+    """Deriv -> (ws, acct). api: 'new' (PAT + App ID + OTP) · 'legacy' (token + authorize)."""
+    if api == "new":
+        accts = [a for a in _bin_accts(_bin_rest("GET", "options/accounts", token, appid, timeout)) if a["ok"]]
+        if not accts:
+            raise _BinFatal("Deriv: account lama helin · hubi token-ka (PAT) iyo App ID-ga")
+        demo = [a for a in accts if a["virt"]]
+        real = [a for a in accts if not a["virt"]]
+        if mode == "real" and unlock_ok and real:
+            pick = real[0]
+        elif demo:
+            pick = demo[0]
+        else:
+            raise _BinFatal("Account DEMO lama helin · Deriv ka fur account Demo (Options)")
+        url = _bin_wss(_bin_rest("POST", "options/accounts/%s/otp" % _uparse.quote(pick["id"]), token, appid, timeout))
+        if not url:
+            raise ConnectionError("Deriv: OTP url ma iman")
+        return _BinWS(url, timeout=timeout), {"id": pick["id"], "cur": pick["cur"], "bal": pick["bal"], "virt": pick["virt"]}
+    ws = _BinWS(_bin_url(), timeout=timeout)
+    try:
+        a = _bin_authorize(ws, token, timeout)
+        scopes = a.get("scopes") or []
+        if scopes and "trade" not in scopes:
+            raise _BinFatal("Token-ku 'Trade' ma laha · Deriv ka samee token: Read + Trade")
+        virt = bool(a.get("is_virtual"))
+        if not virt and not (mode == "real" and unlock_ok):
+            raise _BinFatal("Kani waa account REAL (" + str(a.get("loginid")) + "). REAL waa xidhan ilaa 300 trade DEMO + win > 55%. Geli token-ka account-ka DEMO (VRTC…).")
+    except Exception:
+        ws.close()
+        raise
+    return ws, {"id": a.get("loginid"), "cur": a.get("currency") or "USD", "bal": a.get("balance"), "virt": virt}
+
+
+class _BinWorker:
+    def __init__(self, acc, tk):
+        self.acc = acc
+        self.tk = tk
+        self.stopf = threading.Event()
+        self.th = None
+        self.ws = None
+        self.rid = 10
+        self.st = {"st": "CONN", "why": "ku xidhmaya Deriv…", "err": "", "acct": None, "px": None, "pt": 0,
+                   "rsi": None, "c": [], "cur": None, "sym": None}
+        self.closes = {}
+        self.pend = 0.0
+        self.last_save = 0.0
+        self.last_ping = 0.0
+        self.last_cfg = 0.0
+        self.cfg = dict(BIN_DEF)
+        self.halt = False
+
+    def start(self):
+        self.th = threading.Thread(target=self.run, name="bin-" + self.acc, daemon=True)
+        self.th.start()
+
+    def alive(self):
+        return self.th is not None and self.th.is_alive()
+
+    def busy(self):
+        cu = self.st.get("cur")
+        return bool(cu and cu.get("id")) and not self.stopf.is_set()
+
+    def stop(self):
+        self.stopf.set()
+        ws = self.ws
+        if ws:
+            ws.close()
+
+    # ---- kayd
+    def save(self, force=False):
+        now = time.time()
+        if not force and now - self.last_save < 2.0:
+            return
+        self.last_save = now
+        s = dict(self.st)
+        s["ts"] = now
+        s["c"] = s.get("c", [])[-90:]
+        try:
+            with db() as con:
+                _kv_put(con, "binst:" + self.acc, s)
+        except Exception as e:
+            log.warning("binary save %s: %s", self.acc, e)
+
+    def load_cfg(self):
+        with db() as con:
+            return _bin_cfg(con, self.acc)
+
+    def set_off(self, why):
+        try:
+            with db() as con:
+                c = _kv_get(con, "bincfg:" + self.acc) or {}
+                c["on"] = 0
+                _kv_put(con, "bincfg:" + self.acc, c)
+        except Exception:
+            pass
+        self.st.update(st="OFF", why=why, err=why)
+        self.save(True)
+
+    def add_hist(self, it):
+        with db() as con:
+            h = _bin_hist(con, self.acc)
+            if any(x.get("id") == it["id"] for x in h):
+                return
+            h.append(it)
+            _kv_put(con, "binh:" + self.acc, {"l": h[-BIN_HCAP:]})
+
+    def nid(self):
+        self.rid += 1
+        return self.rid
+
+    # ---- wareegga
+    def run(self):
+        back = 2
+        try:   # trade socda (server dib u kacay) -> sii la soco
+            with db() as con:
+                prev = _kv_get(con, "binst:" + self.acc) or {}
+            pc = prev.get("cur")
+            if isinstance(pc, dict) and pc.get("id") and float(pc.get("te") or 0) > time.time() - 900:
+                self.st["cur"] = pc
+            if prev.get("acct"):
+                self.st["acct"] = prev["acct"]
+        except Exception:
+            pass
+        while not self.stopf.is_set():
+            cfg = self.load_cfg()
+            if not cfg.get("on") or not cfg.get("tk"):
+                self.st.update(st="OFF", why="bot-ku wuu damsan yahay")
+                self.save(True)
+                return
+            token = _bin_dec(cfg["tk"])
+            if not token:
+                self.set_off("Token-ka lama furi karo (SECRET_KEY ayaa isbeddelay?) · dib u geli")
+                return
+            try:
+                self.session(token)
+                back = 2
+            except _BinFatal as e:
+                self.set_off(str(e))
+                return
+            except _BinRestart:
+                back = 1
+            except Exception as e:
+                self.st.update(st="CONN", why="Deriv: xidhiidh go'ay · dib ayaa loo xidhayaa", err=str(e)[:160])
+                self.save(True)
+            finally:
+                if self.ws:
+                    self.ws.close()
+                    self.ws = None
+            if self.stopf.wait(back):
+                break
+            back = min(60, back * 2)
+        try:
+            if not self.load_cfg().get("on"):
+                self.st.update(st="OFF", why="bot-ka waa la damiyay")
+                self.save(True)
+        except Exception:
+            pass
+
+    def session(self, token):
+        self.cfg = self.load_cfg()
+        sym = BIN_SYMS.get(self.cfg["sym"], BIN_SYMS["XAU"])[0]
+        with db() as con:
+            ul = _bin_unlock(_bin_hist(con, self.acc))
+        self.ws, acct = _bin_open(token, self.cfg.get("app") or BIN_APP_ENV, self.cfg.get("api") or "legacy", self.cfg.get("mode"), ul["ok"])
+        ws = self.ws
+        self.sym_api = sym
+        self.tick_mode = False
+        self.st.update(acct=acct, err="", sym=self.cfg["sym"], st="WAIT", why="xog sugaya…")
+        self.closes = {}
+        ws.send({"balance": 1, "subscribe": 1, "req_id": self.nid()})
+        ws.send({"ticks_history": sym, "style": "candles", "granularity": 60, "count": 120, "end": "latest",
+                 "subscribe": 1, "req_id": self.nid()})
+        cur = self.st.get("cur")
+        if cur and cur.get("id"):
+            ws.send({"proposal_open_contract": 1, "contract_id": cur["id"], "subscribe": 1, "req_id": self.nid()})
+        self.save(True)
+        self.last_ping = self.last_cfg = time.time()
+        while not self.stopf.is_set():
+            m = ws.recv(timeout=1.0)
+            now = time.time()
+            if m:
+                self.on_msg(m, now)
+            if now - self.last_ping > 25:
+                ws.send({"ping": 1})
+                self.last_ping = now
+            if now - self.last_cfg > 8:
+                self.last_cfg = now
+                c = self.load_cfg()
+                if not c.get("on") or c.get("tk") != self.tk:
+                    if self.st.get("cur") and c.get("tk") == self.tk:
+                        self.halt = True          # dami: trade-ka socda dhammaadkiisa sug (natiijada ha lumin)
+                        self.st.update(st="RUN", why="DAMI · trade-ka socda ayaa la sugayaa")
+                    else:
+                        self.stopf.set()
+                        break
+                else:
+                    self.halt = False
+                if c.get("sym") != self.cfg.get("sym") and not self.st.get("cur"):
+                    self.cfg = c
+                    raise _BinRestart()
+                if c.get("sym") == self.cfg.get("sym"):
+                    self.cfg = c
+                self.gate(now)
+            cu = self.st.get("cur")
+            if cu and cu.get("id") and now > float(cu.get("te") or now) + 300:
+                self.st.update(cur=None, err="Deriv: natiijada trade #%s lama helin · Deriv → Statement ka eeg" % cu.get("id"))
+                self.save(True)
+            elif cu and cu.get("id") and now > float(cu.get("te") or now) + 60 and not cu.get("rq"):
+                cu["rq"] = 1
+                ws.send({"proposal_open_contract": 1, "contract_id": cu["id"], "subscribe": 1, "req_id": self.nid()})
+            if self.pend and now - self.pend > 20:
+                self.pend = 0.0
+                if self.st.get("cur") and not self.st["cur"].get("id"):
+                    self.st["cur"] = None
+                    self.st["err"] = "Deriv: iibsiga jawaab ma iman"
+            self.save()
+
+    def gate(self, now):
+        """sababta bot-ku hadda u sugayo (app-ka)."""
+        if self.st.get("cur"):
+            self.st.update(st="RUN", why="trade socda")
+            return False
+        with db() as con:
+            day = _bin_day(_bin_hist(con, self.acc), now)
+        c = self.cfg
+        if day["pl"] <= -float(c["dl"]) + 1e-9:
+            self.st.update(st="XAD", why="xad maalinle (−$%.2f) la gaadhay · berri 07:00 GMT" % float(c["dl"]))
+            return False
+        if day["n"] >= int(c["maxn"]):
+            self.st.update(st="XAD", why="trade maalintii (%d) la gaadhay · berri" % int(c["maxn"]))
+            return False
+        h = time.gmtime(now).tm_hour
+        hs, he = int(c["hs"]), int(c["he"])
+        ok = (hs <= h < he) if hs < he else (h >= hs or h < he)
+        if not ok:
+            self.st.update(st="HOURS", why="saacadaha ka baxsan (%02d:00–%02d:00 GMT)" % (hs, he))
+            return False
+        if self.st.get("st") in ("XAD", "HOURS", "CONN", "CLOSED", "ERR") or self.st.get("why") in ("xog sugaya…",):
+            self.st.update(st="WAIT", why="signal sugaya · RSI %d – %d" % (int(c["rlo"]), int(c["rhi"])))
+        return True
+
+    def on_msg(self, m, now):
+        mt = m.get("msg_type")
+        err = m.get("error")
+        if err:
+            if mt in ("balance", "ping", "time"):
+                return
+            if mt in ("ticks_history", "candles") and str(err.get("code")) not in ("MarketIsClosed", "InvalidSymbol") and not getattr(self, "tick_mode", False):
+                self.tick_mode = True      # API-ga cusub: ticks -> shumacyo M1 (server-ka)
+                self.ws.send({"ticks": self.sym_api, "subscribe": 1, "req_id": self.nid()})
+                return
+            if mt == "buy":
+                self.pend = 0.0
+                self.st["cur"] = None
+            if mt in ("ticks_history", "candles", "ohlc") and str(err.get("code")) in ("MarketIsClosed", "InvalidSymbol", "ContractBuyValidationError"):
+                self.st.update(st="CLOSED", why="suuqu wuu xidhan yahay / lama heli karo")
+            self.st["err"] = msg
+            self.save(True)
+            return
+        if mt == "candles":
+            for cd in m.get("candles") or []:
+                try:
+                    self.closes[int(cd["epoch"])] = float(cd["close"])
+                except (KeyError, TypeError, ValueError):
+                    pass
+            self.paint(now)
+        elif mt == "ohlc":
+            o = m.get("ohlc") or {}
+            try:
+                ot, c = int(o["open_time"]), float(o["close"])
+            except (KeyError, TypeError, ValueError):
+                return
+            new = ot not in self.closes and bool(self.closes)
+            if new:
+                self.on_close(now)
+            self.closes[ot] = c
+            if len(self.closes) > 160:
+                for k in sorted(self.closes)[:-150]:
+                    self.closes.pop(k, None)
+            self.st["px"] = c
+            self.st["pt"] = int(o.get("epoch") or now)
+            self.paint(now)
+        elif mt == "tick":
+            tk = m.get("tick") or {}
+            try:
+                ep, q = int(tk["epoch"]), float(tk["quote"])
+            except (KeyError, TypeError, ValueError):
+                return
+            ot = ep - ep % 60
+            if ot not in self.closes and self.closes:
+                self.on_close(now)
+            self.closes[ot] = q
+            if len(self.closes) > 160:
+                for k in sorted(self.closes)[:-150]:
+                    self.closes.pop(k, None)
+            self.st["px"] = q
+            self.st["pt"] = ep
+            self.paint(now)
+        elif mt == "balance":
+            b = m.get("balance") or {}
+            if self.st.get("acct"):
+                self.st["acct"]["bal"] = b.get("balance")
+        elif mt == "buy":
+            self.pend = 0.0
+            b = m.get("buy") or {}
+            cur = self.st.get("cur") or {}
+            cur.update(id=b.get("contract_id"), stake=b.get("buy_price"), pay=b.get("payout"), t0=b.get("start_time") or int(now))
+            cur.setdefault("te", int(cur["t0"]) + 60 * int(self.cfg["exp"]))
+            self.st.update(cur=cur, st="RUN", why="trade socda", err="")
+            self.ws.send({"proposal_open_contract": 1, "contract_id": cur["id"], "subscribe": 1, "req_id": self.nid()})
+            self.save(True)
+        elif mt == "proposal_open_contract":
+            p = m.get("proposal_open_contract") or {}
+            cur = self.st.get("cur") or {}
+            if not p or (cur.get("id") and p.get("contract_id") and p["contract_id"] != cur["id"]):
+                return
+            cur.update(sp=p.get("current_spot"), pr=p.get("profit"), en=p.get("entry_spot") or cur.get("en"),
+                       te=p.get("date_expiry") or cur.get("te"))
+            self.st["cur"] = cur
+            if p.get("is_sold") or p.get("status") in ("won", "lost", "sold"):
+                pr = float(p.get("profit") or 0)
+                it = {"id": p.get("contract_id") or cur.get("id"), "t": int(cur.get("t0") or now), "sym": self.cfg["sym"],
+                      "d": cur.get("d", 1), "stake": float(cur.get("stake") or self.cfg["stake"]), "pay": cur.get("pay"),
+                      "pr": round(pr, 2), "w": 1 if pr > 0 else 0, "en": p.get("entry_spot") or cur.get("en"),
+                      "ex": p.get("exit_tick") or p.get("current_spot"), "rsi": cur.get("rsi"),
+                      "v": 1 if (self.st.get("acct") or {}).get("virt") else 0, "exp": int(self.cfg["exp"])}
+                self.add_hist(it)
+                self.st.update(cur=None, last=it, st="WAIT", why="signal sugaya")
+                if self.halt:
+                    self.stopf.set()
+                self.gate(now)
+                self.save(True)
+
+    def paint(self, now):
+        ks = sorted(self.closes)
+        self.st["c"] = [[k, self.closes[k]] for k in ks[-90:]]
+        if ks:
+            self.st["px"] = self.closes[ks[-1]]
+        r = _bin_rsi([self.closes[k] for k in ks[-100:]])
+        self.st["rsi"] = None if r is None else round(r, 1)
+
+    def on_close(self, now):
+        """shumac M1 ayaa xidhmay -> RSI (shumacyada xidhan) -> signal."""
+        ks = sorted(self.closes)
+        r = _bin_rsi([self.closes[k] for k in ks[-100:]])
+        if r is None or self.st.get("cur") or self.pend or self.halt:
+            return
+        if not self.gate(now):
+            return
+        c = self.cfg
+        d = 1 if r < float(c["rlo"]) else (-1 if r > float(c["rhi"]) else 0)
+        if not d:
+            return
+        acct = self.st.get("acct") or {}
+        try:
+            if acct.get("bal") is not None and float(acct["bal"]) < float(c["stake"]):
+                self.st.update(st="ERR", why="balance kuma filna stake-ka")
+                return
+        except (TypeError, ValueError):
+            pass
+        sym = BIN_SYMS.get(c["sym"], BIN_SYMS["XAU"])[0]
+        stake = float(c["stake"])
+        self.pend = now
+        self.st["cur"] = {"d": d, "rsi": round(r, 1), "en": self.closes[ks[-1]], "t0": int(now), "te": int(now) + 60 * int(c["exp"]),
+                          "stake": stake, "pay": None, "id": None}
+        self.st.update(st="RUN", why=("RISE" if d > 0 else "FALL") + " · RSI %.0f" % r)
+        self.ws.send({"buy": 1, "price": stake, "req_id": self.nid(),
+                      "parameters": {"amount": stake, "basis": "stake", "contract_type": "CALL" if d > 0 else "PUT",
+                                     "currency": acct.get("cur") or "USD", "duration": int(c["exp"]), "duration_unit": "m",
+                                     "symbol": sym}})
+        self.save(True)
+
+
+_BIN_W = {}
+_BIN_PID = [None]
+_BIN_BL = threading.Lock()
+
+
+def _bin_lease(me, now):
+    with db() as con:
+        con.insert_ignore("INSERT INTO bin_lease(id,holder,till) VALUES(1,'',0)", (), "(id)")
+        con.execute("UPDATE bin_lease SET holder=?, till=? WHERE id=1 AND (till<? OR holder=?)", (me, now + 25, now, me))
+        r = con.execute("SELECT holder FROM bin_lease WHERE id=1").fetchone()
+    return bool(r) and r["holder"] == me
+
+
+def _bin_super():
+    me = "%s-%d-%s" % (_bsock.gethostname(), os.getpid(), secrets.token_hex(3))
+    time.sleep(2)
+    while True:
+        try:
+            if _DB_READY:
+                now = time.time()
+                want = {}
+                if _bin_lease(me, now):
+                    with db() as con:
+                        rows = con.execute("SELECT k,v FROM kv WHERE k LIKE ?", ("bincfg:%",)).fetchall()
+                    for r in rows:
+                        c = _jload(r["v"])
+                        if c.get("on") and c.get("tk"):
+                            want[r["k"][7:]] = c
+                for acc in list(_BIN_W):
+                    w = _BIN_W[acc]
+                    if acc not in want and w.alive() and w.busy():
+                        continue                     # trade socda -> dhammaadkiisa sug
+                    if acc not in want or not w.alive() or w.tk != want[acc].get("tk"):
+                        w.stop()
+                        _BIN_W.pop(acc, None)
+                for acc, c in want.items():
+                    if acc not in _BIN_W:
+                        w = _BinWorker(acc, c.get("tk"))
+                        _BIN_W[acc] = w
+                        w.start()
+        except Exception as e:
+            log.warning("binary supervisor: %s", e)
+        time.sleep(4)
+
+
+@app.before_request
+def _bin_boot():
+    if os.environ.get("BINARY_OFF") == "1" or _BIN_PID[0] == os.getpid():
+        return
+    with _BIN_BL:
+        if _BIN_PID[0] == os.getpid():
+            return
+        _BIN_PID[0] = os.getpid()
+        threading.Thread(target=_bin_super, name="bin-super", daemon=True).start()
+
+
+def _bin_can(u):
+    return u["role"] == "admin" or bool(u["can_control"])
+
+
+def _bin_view(con, acc, now):
+    cfg = _bin_cfg(con, acc)
+    st = _kv_get(con, "binst:" + acc) or {}
+    hist = _bin_hist(con, acc)
+    days = {}
+    for x in hist:
+        k = time.strftime("%Y-%m-%d", time.gmtime(x.get("t", 0)))
+        dd = days.setdefault(k, [0.0, 0, 0])
+        dd[0] += float(x.get("pr") or 0)
+        dd[1] += 1
+        dd[2] += 1 if x.get("w") else 0
+    dl = [[k, round(v[0], 2), v[1], v[2]] for k, v in sorted(days.items())[-14:]]
+    alive = bool(cfg.get("on")) and now - float(st.get("ts") or 0) < 25
+    pub = {k: cfg[k] for k in BIN_DEF}
+    return {"ok": True, "now": now, "cfg": pub, "tok": {"has": bool(cfg.get("tk")), "t4": cfg.get("t4") or "", "api": cfg.get("api") or "", "app": bool(BIN_APP_ENV)},
+            "acct": st.get("acct") or cfg.get("acct"), "alive": alive,
+            "st": {k: st.get(k) for k in ("st", "why", "err", "px", "pt", "rsi", "c", "cur", "sym", "last", "ts")},
+            "day": _bin_day(hist, now), "hist": hist[-12:][::-1], "days": dl, "unlock": _bin_unlock(hist),
+            "tot": {"n": len(hist), "pl": round(sum(float(x.get("pr") or 0) for x in hist), 2)},
+            "syms": {k: [v[1], v[2]] for k, v in BIN_SYMS.items()}}
+
+
+@app.get("/api/binary/state")
+@login_required
+def api_bin_state():
+    u = request.user
+    with db() as con:
+        out = _bin_view(con, u["account"], time.time())
+    out["can"] = _bin_can(u)
+    return jsonify(out)
+
+
+@app.post("/api/binary/connect")
+@login_required
+def api_bin_connect():
+    u = request.user
+    if not _bin_can(u):
+        return jsonify(ok=False, error="Ogolaansho ma lihid (akhris kaliya)."), 403
+    body = request.get_json(silent=True) or {}
+    tok = str(body.get("token") or "").strip()
+    appid = str(body.get("app") or "").strip() or BIN_APP_ENV
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{8,256}", tok):
+        return jsonify(ok=False, error="Token-ka si sax ah u dheji (xarfo + tiro) · Deriv → API token (Read + Trade)."), 400
+    if appid and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", appid):
+        return jsonify(ok=False, error="App ID-gu waa tiro / xarfo (developers.deriv.com → Register application)."), 400
+    errs, got = [], None
+    for api in (("new", "legacy") if appid else ("legacy",)):
+        try:
+            ws, acct = _bin_open(tok, appid, api, "demo", False)
+            ws.close()
+            got = (api, acct)
+            break
+        except _BinFatal as e:
+            errs.append(str(e))
+        except Exception as e:
+            errs.append("Deriv lama gaadhi karo hadda (" + str(e)[:80] + ")")
+    if not got:
+        msg = errs[0] if errs else "Deriv: khalad"
+        if not appid and "khaldan" in msg:
+            msg += " · Haddii uu yahay token cusub (PAT): geli App ID-ga (developers.deriv.com → Register application)."
+        return jsonify(ok=False, error=msg), 400
+    api, acct = got
+    with db() as con:
+        c = _kv_get(con, "bincfg:" + u["account"]) or dict(BIN_DEF)
+        c.update(tk=_bin_enc(tok), t4=tok[-4:], on=0, api=api, app=appid if api == "new" else "", acct=acct)
+        _kv_put(con, "bincfg:" + u["account"], c)
+        _kv_put(con, "binst:" + u["account"], {"st": "OFF", "why": "xidhan · SHID si aad u bilowdo", "acct": acct, "ts": time.time()})
+        out = _bin_view(con, u["account"], time.time())
+    out["can"] = True
+    return jsonify(out)
+
+
+@app.post("/api/binary/disconnect")
+@login_required
+def api_bin_disconnect():
+    u = request.user
+    if not _bin_can(u):
+        return jsonify(ok=False, error="Ogolaansho ma lihid."), 403
+    with db() as con:
+        c = _kv_get(con, "bincfg:" + u["account"]) or {}
+        for k in ("tk", "t4", "acct", "api", "app"):
+            c.pop(k, None)
+        c["on"] = 0
+        _kv_put(con, "bincfg:" + u["account"], c)
+        _kv_put(con, "binst:" + u["account"], {"st": "OFF", "why": "token-ka waa la saaray", "ts": time.time()})
+        out = _bin_view(con, u["account"], time.time())
+    out["can"] = True
+    return jsonify(out)
+
+
+@app.post("/api/binary/config")
+@login_required
+def api_bin_config():
+    u = request.user
+    if not _bin_can(u):
+        return jsonify(ok=False, error="Ogolaansho ma lihid."), 403
+    v = _bin_clean((request.get_json(silent=True) or {}).get("values") or {})
+    with db() as con:
+        c = _kv_get(con, "bincfg:" + u["account"]) or dict(BIN_DEF)
+        if v.get("mode") == "real" and not _bin_unlock(_bin_hist(con, u["account"]))["ok"]:
+            v.pop("mode")
+        c.update(v)
+        _kv_put(con, "bincfg:" + u["account"], c)
+        out = _bin_view(con, u["account"], time.time())
+    out["can"] = True
+    return jsonify(out)
+
+
+@app.post("/api/binary/run")
+@login_required
+def api_bin_run():
+    u = request.user
+    if not _bin_can(u):
+        return jsonify(ok=False, error="Ogolaansho ma lihid."), 403
+    on = 1 if (request.get_json(silent=True) or {}).get("on") else 0
+    with db() as con:
+        c = _kv_get(con, "bincfg:" + u["account"]) or dict(BIN_DEF)
+        if on and not c.get("tk"):
+            return jsonify(ok=False, error="Marka hore ku xidh Deriv (token)."), 400
+        c["on"] = on
+        _kv_put(con, "bincfg:" + u["account"], c)
+        st = _kv_get(con, "binst:" + u["account"]) or {}
+        st.update(st="CONN" if on else "OFF", why="ku xidhmaya Deriv…" if on else "bot-ka waa la damiyay", err="", ts=time.time())
+        _kv_put(con, "binst:" + u["account"], st)
+        out = _bin_view(con, u["account"], time.time())
+    out["can"] = True
+    return jsonify(out)
+
+
+
 def _ev_merge(con, acc, items, now):
     """dhacdooyin cusub -> kv ev:<acc> · isku mid (src + qoraal, ±5s) mar keliya · 24 saac · 80 ugu dambeeyay."""
     if not items:
@@ -6710,6 +7619,114 @@ body.mu-on{padding-bottom:calc(136px + env(safe-area-inset-bottom))}
 .muhost.mini .lo{padding:4px;gap:0;justify-content:center}.muhost.mini .lo .d{width:44px;height:44px}.muhost.mini .lo .tx{display:none}
 #muFile{display:none}
 body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
+
+/* v13.14: ⚡ BINARY (Deriv) */
+.appbar button{font-size:9.5px}
+.appbar button.bnnav{position:relative}
+.appbar button.bnnav.on{color:#ff6b73}
+.appbar button.bnnav .cs{position:absolute;top:2px;right:0;font-size:7px;font-weight:900;background:#ff444f;color:#fff;border-radius:6px;padding:1px 3px;line-height:1.3}
+.bn{--g:#19c26b;--c:#e5484d;--w:#fab219;--d:#ff444f;font-variant-numeric:tabular-nums}
+.bn .card{border-radius:16px;margin-bottom:10px;padding:14px;background:linear-gradient(180deg,rgba(32,32,30,.95),rgba(24,24,23,.95))}
+.bnh{display:flex;align-items:center;gap:10px;margin:2px 0 12px}
+.bnlg{flex:none;width:40px;height:40px;border-radius:12px;background:linear-gradient(145deg,#ff5a63,#b3121c);display:grid;place-items:center;box-shadow:0 6px 18px rgba(255,68,79,.35)}
+.bnlg svg{width:22px;height:22px;stroke:#fff;fill:none;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.bnh h2{margin:0;font-size:19px;font-weight:800;letter-spacing:.03em;color:var(--ink);text-transform:none}
+.bnh small{display:block;font-size:11.5px;color:var(--ink3);margin-top:-2px}
+.bnpill{margin-left:auto;font-size:11px;font-weight:800;padding:5px 10px;border-radius:99px;border:1px solid var(--line);color:var(--ink3);display:flex;align-items:center;gap:6px;white-space:nowrap}
+.bnpill i{width:8px;height:8px;border-radius:50%;background:#666}
+.bnpill.g{color:#8ff0b9;border-color:rgba(25,194,107,.5);background:rgba(25,194,107,.1)} .bnpill.g i{background:var(--g);box-shadow:0 0 8px var(--g)}
+.bnpill.y{color:#ffd27a;border-color:rgba(250,178,25,.5);background:rgba(250,178,25,.1)} .bnpill.y i{background:var(--w);box-shadow:0 0 8px var(--w)}
+.bnpill.r{color:#ffb3b5;border-color:rgba(229,72,77,.5);background:rgba(229,72,77,.12)} .bnpill.r i{background:var(--c)}
+.bnt{font-size:11px;font-weight:800;letter-spacing:.09em;color:var(--ink3);text-transform:uppercase;margin:0 0 8px;display:flex;align-items:center;gap:8px}
+.bnt em{font-style:normal;margin-left:auto;font-weight:600;letter-spacing:0;text-transform:none}
+.bnfeat{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+.bnfeat div{border-radius:12px;padding:10px;background:#171716;border:1px solid var(--line);font-size:12px;color:var(--ink2)}
+.bnfeat b{display:block;color:var(--ink);font-size:13px}
+.bnstep{display:flex;gap:10px;align-items:flex-start;padding:10px;border-radius:12px;background:#151514;border:1px solid var(--line);margin-bottom:8px}
+.bnstep .n{flex:none;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:13px;background:#26262a;color:var(--ink2)}
+.bnstep p{margin:0;font-size:12.5px;color:var(--ink2)} .bnstep p b{color:var(--ink)}
+.bntok{display:flex;gap:8px;margin-top:4px}
+.bntok input{flex:1;height:46px;font-family:ui-monospace,Menlo,Consolas,monospace;letter-spacing:.05em}
+.bnbt{height:46px;border-radius:11px;border:none;font-weight:800;font-size:14px;color:#fff;padding:0 16px;background:linear-gradient(135deg,#ff5a63,#c8141f)}
+.bnbt:disabled{opacity:.5}
+.bnmsg{font-size:12.5px;margin-top:8px;min-height:1em}
+.bnmsg.e{color:#ff9a9d} .bnmsg.o{color:#8ff0b9}
+.bnnote{font-size:11.5px;color:var(--ink3);margin-top:8px}
+.bnal{border-radius:14px;padding:11px 13px;margin-bottom:10px;font-size:13px;border:1px solid}
+.bnal b{display:block;font-size:13.5px}
+.bnal.y{background:rgba(250,178,25,.1);border-color:rgba(250,178,25,.45);color:#ffe3a3}
+.bnal.r{background:rgba(229,72,77,.12);border-color:rgba(229,72,77,.5);color:#ffc3c5}
+.bnmk{display:flex;align-items:flex-end;justify-content:space-between}
+.bnmk .s{font-size:12px;font-weight:800;color:var(--ink3);letter-spacing:.06em}
+.bnmk .p{font-size:30px;font-weight:800;line-height:1.1}
+.bnmk .k{font-size:11px;color:var(--ink3);text-align:right} .bnmk .k b{font-size:15px;color:var(--ink)}
+#bnCv{display:block;width:100%;height:130px;margin-top:6px;border-radius:10px}
+.bngg{display:flex;gap:10px}
+.bngau{flex:none;width:128px;text-align:center}
+.bngau .v{font-size:22px;font-weight:900;line-height:1.1;margin-top:-4px}
+.bngau .l{font-size:10.5px;color:var(--ink3);font-weight:700}
+.bnsig{flex:1;border-radius:14px;padding:10px 12px;border:1px solid var(--line);background:#151514;display:flex;flex-direction:column;justify-content:center;min-width:0}
+.bnsig .k{font-size:10.5px;font-weight:800;color:var(--ink3);letter-spacing:.08em}
+.bnsig .d{font-size:23px;font-weight:900;line-height:1.15}
+.bnsig .s{font-size:11.5px;color:var(--ink2)}
+.bnsig.up{border-color:rgba(25,194,107,.6);background:linear-gradient(135deg,rgba(25,194,107,.22),rgba(25,194,107,.04))} .bnsig.up .d{color:#5ef0a0}
+.bnsig.dn{border-color:rgba(229,72,77,.6);background:linear-gradient(135deg,rgba(229,72,77,.22),rgba(229,72,77,.04))} .bnsig.dn .d{color:#ff8a8d}
+.bnct{display:flex;align-items:center;gap:12px}
+.bnring{flex:none;position:relative;width:74px;height:74px}
+.bnring b{position:absolute;inset:0;display:grid;place-items:center;font-size:15px;font-weight:900}
+.bnct .i{flex:1;font-size:12px;color:var(--ink2);min-width:0} .bnct .i .a{font-size:15px;font-weight:800;color:var(--ink)}
+.bnct .pl{font-size:22px;font-weight:900;text-align:right}
+.bnst{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.bnst>div{background:#151514;border:1px solid var(--line);border-radius:12px;padding:8px 7px;min-width:0}
+.bnst .k{font-size:10px;font-weight:800;color:var(--ink3);letter-spacing:.06em}
+.bnst .v{font-size:17px;font-weight:900;line-height:1.25;white-space:nowrap;letter-spacing:-.02em}
+.bnwb{position:relative;height:10px;border-radius:9px;background:#262625;margin-top:18px}
+.bnwb .f{position:absolute;left:0;top:0;bottom:0;border-radius:9px}
+.bnwb .m{position:absolute;left:54%;top:-5px;bottom:-5px;width:2px;background:#fff}
+.bnwb .m:after{content:"54%";position:absolute;top:-17px;left:-10px;font-size:10px;font-weight:800;color:#fff}
+.bngo{width:100%;height:54px;border-radius:14px;border:none;font-size:16px;font-weight:900;letter-spacing:.04em;margin-bottom:10px}
+.bngo.on{color:#04130a;background:linear-gradient(135deg,#3ee68a,#12a457);box-shadow:0 10px 28px rgba(25,194,107,.3)}
+.bngo.off{color:#fff;background:linear-gradient(135deg,#f0565b,#a51a1f);box-shadow:0 10px 28px rgba(229,72,77,.3)}
+.bngo:disabled{opacity:.5}
+.bnhl{display:flex;align-items:center;gap:8px;font-size:12px;padding:7px 9px;border-radius:9px;background:#151514;border:1px solid #242423;margin-bottom:5px}
+.bnhl .t{color:var(--ink3);width:40px} .bnhl .d{font-weight:800;width:44px} .bnhl .x{color:var(--ink3);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap} .bnhl .r{font-weight:900}
+.bnchips{display:flex;flex-wrap:wrap;gap:6px}
+.bnchip{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;line-height:1.2;padding:7px 11px;border-radius:10px;border:1px solid var(--line);background:#151514;font-size:12.5px;font-weight:700;color:var(--ink2)}
+.bnchip.sel{background:linear-gradient(135deg,rgba(57,135,229,.35),rgba(57,135,229,.15));border-color:var(--s1);color:#fff}
+.bnchip.bnlk{opacity:.45;text-decoration:line-through;cursor:not-allowed}
+.bnseg{display:flex;background:#111;border:1px solid var(--line);border-radius:11px;padding:3px}
+.bnseg button{flex:1;border:none;background:none;padding:7px 0;border-radius:8px;font-weight:800;font-size:13px;color:var(--ink3)}
+.bnseg button.sel{background:var(--s1);color:#fff}
+.bnseg button:disabled{opacity:.4}
+.bnrow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid #242423}
+.bnrow:first-child{border-top:none}
+.bnrow .k{font-size:12.5px;color:var(--ink2)} .bnrow .k small{display:block;font-size:10.5px;color:var(--ink3)}
+.bnstp{display:flex;align-items:center;gap:8px}
+.bnstp button{width:32px;height:32px;padding:0;border-radius:9px;font-weight:800;font-size:16px}
+.bnstp b{min-width:60px;text-align:center;font-size:16px}
+.bnlock{font-size:10px;font-weight:800;color:#ffb3b5;border:1px solid rgba(229,72,77,.45);padding:2px 7px;border-radius:99px}
+.bnsel{width:auto;padding:6px 8px;font-size:13px}
+.bnrng{width:100%;accent-color:#fab219}
+.bndays{display:flex;align-items:flex-end;gap:4px;height:84px;border-bottom:1px solid var(--line)}
+.bndays div{flex:1;border-radius:4px 4px 0 0;min-height:2px}
+.bndl{display:flex;gap:4px;font-size:9.5px;color:var(--ink3);margin-top:3px} .bndl span{flex:1;text-align:center}
+.bnpb{height:8px;border-radius:9px;background:#262625;margin-top:4px;overflow:hidden} .bnpb i{display:block;height:100%;border-radius:9px}
+.bnkv{display:flex;justify-content:space-between;font-size:12.5px;color:var(--ink2);margin-top:8px} .bnkv b{color:var(--ink)}
+.bntoast{position:fixed;left:50%;top:38%;z-index:120;transform:translate(-50%,0) scale(.7);opacity:0;padding:14px 22px;border-radius:18px;font-size:24px;font-weight:900;color:#fff;text-align:center;pointer-events:none;transition:opacity .25s,transform .25s}
+.bntoast.show{opacity:1;transform:translate(-50%,0) scale(1)}
+.bntoast small{display:block;font-size:12px;font-weight:700;opacity:.85}
+.bntoast.w{background:linear-gradient(135deg,#25d27a,#0f8f4b);box-shadow:0 14px 40px rgba(25,194,107,.5)}
+.bntoast.l{background:linear-gradient(135deg,#f0565b,#a51a1f);box-shadow:0 14px 40px rgba(229,72,77,.5)}
+.bnmod{position:fixed;inset:0;z-index:130;background:rgba(5,5,8,.72);display:flex;align-items:center;justify-content:center;padding:22px}
+.bnmod[hidden]{display:none}
+.bnmb{width:100%;max-width:420px;border-radius:20px;padding:20px 18px;background:linear-gradient(180deg,#2a1214,#1a0d0e);border:1.5px solid rgba(229,72,77,.65);text-align:center}
+.bnmb h3{margin:6px 0 0;font-size:18px} .bnmb p{font-size:12.5px;color:var(--ink2);margin:6px 0 0}
+.bnmb .sv{margin-top:12px;display:flex;gap:8px} .bnmb .sv div{flex:1;border-radius:12px;padding:8px;background:rgba(255,255,255,.04);border:1px solid var(--line)} .bnmb .sv b{display:block;font-size:18px}
+.bnmb button{margin-top:14px;width:100%}
+#binCard{margin:12px 0 16px;border-radius:16px;padding:14px;border:1px solid rgba(255,68,79,.45);background:linear-gradient(135deg,rgba(255,68,79,.14),rgba(26,26,25,.95) 55%);display:flex;gap:12px;align-items:center;cursor:pointer}
+#binCard .tx{flex:1;min-width:0} #binCard .tx b{font-size:15px;letter-spacing:.03em} #binCard .tx small{display:block;color:var(--ink2);font-size:12px}
+#binCard .rt{text-align:right} #binCard .rt b{display:block;font-size:18px;font-weight:900}
+#binCard .rt small{font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:99px;border:1px solid var(--line)}
 </style></head><body>
 
 <div class="offban" id="offBan" hidden><b id="offBanT">KHADKA WAA GO'AY · DAAWASHO OO KELIYA</b><small id="offBanS">—</small></div>   <!-- v13.5: 📴 -->
@@ -6775,6 +7792,13 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
       <div class="tile"><div class="k">Win rate</div><div class="v neu" id="wr">—</div></div>
       <div class="tile"><div class="k">Drawdown</div><div class="v" id="dd">—</div></div>
       <div class="tile"><div class="k">Trade furan</div><div class="v neu" id="ot">—</div></div>
+    </div>
+
+    <!-- v13.14: ⚡ BINARY -->
+    <div id="binCard" hidden role="button" tabindex="0" aria-label="Binary">
+      <div class="bnlg"><svg viewBox="0 0 24 24"><path d="M3 17l5-6 4 4 8-9"/><path d="M15 6h5v5"/></svg></div>
+      <div class="tx"><b>BINARY · DERIV</b><small id="bcS">—</small></div>
+      <div class="rt"><b id="bcP">$0.00</b><small id="bcT">—</small></div>
     </div>
 
     <!-- v12: laysinka (macmiil) -->
@@ -7605,6 +8629,96 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
     </div>
 
   </section>
+
+  <!-- ============ v13.14: ⚡ BINARY (Deriv) ============ -->
+  <section class="pane" id="pBinary"><div class="bn">
+    <div class="bnh"><div class="bnlg"><svg viewBox="0 0 24 24"><path d="M4 17l5-6 4 4 7-9"/><path d="M15 6h5v5"/></svg></div>
+      <div><h2>BINARY</h2><small>Deriv · Rise / Fall · MOHA PRO</small></div>
+      <div class="bnpill" id="bnPill"><i></i><span id="bnPillT">—</span></div></div>
+
+    <!-- lama xidhin -->
+    <div id="bnCon" hidden>
+      <div class="bnfeat">
+        <div><b>⚡ 24/7 server</b>telefoon / VPS looma baahna</div>
+        <div><b>🎯 Signal RSI</b>Rise / Fall iskiis</div>
+        <div><b>🛡 Xad maalinle</b>khasaaraha waa la xakameeyaa</div>
+        <div><b>📊 Win% dhab ah</b>REAL kadib caddayn</div>
+      </div>
+      <div class="card"><p class="bnt">1 · KU XIDH DERIV <em>hal mar</em></p>
+        <div class="bnstep"><div class="n">1</div><p><b>App ID (hal mar):</b> developers.deriv.com → log in → <b>Register application</b> → koobi App ID-ga<span id="bnAppEnv"></span></p></div>
+        <div class="bnstep"><div class="n">2</div><p><b>Token:</b> Deriv → API token (PAT) → <b>Read + Trade</b> (Payments / Admin ha dooran) · bot-ku account-ka <b>DEMO</b> ayuu doortaa</p></div>
+        <div class="bnstep"><div class="n">3</div><p><b>Halkan ku dheji → XIDH</b> · server-ka MOHA ayaa qarinaya (encrypted) · cidna ma arki karto</p></div>
+        <input id="bnApp" type="text" autocomplete="off" spellcheck="false" inputmode="text" placeholder="App ID (tusaale 12345)" style="margin-bottom:8px">
+        <div class="bntok"><input id="bnTok" type="password" autocomplete="off" spellcheck="false" placeholder="token-ka (PAT) halkan…"><button class="bnbt" id="bnTokB" type="button">XIDH</button></div>
+        <div class="bnmsg" id="bnTokM"></div>
+        <p class="bnnote">Bot-ku lacag ma dhigo, mana bixiyo · token-ka Deriv mar kasta waad ka tirtiri kartaa · v13.14 = DEMO oo keliya.</p>
+      </div>
+    </div>
+
+    <!-- xidhan -->
+    <div id="bnMain" hidden>
+      <div class="bnal" id="bnAl" hidden></div>
+      <div class="card" style="padding:12px 12px 8px">
+        <div class="bnmk"><div><div class="s" id="bnSym">—</div><div class="p" id="bnPx">—</div></div>
+          <div class="k"><b id="bnClk">—</b><br>GMT</div></div>
+        <canvas id="bnCv" width="760" height="260"></canvas>
+      </div>
+      <div class="card"><div class="bngg">
+        <div class="bngau"><svg width="128" height="78" viewBox="0 0 128 78"><defs><linearGradient id="bnGG" x1="0" x2="1"><stop offset="0" stop-color="#19c26b"/><stop offset=".3" stop-color="#3a3a38"/><stop offset=".7" stop-color="#3a3a38"/><stop offset="1" stop-color="#e5484d"/></linearGradient></defs>
+          <path d="M12 70 A52 52 0 0 1 116 70" stroke="url(#bnGG)" stroke-width="12" fill="none" stroke-linecap="round"/>
+          <line id="bnNd" x1="64" y1="70" x2="64" y2="26" stroke="#fff" stroke-width="3.5" stroke-linecap="round"/><circle cx="64" cy="70" r="6" fill="#fff"/></svg>
+          <div class="v" id="bnRsi">—</div><div class="l">RSI (14) · M1</div></div>
+        <div class="bnsig" id="bnSig"><div class="k">SIGNAL</div><div class="d" id="bnSigD">—</div><div class="s" id="bnSigS">—</div></div>
+      </div></div>
+      <div class="card" id="bnCt"><p class="bnt">TRADE-KA SOCDA</p><div class="bnct">
+        <div class="bnring"><svg width="74" height="74" viewBox="0 0 74 74"><circle cx="37" cy="37" r="31" stroke="#2a2a29" stroke-width="7" fill="none"/>
+          <circle id="bnRg" cx="37" cy="37" r="31" stroke="#3987e5" stroke-width="7" fill="none" stroke-linecap="round" stroke-dasharray="194.8" stroke-dashoffset="194.8" transform="rotate(-90 37 37)"/></svg><b id="bnRgT">–</b></div>
+        <div class="i"><div class="a" id="bnCtA">—</div><div id="bnCtB">—</div><div id="bnCtC">—</div></div>
+        <div><div style="font-size:10px;font-weight:800;color:var(--ink3);text-align:right">HADDA</div><div class="pl" id="bnCtP">–</div></div></div></div>
+      <div class="card"><p class="bnt">MAANTA <em id="bnLim">—</em></p>
+        <div class="bnst"><div><div class="k">GUUL</div><div class="v" id="bnW" style="color:#5ef0a0">0</div></div><div><div class="k">KHASAARE</div><div class="v" id="bnL" style="color:#ff8a8d">0</div></div>
+          <div><div class="k">WIN %</div><div class="v" id="bnWr">–</div></div><div><div class="k">P/L</div><div class="v" id="bnPl">$0.00</div></div></div>
+        <div class="bnwb"><div class="f" id="bnWf"></div><div class="m"></div></div>
+        <p class="bnnote">payout ~85% → faa'iido waxay u baahan tahay win% &gt; 54%</p></div>
+      <button class="bngo on" id="bnGo" type="button">▶ SHID BOT-KA · DEMO</button>
+      <div class="card"><p class="bnt">TAARIIKHDA <em id="bnTot">—</em></p><div id="bnHist"></div></div>
+
+      <div class="card"><p class="bnt">⚙ SITINKA <em id="bnSetM"></em></p>
+        <div class="bnrow" style="display:block"><div class="k" style="margin-bottom:6px">Suuq <small>Synthetic (Volatility · Digits · Boom/Crash) = xidhan · random</small></div>
+          <div class="bnchips" id="bnSyms"></div></div>
+        <div class="bnrow" style="display:block"><div class="k" style="margin-bottom:6px">Waqtiga (expiry)</div>
+          <div class="bnseg" id="bnExp"><button type="button" data-v="1">1 daq</button><button type="button" data-v="5">5 daq</button><button type="button" data-v="15">15 daq</button></div></div>
+        <div class="bnrow"><div class="k">Stake<small>trade kasta (≥ $0.35)</small></div><div class="bnstp"><button type="button" id="bnStkM">−</button><b id="bnStk">$1.00</b><button type="button" id="bnStkP">+</button></div></div>
+        <div class="bnrow"><div class="k">Signal<small>RSI &lt; 30 → RISE · &gt; 70 → FALL · M1</small></div><span class="bnchip sel">RSI 30/70</span></div>
+        <div class="bnrow"><div class="k">Saacadaha<small>GMT · trade cusub</small></div><div><select class="bnsel" id="bnHs"></select> – <select class="bnsel" id="bnHe"></select></div></div>
+        <div class="bnrow" style="display:block"><div style="display:flex;justify-content:space-between"><div class="k">Xad maalinle<small>khasaare → bot-ku wuu istaagaa (berri wuu bilaabaa)</small></div><b id="bnDlV" style="color:#ffb3b5">−$5.00</b></div>
+          <input class="bnrng" id="bnDl" type="range" min="1" max="50" step="1"></div>
+        <div class="bnrow"><div class="k">Trade maalintii<small>ugu badnaan</small></div><div class="bnstp"><button type="button" id="bnMxM">−</button><b id="bnMx">20</b><button type="button" id="bnMxP">+</button></div></div>
+        <div class="bnrow"><div class="k">Martingale<small>khasaare kadib stake ×2</small></div><span class="bnlock">XIDHAN · ammaan</span></div>
+        <div class="bnrow"><div class="k">Hab<small id="bnModeS">REAL: 300 trade DEMO + win &gt; 55%</small></div><div class="bnseg" style="width:160px" id="bnMode"><button type="button" data-v="demo">DEMO</button><button type="button" data-v="real">🔒 REAL</button></div></div>
+        <button class="btn-pri" id="bnSave" type="button" style="margin-top:12px">KAYDI SITINKA</button>
+      </div>
+
+      <div class="card"><p class="bnt">WARBIXIN · MAALMO <em id="bnDT">—</em></p>
+        <div class="bndays" id="bnDays"></div><div class="bndl" id="bnDL"></div>
+        <div class="bnkv"><span>Wadar: <b id="bnAllN">0</b> trade</span><span>P/L <b id="bnAllP">$0.00</b></span></div></div>
+      <div class="card"><p class="bnt">FURITAANKA REAL <em>ilaalin</em></p>
+        <div class="bnkv"><span>Trade DEMO</span><b id="bnUN">0 / 300</b></div><div class="bnpb"><i id="bnUNb" style="background:var(--s1);width:0"></i></div>
+        <div class="bnkv"><span>Win % (loo baahan &gt; 55%)</span><b id="bnUW">—</b></div><div class="bnpb"><i id="bnUWb" style="background:var(--w);width:0"></i></div>
+        <p class="bnnote" id="bnUT">—</p></div>
+      <div class="card"><p class="bnt">ACCOUNT-KA DERIV</p>
+        <div class="bnkv"><span>Account</span><b id="bnAcc">—</b></div>
+        <div class="bnkv"><span>Balance</span><b id="bnBal">—</b></div>
+        <div class="bnkv"><span>Token</span><b id="bnT4">—</b></div>
+        <button type="button" id="bnDis" style="margin-top:12px;width:100%">Ka saar token-ka (disconnect)</button></div>
+    </div>
+  </div></section>
+
+  <div class="bntoast" id="bnToast"></div>
+  <div class="bnmod" id="bnMod" hidden><div class="bnmb">
+    <div style="font-size:34px">⛔</div><h3>XAD MAALINLE LA GAADHAY</h3><p id="bnMWhy">—</p>
+    <div class="sv"><div><span style="font-size:11px;color:var(--ink3)">MAANTA</span><b id="bnMPl" style="color:#ff8a8d">—</b></div><div><span style="font-size:11px;color:var(--ink3)">BERRI</span><b style="color:#8ff0b9">07:00 GMT</b></div></div>
+    <button type="button" id="bnModX">Waa fahmay</button></div></div>
 </div>
 
 <nav class="appbar">
@@ -7612,6 +8726,8 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
     <svg viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1Z"/></svg>Guud</button>
   <button data-tab="Trade">
     <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg>Trade</button>
+  <button data-tab="Binary" class="bnnav">   <!-- v13.14 -->
+    <svg viewBox="0 0 24 24"><path d="M3 17l5-6 4 4 8-9"/><path d="M15 6h5v5"/></svg>Binary<span class="cs">CUSUB</span></button>
   <button data-tab="Analiis">
     <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5M11 8v3l2 2"/></svg>Analiis</button>
   {% if can_control %}
@@ -12247,6 +13363,7 @@ function tab(n){
   if(n==="Journal") loadJournal();
   if(n==="Trade") loadShots();                        // v9.1
   if(n==="Analiis") loadLevels(true);                 // v12.3
+  if(n==="Binary"){ try{ bnLoad(); }catch(e){} }      // v13.14
   try{ localStorage.setItem("mp_tab",n); }catch(e){}
   scrollTo({top:0,behavior:"instant"});
 }
@@ -12278,6 +13395,186 @@ document.addEventListener("visibilitychange",()=>{
 });
 tick(); pollStart();
 setInterval(()=>{ if(!document.hidden && jLoaded && $("#pJournal").classList.contains("on")) loadJournal(); },60000);
+
+/* ---- v13.14: ⚡ BINARY (Deriv · Rise / Fall · DEMO) ---- */
+let BN=null, BNskew=0, BNlastF=0, BNbusy=false, BNdraft=null, BNdirty=false, BNlastId=null, BNfirst=true;
+const bnE=id=>document.getElementById(id);
+const bnUsd=v=>{ v=Number(v)||0; return (v>=0?"+$":"−$")+Math.abs(v).toFixed(2); };
+const bnHm=s=>{ const d=new Date(s*1000); return String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0"); };
+function bnOn(){ const p=bnE("pBinary"); return !!(p && p.classList.contains("on")); }
+async function bnLoad(){
+  if(BNbusy) return; BNbusy=true;
+  try{ const r=await fetch("/api/binary/state",{cache:"no-store"}); if(r.ok){ const d=await r.json(); if(d.ok){ BN=d; BNskew=d.now-Date.now()/1000; bnPaint(); } } }
+  catch(e){} finally{ BNbusy=false; BNlastF=Date.now(); }
+}
+async function bnPost(url,body){
+  try{ const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});
+    const d=await r.json(); if(d.ok){ BN=d; BNskew=d.now-Date.now()/1000; bnPaint(); return ""; } return d.error||"Khalad."; }
+  catch(e){ return "Internet ma jiro — isku day mar kale."; }
+}
+function bnToast(it){
+  const t=bnE("bnToast"); if(!t||!it) return; const w=!!it.w;
+  t.className="bntoast "+(w?"w":"l"); t.innerHTML=(w?"GUUL ":"KHASAARE ")+bnUsd(it.pr)+"<small>"+(Number(it.d)>0?"RISE":"FALL")+" · "+(it.en!=null?Number(it.en):"—")+" → "+(it.ex!=null?Number(it.ex):"—")+"</small>";
+  requestAnimationFrame(()=>t.classList.add("show")); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("show"),2600);
+}
+function bnCard(){
+  const c=bnE("binCard"); if(!c) return; const d=BN;
+  if(!d||!d.tok||!d.tok.has){ c.hidden=true; return; } c.hidden=false;
+  const s=(d.st||{}), dy=d.day||{n:0,w:0,pl:0}, on=!!(d.cfg&&d.cfg.on);
+  const sy=(d.syms&&d.syms[d.cfg.sym])?d.syms[d.cfg.sym][0]:d.cfg.sym;
+  bnE("bcS").textContent=(d.acct&&d.acct.virt===false?"REAL":"DEMO")+" · "+sy+" · "+d.cfg.exp+" daq · $"+Number(d.cfg.stake).toFixed(2)+(dy.n?" · "+dy.n+" trade · win "+Math.round(100*dy.w/dy.n)+"%":"");
+  const p=bnE("bcP"); p.textContent=dy.n?bnUsd(dy.pl):"$0.00"; p.style.color=dy.pl>0?"#5ef0a0":(dy.pl<0?"#ff8a8d":"var(--ink)");
+  const t=bnE("bcT"); let tx="DAMSAN", col="#c3c2b7";
+  if(on){ if(s.st==="XAD"){tx="JOOGSAN · xad";col="#ffb3b5";} else if(s.cur){tx="TRADE SOCDA";col="#8ff0b9";} else if(s.st==="HOURS"){tx="SAACAD · sug";col="#ffd27a";} else if(!d.alive||s.st==="CONN"){tx="XIDHIDH…";col="#ffd27a";} else {tx="SHIDAN";col="#ffd27a";} }
+  t.textContent=tx; t.style.color=col;
+}
+function bnPaint(){
+  bnCard();
+  const d=BN; if(!d) return;
+  const has=!!(d.tok&&d.tok.has);
+  bnE("bnCon").hidden=has; bnE("bnMain").hidden=!has;
+  const pill=bnE("bnPill"), pt=bnE("bnPillT"), s=d.st||{}, on=!!(d.cfg&&d.cfg.on);
+  pill.className="bnpill";
+  if(!has){ pt.textContent="LAMA XIDHIN"; }
+  else if(!on){ pill.classList.add("g"); pt.textContent="XIDHAN · "+((d.acct&&d.acct.virt===false)?"REAL":"DEMO"); }
+  else if(s.st==="XAD"||s.st==="OFF"){ pill.classList.add("r"); pt.textContent=s.st==="XAD"?"JOOGSAN · xad":"DAMSAN"; }
+  else { pill.classList.add("y"); pt.textContent=(!d.alive||s.st==="CONN")?"XIDHIDH…":"SHIDAN · "+((d.acct&&d.acct.virt===false)?"REAL":"DEMO"); }
+  if(!has){ const ae=bnE("bnAppEnv"); if(ae) ae.textContent=(d.tok&&d.tok.app)?" · (server-ka horey ayuu u leeyahay — waad ka boodi kartaa)":""; return; }
+  // digniin
+  const al=bnE("bnAl"); let at="", ac="y";
+  if(s.err && (s.st==="OFF"||s.st==="ERR"||s.st==="CLOSED"||s.st==="CONN"||(on&&s.px==null))){ at="<b>"+(s.st==="CONN"?"Xidhiidhka Deriv":"Fiiro")+"</b>"+s.err; ac=(s.st==="OFF"||s.st==="ERR")?"r":"y"; }
+  else if(on && s.st==="XAD"){ at="<b>⛔ Xad maalinle</b>"+(s.why||""); ac="r"; }
+  else if(on && s.st==="HOURS"){ at="<b>🕒 Saacadaha</b>"+(s.why||""); }
+  else if(on && s.st==="CLOSED"){ at="<b>🌙 Suuqa</b>"+(s.why||""); }
+  else if(on && !d.alive){ at="<b>Bot-ka server-ka</b>weli lama helin xog (≤ 10s) · haddii ay sii socoto: server-ka dib u kici"; }
+  al.hidden=!at; al.className="bnal "+ac; al.innerHTML=at;
+  // suuq
+  const sy=(d.syms&&d.syms[d.cfg.sym])?d.syms[d.cfg.sym]:[d.cfg.sym,2], dg=sy[1];
+  bnE("bnSym").textContent=sy[0]+" · DERIV";
+  bnE("bnPx").textContent=(s.px!=null)?Number(s.px).toFixed(dg):"—";
+  // RSI
+  const r=(s.rsi!=null)?Number(s.rsi):null; bnE("bnRsi").textContent=r==null?"—":Math.round(r);
+  bnE("bnRsi").style.color=r==null?"var(--ink)":(r<30?"#5ef0a0":(r>70?"#ff8a8d":"var(--ink)"));
+  const ang=(-90+180*((r==null?50:r)/100))*Math.PI/180; bnE("bnNd").setAttribute("x2",64+44*Math.sin(ang)); bnE("bnNd").setAttribute("y2",70-44*Math.cos(ang));
+  // signal + trade
+  const cur=s.cur, sg=bnE("bnSig"); sg.className="bnsig";
+  if(cur){ const up=Number(cur.d)>0; sg.classList.add(up?"up":"dn"); bnE("bnSigD").textContent=up?"RISE ▲":"FALL ▼"; bnE("bnSigS").textContent="RSI "+(cur.rsi!=null?Math.round(cur.rsi):"—")+" · "+d.cfg.exp+" daq · $"+Number(cur.stake||d.cfg.stake).toFixed(2); }
+  else { bnE("bnSigD").textContent=on?(s.st==="XAD"?"JOOGSAN":(s.st==="HOURS"?"SAACAD":"SUGAYA")):"DAMSAN"; bnE("bnSigS").textContent=on?(s.why||"—"):"riix SHID si uu u bilaabo"; }
+  // maanta
+  const dy=d.day||{n:0,w:0,l:0,pl:0}; bnE("bnW").textContent=dy.w; bnE("bnL").textContent=dy.l;
+  const wr=dy.n?100*dy.w/dy.n:0; bnE("bnWr").textContent=dy.n?Math.round(wr)+"%":"–"; bnE("bnWr").style.color=dy.n?(wr>54?"#5ef0a0":"#ffd27a"):"var(--ink)";
+  bnE("bnPl").textContent=dy.n?bnUsd(dy.pl):"$0.00"; bnE("bnPl").style.color=dy.pl>0?"#5ef0a0":(dy.pl<0?"#ff8a8d":"var(--ink)");
+  const wf=bnE("bnWf"); wf.style.width=wr+"%"; wf.style.background=wr>54?"linear-gradient(90deg,#12a457,#3ee68a)":"linear-gradient(90deg,#c97a00,#fab219)";
+  const left=Number(d.cfg.dl)+Number(dy.pl); bnE("bnLim").textContent="xad −$"+Number(d.cfg.dl).toFixed(2)+" · ka hadhay $"+Math.max(0,left).toFixed(2)+" · "+dy.n+"/"+d.cfg.maxn+" trade";
+  bnE("bnLim").style.color=left<=Number(d.cfg.dl)*0.4?"#ffb3b5":"";
+  // badhan
+  const go=bnE("bnGo"); go.className="bngo "+(on?"off":"on"); go.textContent=on?"■ DAMI BOT-KA":"▶ SHID BOT-KA · "+((d.acct&&d.acct.virt===false)?"REAL":"DEMO"); go.disabled=!d.can;
+  // taariikh
+  const h=d.hist||[]; bnE("bnTot").textContent=(d.tot?d.tot.n:0)+" trade · "+bnUsd(d.tot?d.tot.pl:0);
+  bnE("bnHist").innerHTML=h.length?h.slice(0,8).map(x=>'<div class="bnhl"><span class="t">'+bnHm(x.t)+'</span><span class="d" style="color:'+(Number(x.d)>0?"#5ef0a0":"#ff8a8d")+'">'+(Number(x.d)>0?"RISE":"FALL")+'</span><span class="x">'+(x.sym||"")+' · RSI '+(x.rsi!=null?Math.round(x.rsi):"—")+' · $'+Number(x.stake||0).toFixed(2)+'</span><span class="r" style="color:'+(x.w?"#5ef0a0":"#ff8a8d")+'">'+bnUsd(x.pr)+'</span></div>').join(""):'<p class="bnnote" style="margin:0">Weli trade ma jiro.</p>';
+  // toast: natiijo cusub
+  const last=h[0]; if(last){ if(BNlastId!==null && last.id!==BNlastId && bnOn()) bnToast(last); BNlastId=last.id; } else BNlastId="";
+  // xad modal (hal mar maalintii)
+  if(on && s.st==="XAD" && bnOn()){ const k="bnXad"+new Date().toISOString().slice(0,10); let seen=false; try{ seen=!!localStorage.getItem(k); localStorage.setItem(k,"1"); }catch(e){}
+    if(!seen){ bnE("bnMPl").textContent=bnUsd(dy.pl); bnE("bnMWhy").textContent=s.why||""; bnE("bnMod").hidden=false; } }
+  // warbixin
+  const days=d.days||[], mx=Math.max(1,...days.map(x=>Math.abs(x[1])));
+  bnE("bnDays").innerHTML=days.map(x=>'<div title="'+x[0]+' · '+x[2]+' trade · '+bnUsd(x[1])+'" style="height:'+Math.max(2,Math.abs(x[1])/mx*80)+'px;background:'+(x[1]>=0?"linear-gradient(180deg,#3ee68a,#12a457)":"linear-gradient(180deg,#e5484d,#8f1d21)")+'"></div>').join("")||"";
+  bnE("bnDL").innerHTML=days.map(x=>"<span>"+Number(x[0].slice(8))+"</span>").join("");
+  bnE("bnDT").textContent=days.length?days.length+" maalmood":"xog ma jirto";
+  bnE("bnAllN").textContent=d.tot?d.tot.n:0; bnE("bnAllP").textContent=bnUsd(d.tot?d.tot.pl:0); bnE("bnAllP").style.color=(d.tot&&d.tot.pl<0)?"#ff8a8d":"#5ef0a0";
+  const u=d.unlock||{n:0,wr:0,ok:false,need_n:300,need_wr:55};
+  bnE("bnUN").textContent=u.n+" / "+u.need_n; bnE("bnUNb").style.width=Math.min(100,100*u.n/u.need_n)+"%";
+  bnE("bnUW").textContent=u.n?u.wr+"%":"—"; bnE("bnUW").style.color=u.wr>u.need_wr?"#5ef0a0":"#ffd27a"; bnE("bnUWb").style.width=Math.min(100,100*u.wr/u.need_wr)+"%";
+  bnE("bnUT").textContent=u.ok?"✓ REAL waa la furay — si taxaddar leh u isticmaal (stake yar).":"🔒 REAL weli waa xidhan — signal-ku weli faa'iido ma caddayn.";
+  // account
+  const a=d.acct||{}; bnE("bnAcc").textContent=(a.id||"—")+" · "+(a.virt===false?"REAL":"DEMO");
+  bnE("bnBal").textContent=a.bal!=null?(Number(a.bal).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})+" "+(a.cur||"USD")):"—";
+  bnE("bnT4").textContent="••••"+(d.tok.t4||"")+(d.tok.api==="new"?" · API cusub":(d.tok.api?" · API hore":"")); bnE("bnDis").disabled=!d.can;
+  // sitinka (draft)
+  if(!BNdirty || !BNdraft) BNdraft=Object.assign({},d.cfg);
+  bnSetPaint(); bnLive();
+}
+function bnSetPaint(){
+  const d=BN, c=BNdraft; if(!d||!c) return;
+  const sy=bnE("bnSyms"); if(!sy.dataset.b){ sy.dataset.b=1;
+    sy.innerHTML=["XAU","EUR","GBP","BTC"].filter(k=>d.syms[k]).map(k=>'<button type="button" class="bnchip" data-k="'+k+'">'+(k==="XAU"?"🟡 ":(k==="BTC"?"₿ ":""))+d.syms[k][0]+'</button>').join("")+'<span class="bnchip bnlk">🔒 Volatility 75</span><span class="bnchip bnlk">🔒 Digits</span><span class="bnchip bnlk">🔒 Boom/Crash</span>';
+    sy.querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{ BNdraft.sym=b.dataset.k; BNdirty=true; bnSetPaint(); })); }
+  sy.querySelectorAll("button").forEach(b=>b.classList.toggle("sel",b.dataset.k===c.sym));
+  bnE("bnExp").querySelectorAll("button").forEach(b=>b.classList.toggle("sel",Number(b.dataset.v)===Number(c.exp)));
+  bnE("bnStk").textContent="$"+Number(c.stake).toFixed(2);
+  const hs=bnE("bnHs"), he=bnE("bnHe"); if(!hs.options.length){ for(let i=0;i<24;i++){ hs.add(new Option(String(i).padStart(2,"0")+":00",i)); } for(let i=1;i<=24;i++){ he.add(new Option(String(i).padStart(2,"0")+":00",i)); } }
+  hs.value=c.hs; he.value=c.he;
+  bnE("bnDl").value=Math.min(50,Number(c.dl)); bnE("bnDlV").textContent="−$"+Number(c.dl).toFixed(2);
+  bnE("bnMx").textContent=c.maxn;
+  const ul=d.unlock&&d.unlock.ok; bnE("bnMode").querySelectorAll("button").forEach(b=>{ b.classList.toggle("sel",b.dataset.v===c.mode); if(b.dataset.v==="real"){ b.disabled=!ul; b.textContent=ul?"REAL":"🔒 REAL"; } });
+  bnE("bnSave").disabled=!d.can||!BNdirty; bnE("bnSave").textContent=BNdirty?"KAYDI SITINKA":"✓ la kaydiyay";
+  ["bnStkM","bnStkP","bnMxM","bnMxP","bnHs","bnHe","bnDl"].forEach(id=>{ bnE(id).disabled=!d.can; });
+}
+function bnLive(){
+  const d=BN; if(!d||!d.tok||!d.tok.has) return; const s=d.st||{}, now=Date.now()/1000+BNskew;
+  bnE("bnClk").textContent=bnHm(now);
+  const cur=s.cur, sy=(d.syms&&d.syms[d.cfg.sym])?d.syms[d.cfg.sym]:["",2], dg=sy[1];
+  if(cur){ const te=Number(cur.te)||0, t0=Number(cur.t0)||now, tot=Math.max(60,te-t0), lf=Math.max(0,te-now), f=lf/tot;
+    const sp=(cur.sp!=null)?Number(cur.sp):(s.px!=null?Number(s.px):null), en=(cur.en!=null)?Number(cur.en):null, up=Number(cur.d)>0;
+    const win=(sp!=null&&en!=null)?(up?sp>en:sp<en):null;
+    bnE("bnRg").setAttribute("stroke-dashoffset",194.8*(1-f)); bnE("bnRg").setAttribute("stroke",win==null?"#3987e5":(win?"#19c26b":"#e5484d"));
+    bnE("bnRgT").textContent=Math.floor(lf/60)+":"+String(Math.floor(lf%60)).padStart(2,"0");
+    bnE("bnCtA").textContent=(up?"RISE ▲ ":"FALL ▼ ")+"$"+Number(cur.stake||d.cfg.stake).toFixed(2)+" · "+d.cfg.exp+" daq";
+    bnE("bnCtB").textContent="gelitaan "+(en!=null?en.toFixed(dg):"…")+" · hadda "+(sp!=null?sp.toFixed(dg):"—");
+    bnE("bnCtC").textContent=cur.pay?("payout $"+Number(cur.pay).toFixed(2)+" → +"+(Number(cur.pay)-Number(cur.stake||0)).toFixed(2)):"iibsi sugaya…";
+    const pr=(cur.pr!=null)?Number(cur.pr):null; bnE("bnCtP").textContent=pr==null?"–":bnUsd(pr); bnE("bnCtP").style.color=pr==null?"var(--ink)":(pr>0?"#5ef0a0":"#ff8a8d"); bnE("bnCt").style.opacity=1; }
+  else { bnE("bnRg").setAttribute("stroke-dashoffset",194.8); bnE("bnRgT").textContent="–"; bnE("bnCtA").textContent="trade ma socdo";
+    const l=s.last; bnE("bnCtB").textContent=l?("kii u dambeeyay "+bnHm(l.t)+" · "+bnUsd(l.pr)):"signal sug"; bnE("bnCtC").textContent="payout ~85% · stake $"+Number(d.cfg.stake).toFixed(2);
+    bnE("bnCtP").textContent="–"; bnE("bnCtP").style.color="var(--ink)"; bnE("bnCt").style.opacity=.8; }
+  bnChart();
+}
+function bnChart(){
+  const cv=bnE("bnCv"); if(!cv||!BN) return; const x=cv.getContext("2d"), W=cv.width, H=cv.height, s=BN.st||{}; x.clearRect(0,0,W,H);
+  const c=(s.c||[]).slice(-75); if(c.length<2){ x.fillStyle="#8b8a82"; x.font="bold 22px sans-serif"; x.fillText(BN.cfg.on?"xog sugaya…":"SHID → qiimaha live",20,H/2); return; }
+  const cur=s.cur; let lo=Math.min(...c.map(p=>p[1])), hi=Math.max(...c.map(p=>p[1]));
+  if(cur&&cur.en!=null){ lo=Math.min(lo,Number(cur.en)); hi=Math.max(hi,Number(cur.en)); }
+  const pad=(hi-lo)*0.08||1; lo-=pad; hi+=pad; const t0=c[0][0], t1=c[c.length-1][0]+60;
+  const X=t=>(t-t0)/(t1-t0)*(W-74), Y=p=>12+(H-24)*(hi-p)/(hi-lo);
+  x.strokeStyle="rgba(255,255,255,.06)"; x.lineWidth=1; for(let k=0;k<4;k++){ const y=12+(H-24)*k/3; x.beginPath(); x.moveTo(0,y); x.lineTo(W,y); x.stroke(); }
+  const g=x.createLinearGradient(0,0,0,H); g.addColorStop(0,"rgba(234,179,8,.35)"); g.addColorStop(1,"rgba(234,179,8,0)");
+  x.beginPath(); c.forEach((p,i)=>{ const xx=X(p[0]+60), yy=Y(p[1]); i?x.lineTo(xx,yy):x.moveTo(xx,yy); }); x.lineTo(X(c[c.length-1][0]+60),H); x.lineTo(X(c[0][0]+60),H); x.closePath(); x.fillStyle=g; x.fill();
+  x.beginPath(); c.forEach((p,i)=>{ const xx=X(p[0]+60), yy=Y(p[1]); i?x.lineTo(xx,yy):x.moveTo(xx,yy); }); x.strokeStyle="#eab308"; x.lineWidth=3; x.stroke();
+  (BN.hist||[]).forEach(h=>{ if(h.t<t0||h.en==null) return; const xx=X(h.t), yy=Y(Number(h.en)); x.fillStyle=h.w?"#19c26b":"#e5484d"; x.beginPath();
+    if(Number(h.d)>0){ x.moveTo(xx,yy-4); x.lineTo(xx-9,yy+12); x.lineTo(xx+9,yy+12); } else { x.moveTo(xx,yy+4); x.lineTo(xx-9,yy-12); x.lineTo(xx+9,yy-12); } x.fill(); });
+  if(cur&&cur.en!=null){ const y=Y(Number(cur.en)); x.setLineDash([8,6]); x.strokeStyle="#3987e5"; x.lineWidth=2; x.beginPath(); x.moveTo(X(Number(cur.t0)||t0),y); x.lineTo(W-74,y); x.stroke(); x.setLineDash([]);
+    x.fillStyle="#3987e5"; x.fillRect(W-72,y-14,72,28); x.fillStyle="#fff"; x.font="bold 16px sans-serif"; x.fillText(Number(cur.en).toFixed(BN.syms[BN.cfg.sym]?BN.syms[BN.cfg.sym][1]:2).slice(-8),W-68,y+6); }
+  const lp=c[c.length-1], lx=X(lp[0]+60), ly=Y(lp[1]); x.fillStyle="#eab308"; x.beginPath(); x.arc(lx,ly,6,0,7); x.fill();
+}
+(function(){
+  const tb=bnE("bnTokB"); if(!tb) return;
+  tb.addEventListener("click",async()=>{ const v=(bnE("bnTok").value||"").trim(), m=bnE("bnTokM");
+    if(!v){ m.className="bnmsg e"; m.textContent="Geli token-ka."; return; }
+    tb.disabled=true; tb.textContent="…"; m.className="bnmsg"; m.textContent="Deriv ayaa la hubinayaa…";
+    const e=await bnPost("/api/binary/connect",{token:v,app:(bnE("bnApp").value||"").trim()}); tb.disabled=false; tb.textContent="XIDH";
+    if(e){ m.className="bnmsg e"; m.textContent=e; } else { bnE("bnTok").value=""; m.className="bnmsg o"; m.textContent="✓ La xidhay"; } });
+  bnE("bnGo").addEventListener("click",async()=>{ if(!BN) return; const on=!(BN.cfg&&BN.cfg.on); const b=bnE("bnGo"); b.disabled=true;
+    const e=await bnPost("/api/binary/run",{on:on}); b.disabled=false; if(e){ const al=bnE("bnAl"); al.hidden=false; al.className="bnal r"; al.innerHTML="<b>Lama beddelin</b>"+e; } });
+  bnE("bnDis").addEventListener("click",async()=>{ const b=bnE("bnDis"); if(!b.dataset.c){ b.dataset.c=1; b.textContent="Hubi: riix mar kale si token-ka loo saaro"; setTimeout(()=>{ b.dataset.c=""; b.textContent="Ka saar token-ka (disconnect)"; },4000); return; }
+    b.dataset.c=""; await bnPost("/api/binary/disconnect",{}); BNdirty=false; });
+  bnE("bnExp").querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{ BNdraft.exp=Number(b.dataset.v); BNdirty=true; bnSetPaint(); }));
+  bnE("bnMode").querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{ BNdraft.mode=b.dataset.v; BNdirty=true; bnSetPaint(); }));
+  const stk=[0.35,0.5,1,2,3,5,10,20,50,100];
+  bnE("bnStkM").addEventListener("click",()=>{ const v=Number(BNdraft.stake); BNdraft.stake=[...stk].reverse().find(s=>s<v-1e-9)||0.35; BNdirty=true; bnSetPaint(); });
+  bnE("bnStkP").addEventListener("click",()=>{ const v=Number(BNdraft.stake); BNdraft.stake=stk.find(s=>s>v+1e-9)||100; BNdirty=true; bnSetPaint(); });
+  bnE("bnMxM").addEventListener("click",()=>{ BNdraft.maxn=Math.max(1,Number(BNdraft.maxn)-5); BNdirty=true; bnSetPaint(); });
+  bnE("bnMxP").addEventListener("click",()=>{ BNdraft.maxn=Math.min(200,Number(BNdraft.maxn)+5); BNdirty=true; bnSetPaint(); });
+  bnE("bnHs").addEventListener("change",e=>{ BNdraft.hs=Number(e.target.value); BNdirty=true; bnSetPaint(); });
+  bnE("bnHe").addEventListener("change",e=>{ BNdraft.he=Number(e.target.value); BNdirty=true; bnSetPaint(); });
+  bnE("bnDl").addEventListener("input",e=>{ BNdraft.dl=Number(e.target.value); BNdirty=true; bnSetPaint(); });
+  bnE("bnSave").addEventListener("click",async()=>{ const b=bnE("bnSave"); b.disabled=true; b.textContent="…";
+    const e=await bnPost("/api/binary/config",{values:{sym:BNdraft.sym,exp:BNdraft.exp,stake:BNdraft.stake,hs:BNdraft.hs,he:BNdraft.he,dl:BNdraft.dl,maxn:BNdraft.maxn,mode:BNdraft.mode}});
+    if(e){ bnE("bnSetM").textContent=e; bnE("bnSetM").style.color="#ff9a9d"; } else { BNdirty=false; BNdraft=Object.assign({},BN.cfg); bnE("bnSetM").textContent="✓ la kaydiyay · trade-ka XIGA"; bnE("bnSetM").style.color="#8ff0b9"; bnSetPaint(); } });
+  bnE("bnModX").addEventListener("click",()=>{ bnE("bnMod").hidden=true; });
+  const card=bnE("binCard"); if(card) card.addEventListener("click",()=>tab("Binary"));
+  setInterval(()=>{ const iv=bnOn()?2000:15000; if(Date.now()-BNlastF>=iv) bnLoad(); if(bnOn()) bnLive(); },1000);
+  bnLoad();
+})();
 </script></body></html>"""
 
 T_ADMIN = """<!doctype html><html lang="so"><head><meta charset="utf-8">
