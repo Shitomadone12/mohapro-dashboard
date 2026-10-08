@@ -20,6 +20,8 @@ Web (session auth):
   /login /register /logout /dashboard /admin
   GET  /api/state         -> xogta account-ka user-ka
   POST /api/command       -> amar loo diro EA-da
+  v13.19: ₿ BINANCE spot (TESTNET / REAL · Withdraw OFF) · 💼 hanti · ⇄ IIBSO / IIBI · 📅 DCA · 🪜 GRID ₿ xidhan · 🛑 xad ·
+          🔍 SCAN CRYPTO (BTC · ETH · SOL · BNB · XRP) ₿ MUUJI: qorshe + 3 sawir + digniin + natiijo virtual (trade toos ah ma jiro)
   v13.18: 🧰 QORSHE qalab (RSI · ★ OB / FVG / Volume · Warar) + 🔒 maamul (BE · waqti · trailing · qayb-xidh) - mid kasta ON/OFF (SITIN) - EA v72.6
   v13.17: ⏱ TOOS (M15 xidhid) iyo XAQIIJIN (M5 xidhid) sidoo kale shumac xidhid ayay sugaan · xaalad 'M5 ✓' / 'M15 ✓' - EA v72.5
   v13.16: ⏱ QORSHE TOOS: hab gelitaan 'M15 + CHoCH' (QTMODE 2 · default) · xaalad 'M15 ✓' · isbarbardhig M15 - EA v72.4
@@ -56,6 +58,7 @@ Web (session auth):
   GET/POST /api/music     -> v12.20: 🎵 liiska heesaha (link-yo)
   GET  /api/binary/state · POST /api/binary/connect|disconnect|config|run -> v13.14: ⚡ BINARY (Deriv)
   POST /qt (EA) · GET /api/qt/state|live|plan/<id> · POST /api/qt/scan|cancel|ai|photo -> v13.15: 🔍 SCAN · 📌 QORSHE TOOS
+  GET  /api/cx/state|price · POST /api/cx/connect|disconnect|order|config -> v13.19: ₿ BINANCE · 📅 DCA · 🔍 SCAN CRYPTO
 """
 
 import os, re, json, time, sqlite3, hmac, secrets, logging, threading
@@ -5440,10 +5443,13 @@ def api_qt_state():
         lv = _kv_get(con, "qtlive:" + acc) or {}
         rows = con.execute("SELECT data FROM qt_plans WHERE account=? ORDER BY pid DESC LIMIT 60", (acc,)).fetchall()
         snap = con.execute("SELECT data FROM snapshots WHERE account=?", (acc,)).fetchone()
+        cx = _cx_qt_part(con, acc)   # v13.19: ₿ SCAN CRYPTO (MUUJI)
     plans = [_jload(r["data"], {}) for r in rows]
     qs = (_jload(snap["data"], {}) or {}).get("qt") if snap else None
-    return jsonify(ok=True, account=acc, cfg=cfg, scans=sc.get("list") or [], scan_ts=sc.get("ts") or 0, plans=plans,
+    allp = sorted(plans + cx["plans"], key=lambda p: -float(p.get("t") or 0)) if cx["on"] else plans
+    return jsonify(ok=True, account=acc, cfg=cfg, scans=(sc.get("list") or []) + cx["scans"], scan_ts=sc.get("ts") or 0, plans=allp,
                    stats=_qt_stats(plans), sum=qs if isinstance(qs, dict) else {}, live_ts=lv.get("ts") or 0,
+                   cx=cx["on"], cx_ts=cx["ts"], cxstats=_cx_stats(cx["plans"]),
                    ai=bool(QT_AI_KEY), can=_qt_can(u, acc), st=QT_ST, now=time.time())
 
 
@@ -5567,12 +5573,14 @@ def api_qt_live():
     acc = _visible_account(u)
     with db() as con:
         lv = _kv_get(con, "qtlive:" + acc) or {}
+        cx = _cx_qt_live(con, acc)   # v13.19: ₿
     out = []
-    for it in lv.get("list") or []:
+    for it in (lv.get("list") or []) + cx["list"]:
         f = _qt_feat(it)
         out.append({"sym": it.get("sym"), "dg": it.get("dg"), "tr": it.get("tr"), "res": it.get("res"), "txt": it.get("txt"),
-                    "t8": it.get("t8"), "srv": it.get("srv"), "b": (it.get("b") or [])[-120:], "f": f, "expl": _qt_text(it, f) if f else ""})
-    return jsonify(ok=True, ts=lv.get("ts") or 0, list=out, ai=bool(QT_AI_KEY))
+                    "t8": it.get("t8"), "srv": it.get("srv"), "cr": 1 if it.get("cr") else 0,
+                    "b": (it.get("b") or [])[-120:], "f": f, "expl": _qt_text(it, f) if f else ""})
+    return jsonify(ok=True, ts=lv.get("ts") or 0, cx_ts=cx["ts"], list=out, ai=bool(QT_AI_KEY))
 
 
 @app.post("/api/qt/scan")
@@ -5581,12 +5589,13 @@ def api_qt_scan():
     u = request.user
     body = request.get_json(silent=True) or {}
     acc = (clean_account(body.get("account")) if u["role"] == "admin" else u["account"]) or u["account"]
-    if not _qt_can(u, acc):
-        return jsonify(ok=False, error="Ogolaansho ma lihid."), 403
     now = time.time()
+    cxr = _cx_req(now)   # v13.19: ₿ scan crypto (server-ka · xog dadweyne)
+    if not _qt_can(u, acc):
+        return jsonify(ok=False, error="Ogolaansho ma lihid.", cx=cxr), 403
     with db() as con:
         con.execute("INSERT INTO commands(account,cmd,by_account,created_at) VALUES(?,?,?,?)", (acc, "QT:SCAN", u["account"], now))
-    return jsonify(ok=True, at=now)
+    return jsonify(ok=True, at=now, cx=cxr)
 
 
 @app.post("/api/qt/cancel")
@@ -5600,6 +5609,8 @@ def api_qt_cancel():
     pid = _qt_i(body.get("pid"), 0, 10 ** 9)
     if pid <= 0:
         return jsonify(ok=False, error="qorshe"), 400
+    if pid >= CX_PID0:
+        return jsonify(ok=False, error="₿ MUUJI: qorshe crypto trade ma laha."), 400
     with db() as con:
         con.execute("INSERT INTO commands(account,cmd,by_account,created_at) VALUES(?,?,?,?)", (acc, "QT:CANCEL:%d" % pid, u["account"], time.time()))
     return jsonify(ok=True)
@@ -5610,12 +5621,14 @@ def api_qt_cancel():
 def api_qt_plan(pid):
     u = request.user
     acc = _visible_account(u)
+    if pid >= CX_PID0:   # v13.19: ₿ qorshe crypto (MUUJI · virtual)
+        acc = CX_ACC
     with db() as con:
         r = con.execute("SELECT data FROM qt_plans WHERE account=? AND pid=?", (acc, pid)).fetchone()
         sn = con.execute("SELECT kind,data FROM qt_snaps WHERE account=? AND pid=?", (acc, pid)).fetchall()
         p = _jload(r["data"], {}) if r else None
         trade = None
-        if p and p.get("tE"):
+        if p and p.get("tE") and acc != CX_ACC:
             rows = con.execute("SELECT data FROM closed_trades WHERE account=? AND ts>? ORDER BY ts DESC LIMIT 300",
                                (acc, float(p["tE"]) - 86400 * 3)).fetchall()
             for x in rows:
@@ -5698,6 +5711,9 @@ def api_qt_ai():
     with db() as con:
         lv = _kv_get(con, "qtlive:" + acc) or {}
         it = next((x for x in (lv.get("list") or []) if x.get("sym") == sym), None)
+        if not it:   # v13.19: ₿
+            lv = _kv_get(con, "cxlive") or {}
+            it = next((x for x in (lv.get("list") or []) if x.get("sym") == sym), None)
         if not it:
             return jsonify(ok=False, error="Scan LIVE marka hore (🔍 SCAN HADDA)."), 400
         f = _qt_feat(it)
@@ -5764,6 +5780,966 @@ def api_qt_photo():
              "bias": _qt_txt(res.get("bias"), 8), "conf": _qt_txt(res.get("conf"), 10), "notes": _qt_txt(res.get("notes"), 600),
              "levels": [{"type": _qt_txt(x.get("type"), 12), "price": _qt_f(x.get("price"), 0, 1e9)} for x in (res.get("levels") or [])[:8] if isinstance(x, dict)]}
     return jsonify(ok=True, res=clean)
+
+
+# ============================================================================
+#  v13.19: ₿ BINANCE (spot) · 🔍 SCAN CRYPTO (MUUJI · natiijo virtual) · 📅 DCA
+#  - Furaha API: server-ka ayaa haya (encrypted · _bin_enc) · Withdraw = waa la diidaa
+#  - Scan crypto: xogta dadweynaha (data-api.binance.vision) · isla xeerarka QORSHE TOOS
+#    (EMA M15·H1·H4 · zone · M15 xidhid · CHoCH M5) · trade toos ah MA JIRO (tijaabo BTC PF 0.76)
+#  - DCA: iibsi joogto ah (maalin / toddobaad) · xad lacag guud
+#  - GRID ₿: xidhan (tijaabo BUY-only ayaa sugaysa)
+# ============================================================================
+import urllib.request as _cxu
+import urllib.parse as _cxp
+import urllib.error as _cxe
+
+CX_REAL = (os.environ.get("BN_REAL_URL") or "https://api.binance.com").strip().rstrip("/")
+CX_TEST = (os.environ.get("BN_TEST_URL") or "https://testnet.binance.vision").strip().rstrip("/")
+CX_PUB = (os.environ.get("BN_PUB_URL") or "https://data-api.binance.vision").strip().rstrip("/")
+CX_SYMS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"]
+CX_ACC = "__cx__"
+CX_PID0 = 1000000
+CX_TO = 10
+CX_DEF = {"net": "test", "scan": 1, "syms": list(CX_SYMS), "alert": 1, "maxord": 200.0,
+          "dca": {"on": 0, "sym": "BTCUSDT", "amt": 20.0, "per": "w", "dow": 0, "hr": 9, "cap": 300.0}}
+CX_DOW = ["Isniin", "Talaado", "Arbaco", "Khamiis", "Jimce", "Sabti", "Axad"]
+_CX_TOFF = {}
+_CX_EXI = {}
+_CX_BAL = {}
+_CX_PID = [None]
+_CX_BL = threading.Lock()
+
+
+def _cx_http(method, base, path, params=None, key=None, secret=None, timeout=CX_TO):
+    params = dict(params or {})
+    if secret is not None:
+        params["recvWindow"] = 10000
+        params["timestamp"] = int(time.time() * 1000 + _cx_toff(base))
+        q = _cxp.urlencode(params)
+        q += "&signature=" + hmac.new(secret.encode(), q.encode(), _bhash.sha256).hexdigest()
+    else:
+        q = _cxp.urlencode(params)
+    url = base + path
+    data = None
+    if method in ("GET", "DELETE"):
+        url += ("?" + q) if q else ""
+    else:
+        data = q.encode()
+    req = _cxu.Request(url, data=data, method=method)
+    if key:
+        req.add_header("X-MBX-APIKEY", key)
+    if data is not None:
+        req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    try:
+        with _cxu.urlopen(req, timeout=timeout) as r:
+            return r.status, json.loads(r.read().decode() or "null")
+    except _cxe.HTTPError as e:
+        try:
+            j = json.loads(e.read().decode() or "{}")
+        except Exception:
+            j = {}
+        return e.code, (j if isinstance(j, dict) else {"msg": str(j)[:120]})
+    except Exception as e:
+        return 0, {"msg": str(e)[:160]}
+
+
+def _cx_toff(base):
+    o = _CX_TOFF.get(base)
+    if o and time.time() - o[1] < 600:
+        return o[0]
+    c, j = _cx_http("GET", base, "/api/v3/time", timeout=6)
+    off = (float(j.get("serverTime")) - time.time() * 1000) if c == 200 and isinstance(j, dict) and j.get("serverTime") else 0.0
+    _CX_TOFF[base] = (off, time.time())
+    return off
+
+
+def _cx_err(c, j):
+    j = j if isinstance(j, dict) else {}
+    code, msg = j.get("code"), str(j.get("msg") or "")
+    if c == 451 or "restricted location" in msg.lower():
+        return "Binance wuxuu xannibay gobolka server-ka (451) · Railway region → Yurub / Aasiya"
+    if c == 0:
+        return "Binance lama gaadhin: " + msg[:80]
+    if code in (-2014, -2015):
+        return "Furaha / IP / ogolaansho waa khalad (" + str(code) + ") · Binance › API Management hubi"
+    if code == -1021:
+        return "Waqtiga server-ka iyo Binance isma waafaqsana (-1021) · isku day mar kale"
+    if code == -2010:
+        return "Amarka waa la diiday: " + msg[:90]
+    if code == -1013:
+        return "Cabbirka amarka waa khalad (filter): " + msg[:80]
+    return "Binance (" + str(c) + (" · " + str(code) if code is not None else "") + "): " + msg[:90]
+
+
+def _cx_cfg(con, acc):
+    c = _kv_get(con, "cxcfg:" + acc) or {}
+    out = json.loads(json.dumps(CX_DEF))
+    for k in ("net", "scan", "syms", "alert", "maxord", "tk", "ok", "perm", "since", "dlog"):
+        if k in c:
+            out[k] = c[k]
+    if isinstance(c.get("dca"), dict):
+        out["dca"].update({k: c["dca"][k] for k in c["dca"]})
+    return out
+
+
+def _cx_base(cfg):
+    return CX_TEST if cfg.get("net") != "real" else CX_REAL
+
+
+def _cx_creds(cfg):
+    raw = _bin_dec(cfg.get("tk") or "")
+    if not raw:
+        return None
+    try:
+        j = json.loads(raw)
+        return j["k"], j["s"]
+    except Exception:
+        return None
+
+
+def _cx_num(v, lo, hi, d):
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return d
+    if x != x:
+        return d
+    return max(lo, min(hi, x))
+
+
+def _cx_fmt(x, step):
+    """hoos u jar tallaabada (step) · qoraal aan exponent lahayn."""
+    try:
+        from decimal import Decimal, ROUND_DOWN
+        st = Decimal(str(step)).normalize()
+        if st <= 0:
+            return format(Decimal(str(x)), "f")
+        q = (Decimal(str(x)) / st).to_integral_value(rounding=ROUND_DOWN) * st
+        return format(q.normalize(), "f")
+    except Exception:
+        return str(x)
+
+
+def _cx_exinfo(base, sym):
+    k = base + "|" + sym
+    v = _CX_EXI.get(k)
+    if v and time.time() - v[1] < 3600:
+        return v[0]
+    c, j = _cx_http("GET", base, "/api/v3/exchangeInfo", {"symbol": sym})
+    if c != 200 or not isinstance(j, dict) or not j.get("symbols"):
+        return None
+    s = j["symbols"][0]
+    f = {"step": 0.0, "minq": 0.0, "tick": 0.0, "minn": 0.0, "base": s.get("baseAsset"), "quote": s.get("quoteAsset"), "st": s.get("status")}
+    for x in s.get("filters") or []:
+        t = x.get("filterType")
+        if t == "LOT_SIZE":
+            f["step"], f["minq"] = float(x.get("stepSize") or 0), float(x.get("minQty") or 0)
+        elif t == "PRICE_FILTER":
+            f["tick"] = float(x.get("tickSize") or 0)
+        elif t in ("NOTIONAL", "MIN_NOTIONAL"):
+            f["minn"] = float(x.get("minNotional") or 0)
+    _CX_EXI[k] = (f, time.time())
+    return f
+
+
+def _cx_lget(con, k):
+    """kv liis (kv = dict oo keliya -> {"L": [...]})."""
+    v = _kv_get(con, k) or {}
+    L = v.get("L") if isinstance(v, dict) else None
+    return L if isinstance(L, list) else []
+
+
+def _cx_lput(con, k, L):
+    _kv_put(con, k, {"L": L})
+
+
+def _cx_log_order(con, acc, o):
+    L = _cx_lget(con, "cxord:" + acc)
+    L = ([o] + [x for x in L if isinstance(x, dict)])[:60]
+    _cx_lput(con, "cxord:" + acc, L)
+
+
+def _cx_place(cfg, sym, side, typ, usdt=0.0, qty=0.0, price=0.0, sell_all=False):
+    """amar spot dhab ah (ama testnet). Soo celi (ok, dict | qoraal khalad)."""
+    cr = _cx_creds(cfg)
+    if not cr:
+        return False, "Binance lama xidhin"
+    base = _cx_base(cfg)
+    f = _cx_exinfo(base, sym)
+    if not f:
+        return False, "Lammaanahan Binance kuma jiro: " + sym
+    if f.get("st") not in (None, "TRADING"):
+        return False, sym + " hadda trade lama samayn karo (" + str(f.get("st")) + ")"
+    p = {"symbol": sym, "side": side, "newOrderRespType": "FULL"}
+    if typ == "MARKET" and side == "BUY":
+        if usdt <= 0:
+            return False, "Lacag (USDT) geli"
+        if f["minn"] and usdt < f["minn"]:
+            return False, "Ugu yaraan $" + str(f["minn"])
+        p.update(type="MARKET", quoteOrderQty="%.2f" % usdt)
+    else:
+        if sell_all and side == "SELL":
+            c0, a0 = _cx_http("GET", base, "/api/v3/account", {"omitZeroBalances": "true"}, cr[0], cr[1])
+            if c0 != 200:
+                return False, _cx_err(c0, a0)
+            qty = next((float(b.get("free") or 0) for b in a0.get("balances") or [] if b.get("asset") == f["base"]), 0.0)
+        if typ == "LIMIT":
+            if price <= 0:
+                return False, "Qiimaha (limit) geli"
+            if qty <= 0 and usdt > 0:
+                qty = usdt / price
+            p.update(type="LIMIT", timeInForce="GTC", price=_cx_fmt(price, f["tick"]))
+        else:
+            p.update(type="MARKET")
+        qs = _cx_fmt(qty, f["step"])
+        if float(qs or 0) <= 0 or (f["minq"] and float(qs) < f["minq"]):
+            return False, "Tirada aad u yar (ugu yaraan " + _cx_fmt(f["minq"], f["step"]) + ")"
+        p["quantity"] = qs
+    c, j = _cx_http("POST", base, "/api/v3/order", p, cr[0], cr[1])
+    if c != 200:
+        return False, _cx_err(c, j)
+    return True, j
+
+
+# ---------------- scan crypto (xog dadweyne) ----------------
+def _cx_klines(sym, iv, limit, now=None):
+    c, j = _cx_http("GET", CX_PUB, "/api/v3/klines", {"symbol": sym, "interval": iv, "limit": limit}, timeout=12)
+    if c != 200 or not isinstance(j, list):
+        return []
+    now = now or time.time()
+    out = []
+    for k in j:
+        try:
+            if float(k[6]) / 1000.0 > now:          # bar-ka socda -> ha qaadan
+                continue
+            out.append([int(k[0]) // 1000, float(k[1]), float(k[2]), float(k[3]), float(k[4])])
+        except (TypeError, ValueError, IndexError):
+            continue
+    return out
+
+
+def _cx_ema_last(c, n):
+    if len(c) < n:
+        return None
+    a = 2.0 / (n + 1)
+    v = c[0]
+    for x in c:
+        v = a * x + (1 - a) * v
+    return v
+
+
+def _cx_dir(bars):
+    c = [b[4] for b in bars]
+    e20, e50 = _cx_ema_last(c, 20), _cx_ema_last(c, 50)
+    if e20 is None or e50 is None:
+        return 0
+    return 1 if e20 > e50 else (-1 if e20 < e50 else 0)
+
+
+def _cx_atr(q, n=14):
+    if len(q) < n + 2:
+        return 0.0
+    a = 2.0 / (n + 1)
+    trs = [max(q[i][2] - q[i][3], abs(q[i][2] - q[i - 1][4]), abs(q[i][3] - q[i - 1][4])) for i in range(1, len(q))]
+    v = sum(trs[:n]) / n
+    for t in trs:
+        v = a * t + (1 - a) * v
+    return v
+
+
+def _cx_dg(px):
+    return 2 if px >= 100 else (3 if px >= 10 else (4 if px >= 1 else 5))
+
+
+def _cx_rsi(c, n=14):
+    if len(c) < n + 2:
+        return 0.0
+    a = 1.0 / n
+    au = ad = 0.0
+    for i in range(1, len(c)):
+        d = c[i] - c[i - 1]
+        au = a * max(d, 0) + (1 - a) * au
+        ad = a * max(-d, 0) + (1 - a) * ad
+    return 100.0 if ad <= 0 else 100 - 100 / (1 + au / ad)
+
+
+def _cx_pivots(q, L=3, age=140):
+    last = len(q) - 1
+    hs, ls = [], []
+    for j in range(L, last - L + 1):
+        if last - j > age:
+            continue
+        sh = q[j][2] > q[j - 1][2] and all(q[k][2] <= q[j][2] for k in range(j - L, j + L + 1) if k != j)
+        sl = q[j][3] < q[j - 1][3] and all(q[k][3] >= q[j][3] for k in range(j - L, j + L + 1) if k != j)
+        if sh:
+            hs.append((q[j][2], j))
+        if sl:
+            ls.append((q[j][3], j))
+    return hs, ls
+
+
+def _cx_plan_rows(con):
+    rows = con.execute("SELECT data FROM qt_plans WHERE account=? ORDER BY pid DESC LIMIT 200", (CX_ACC,)).fetchall()
+    return [_jload(r["data"], {}) for r in rows]
+
+
+def _cx_save_plan(con, p, now):
+    con.execute("INSERT INTO qt_plans(account,pid,data,st,t,ts) VALUES(?,?,?,?,?,?)"
+                " ON CONFLICT(account, pid) DO UPDATE SET data=excluded.data, st=excluded.st, t=excluded.t, ts=excluded.ts",
+                (CX_ACC, int(p["id"]), json.dumps(p, separators=(",", ":")), int(p.get("st") or 0), float(p.get("t") or 0), now))
+
+
+def _cx_snap(con, p, kind, m5, now):
+    t0 = p["t"] - (12 if kind == "scan" else (6 if kind == "entry" else 4)) * 3600
+    if kind == "exit":
+        tE = (p.get("tX") or now) + 3600
+    elif kind == "entry":
+        tE = p.get("tE") or p["t"]
+    else:
+        tE = p["t"]
+    b = [x for x in m5 if t0 <= x[0] <= tE][-150:]
+    row = {"k": kind, "t": int(now), "sym": p["sym"], "dg": p.get("dg", 2), "p": p,
+           "b": [[x[0], round(x[1], 8), round(x[2], 8), round(x[3], 8), round(x[4], 8)] for x in b]}
+    con.execute("INSERT INTO qt_snaps(account,pid,kind,data,ts) VALUES(?,?,?,?,?)"
+                " ON CONFLICT(account, pid, kind) DO UPDATE SET data=excluded.data, ts=excluded.ts",
+                (CX_ACC, int(p["id"]), kind, json.dumps(row, separators=(",", ":")), now))
+
+
+def _cx_alert(con, p, txt, now):
+    L = _cx_lget(con, "cxalert")
+    L = ([{"t": int(now), "pid": p["id"], "sym": p["sym"], "s": p["s"], "txt": txt}] + [x for x in L if isinstance(x, dict)])[:40]
+    _cx_lput(con, "cxalert", L)
+
+
+def _cx_scan_sym(sym, plans, now, data):
+    """data = {'q':M15, 'h1':H1, 'h4':H4, 'm5':M5}. Soo celi (scan_row, live_item, plan_cusub | None)."""
+    q, h1, h4 = data.get("q") or [], data.get("h1") or [], data.get("h4") or []
+    row = {"sym": sym, "t": int(now), "tr": [0, 0, 0], "px": 0, "a": 0, "zs": 0, "zr": 0, "res": 5, "pid": 0, "txt": "xog la'aan", "t8": 0, "cr": 1}
+    if len(q) < 160 or len(h1) < 60 or len(h4) < 60:
+        return row, None, None
+    last = len(q) - 1
+    tq = q[last][0] + 900
+    px = q[last][4]
+    A = _cx_atr(q)
+    dg = _cx_dg(px)
+    d15, dh1, dh4 = _cx_dir(q), _cx_dir(h1), _cx_dir(h4)
+    hs, ls = _cx_pivots(q)
+    zs = max([v for v, j in ls if v < px] or [0])
+    zr = min([v for v, j in hs if v > px] or [0])
+    row.update(t=int(tq), tr=[d15, dh1, dh4], px=px, a=round(A, 8), zs=zs, zr=zr)
+    live = {"sym": sym, "dg": dg, "tr": [d15, dh1, dh4], "a": round(A, 8), "sp": 0, "zs": zs, "zr": zr, "res": 1, "txt": "",
+            "t8": 0, "srv": int(now), "cr": 1, "b": [[x[0], x[1], x[2], x[3], x[4]] for x in q[-220:]]}
+    s = d15
+    if A <= 0:
+        row.update(res=5, txt="ATR la'aan")
+        live.update(res=5, txt=row["txt"])
+        return row, live, None
+    if not (s != 0 and dh1 == s and dh4 == s):
+        row.update(res=2, txt="SUG · trend khilaaf")
+        live.update(res=2, txt=row["txt"])
+        return row, live, None
+    cand = [(v, j) for v, j in (ls if s > 0 else hs) if (s > 0 and v < px - 0.5 * A and px - v <= 3 * A) or (s < 0 and v > px + 0.5 * A and v - px <= 3 * A)]
+    if not cand:
+        row.update(res=3, txt="zone ma jirto")
+        live.update(res=3, txt=row["txt"])
+        return row, live, None
+    best, bj = (max(cand) if s > 0 else min(cand))
+    sp = " · spot ✕" if s < 0 else ""
+    key = sym + "|" + str(s) + "|" + ("%.6g" % best)
+    old = next((p for p in plans if p.get("key") == key), None)
+    if old:
+        row.update(res=1, pid=old["id"], txt=("BUY" if s > 0 else "SELL") + " zone (qorshe hore)" + sp)
+        live.update(res=1, txt=row["txt"])
+        return row, live, None
+    act = [p for p in plans if p.get("st") in (0, 1, 2)]
+    if sum(1 for p in act if p.get("sym") == sym) >= 2 or len(act) >= 12:
+        row.update(res=6, txt="qorshe ugu badan" + sp)
+        live.update(res=6, txt=row["txt"])
+        return row, live, None
+    lo, hi = best - 0.25 * A, best + 0.25 * A
+    ent = hi if s > 0 else lo
+    sl = (lo - 0.3 * A) if s > 0 else (hi + 0.3 * A)
+    R = abs(ent - sl)
+    opp = [v for v, j in (hs if s > 0 else ls) if (v - ent) * s >= 1.5 * R]
+    tp = (min(opp) if s > 0 else max(opp)) if opp else ent + s * 2 * R
+    if abs(tp - ent) > 5 * R:
+        tp = ent + s * 5 * R
+    ob = fvg = 0
+    for k2 in range(max(1, bj - 2), bj + 1):
+        if k2 + 3 > last:
+            continue
+        if (s > 0 and q[k2][4] < q[k2][1]) or (s < 0 and q[k2][4] > q[k2][1]):
+            mv = max((q[u][2] - q[k2][3]) if s > 0 else (q[k2][2] - q[u][3]) for u in range(k2 + 1, k2 + 4))
+            if mv >= 1.5 * A:
+                ob = 1
+    for k2 in range(bj + 1, min(last - 1, bj + 5) + 1):
+        if (s > 0 and q[k2 + 1][3] > q[k2 - 1][2]) or (s < 0 and q[k2 + 1][2] < q[k2 - 1][3]):
+            fvg = 1
+    n = max([int(p["id"]) for p in plans] + [CX_PID0]) + 1
+    p = {"id": n, "sym": sym, "s": s, "dg": dg, "lo": lo, "hi": hi, "ent": ent, "sl": sl, "tp": tp, "a": A, "t": int(tq), "exp": int(tq + 8 * 3600),
+         "st": 0, "tT": 0, "tE": 0, "tX": 0, "ext": 0, "eP": 0, "eSL": 0, "eTP": 0, "xP": 0, "r": 0, "lot": 0, "pos": 0,
+         "tr": [d15, dh1, dh4], "md": 2, "q15": 0, "tr8": 0, "cr": 1, "ob": ob, "fvg": fvg, "vol": 0, "mul": 1.0, "rsi": 0, "mgf": 0,
+         "key": key, "lt": int(tq) - 300, "kt": 0, "nk": 0,
+         "why": "₿ MUUJI · SR " + ("demand" if s > 0 else "supply") + " · trend " + ("▲▲▲" if s > 0 else "▼▼▼") + sp}
+    row.update(res=1, pid=n, txt=("BUY" if s > 0 else "SELL") + " zone · #" + str(n - CX_PID0) + sp)
+    live.update(res=1, txt=row["txt"])
+    return row, live, p
+
+
+def _cx_track(p, m5, m15, now):
+    """qorshe crypto -> xaaladaha (M5 bar xidhmay kasta). Soo celi liiska dhacdooyinka [(nooc, qoraal)]."""
+    ev = []
+    s = p["s"]
+    A = float(p.get("a") or 0)
+    for i, b in enumerate(m5):
+        if b[0] <= p.get("lt", 0):
+            continue
+        p["lt"] = b[0]
+        st = p["st"]
+        if st == 0:
+            if b[0] >= p["exp"]:
+                p["st"], p["why"] = 5, "waqti (8 saac) · zone lama taaban"
+                ev.append(("end", "DHACAY · waqti"))
+                break
+            touch = (b[3] <= p["ent"]) if s > 0 else (b[2] >= p["ent"])
+            if not touch:
+                if (s > 0 and b[2] >= p["tp"]) or (s < 0 and b[3] <= p["tp"]):
+                    p["st"], p["why"] = 6, "qiimuhu TP buu gaadhay ka hor taabashada"
+                    ev.append(("end", "KA CARAY"))
+                    break
+                continue
+            p.update(st=1, tT=b[0], ext=(b[3] if s > 0 else b[2]), q15=0, why="TAABTAY · sugaya M15 xidhid")
+            ev.append(("touch", "TAABTAY zone"))
+            continue
+        if st == 1:
+            p["ext"] = min(p["ext"], b[3]) if s > 0 else max(p["ext"], b[2])
+            if (s > 0 and p["ext"] < p["sl"]) or (s < 0 and p["ext"] > p["sl"]):
+                p["st"], p["why"] = 5, "heerka SL-ka qorshaha waa la jabiyay (CHoCH ka hor)"
+                ev.append(("end", "DHACAY · SL jabay"))
+                break
+            if not p.get("q15"):
+                qb = next((x for x in m15 if x[0] <= p["tT"] < x[0] + 900), None)
+                if qb is None or qb[0] + 900 > b[0] + 300:
+                    continue
+                if (s > 0 and qb[4] < p["lo"]) or (s < 0 and qb[4] > p["hi"]):
+                    p["st"], p["why"] = 5, "M15 zone-ka " + ("hoostiisa" if s > 0 else "korkiisa") + " ayuu ku xidhmay · zone jabay"
+                    ev.append(("end", "DHACAY · M15 zone jabay"))
+                    break
+                p.update(q15=1, kt=qb[0] + 900, nk=0, why="M15 ✓ zone qabtay · sugaya CHoCH M5")
+                ev.append(("q15", "M15 ✓ zone qabtay"))
+                continue
+            if b[0] < p["kt"]:
+                continue
+            nk = (b[0] - p["kt"]) // 300 + 1
+            p["nk"] = nk
+            if nk > 24:
+                p["st"], p["why"] = 5, "CHoCH M5 ma iman (2 saac)"
+                ev.append(("end", "DHACAY · CHoCH ma iman"))
+                break
+            lim = p["kt"] - 6 * 300
+            lvl = None
+            for j in range(2, i - 2):
+                if m5[j][0] < lim:
+                    continue
+                if s > 0:
+                    sw = m5[j][2] > m5[j - 1][2] and all(m5[x][2] <= m5[j][2] for x in range(j - 2, j + 3) if x != j)
+                else:
+                    sw = m5[j][3] < m5[j - 1][3] and all(m5[x][3] >= m5[j][3] for x in range(j - 2, j + 3) if x != j)
+                if sw:
+                    lvl = m5[j][2] if s > 0 else m5[j][3]
+            if lvl is None or not ((s > 0 and b[4] > lvl) or (s < 0 and b[4] < lvl)):
+                continue
+            eP = b[4]
+            eSL = p["ext"] - s * 0.1 * A
+            R = abs(eP - eSL)
+            if R <= 0 or R > 3 * A or (s > 0 and eSL >= eP) or (s < 0 and eSL <= eP):
+                p["st"], p["why"] = 5, "R aad u weyn"
+                ev.append(("end", "DHACAY · R weyn"))
+                break
+            eTP = p["tp"] if (p["tp"] - eP) * s >= R else eP + s * 2 * R
+            rng = [x[2] - x[3] for x in m5[max(0, i - 20):i]]
+            vol = 1 if rng and (b[2] - b[3]) >= 1.2 * (sum(rng) / len(rng)) else 0
+            p.update(st=2, tE=b[0] + 300, eP=eP, eSL=eSL, eTP=eTP, vol=vol,
+                     why="₿ MUUJI · signal CHoCH ✓ · virtual (trade ma jiro)")
+            ev.append(("entry", "SIGNAL " + ("BUY" if s > 0 else "SELL") + " · virtual"))
+            continue
+        if st == 2:
+            if b[0] < p["tE"]:
+                continue
+            R = abs(p["eP"] - p["eSL"]) or 1e-12
+            xp = None
+            if (s > 0 and b[3] <= p["eSL"]) or (s < 0 and b[2] >= p["eSL"]):
+                xp, nst = p["eSL"], 4
+            elif (s > 0 and b[2] >= p["eTP"]) or (s < 0 and b[3] <= p["eTP"]):
+                xp, nst = p["eTP"], 3
+            if xp is not None:
+                p.update(st=nst, xP=xp, tX=b[0], r=round((xp - p["eP"]) * s / R, 2))
+                p["why"] = "₿ MUUJI · " + ("TP" if nst == 3 else "SL") + " virtual · " + ("+" if p["r"] >= 0 else "") + str(p["r"]) + "R"
+                ev.append(("exit", ("TP" if nst == 3 else "SL") + " " + ("+" if p["r"] >= 0 else "") + str(p["r"]) + "R · virtual"))
+                break
+    return ev
+
+
+def _cx_syms_all(con):
+    rows = con.execute("SELECT k,v FROM kv WHERE k LIKE ?", ("cxcfg:%",)).fetchall()
+    out = []
+    for r in rows:
+        c = _jload(r["v"], {})
+        if c.get("scan", 1):
+            for x in c.get("syms") or CX_SYMS:
+                if x in CX_SYMS and x not in out:
+                    out.append(x)
+    return out or list(CX_SYMS)
+
+
+def _cx_scan_all(now, fetch=None):
+    """scan crypto oo dhan (M15 xidhan kasta) + raadraac qorshayaasha."""
+    fetch = fetch or (lambda sym, iv, n: _cx_klines(sym, iv, n, now))
+    with db() as con:
+        syms = _cx_syms_all(con)
+        plans = _cx_plan_rows(con)
+    rows, lives, data = [], [], {}
+    for sym in syms:
+        d = {"q": fetch(sym, "15m", 300), "h1": fetch(sym, "1h", 120), "h4": fetch(sym, "4h", 120), "m5": fetch(sym, "5m", 300)}
+        data[sym] = d
+        row, live, newp = _cx_scan_sym(sym, plans, now, d)
+        rows.append(row)
+        if live:
+            lives.append(live)
+        if newp:
+            plans.insert(0, newp)
+            with db() as con:
+                _cx_save_plan(con, newp, now)
+                _cx_snap(con, newp, "scan", d["m5"], now)
+                _cx_alert(con, newp, "qorshe cusub · " + ("BUY" if newp["s"] > 0 else "SELL") + " zone", now)
+    with db() as con:
+        _kv_put(con, "cxscan", {"ts": now, "list": rows})
+        _kv_put(con, "cxlive", {"ts": now, "list": lives})
+    _cx_track_all(now, plans, data, fetch)
+
+
+def _cx_track_all(now, plans=None, data=None, fetch=None):
+    fetch = fetch or (lambda sym, iv, n: _cx_klines(sym, iv, n, now))
+    data = data or {}
+    if plans is None:
+        with db() as con:
+            plans = _cx_plan_rows(con)
+    for p in plans:
+        if p.get("st") not in (0, 1, 2):
+            continue
+        d = data.get(p["sym"])
+        if not d:
+            d = data[p["sym"]] = {"m5": fetch(p["sym"], "5m", 300), "q": fetch(p["sym"], "15m", 40)}
+        st0 = p["st"]
+        ev = _cx_track(p, d.get("m5") or [], d.get("q") or [], now)
+        with db() as con:
+            _cx_save_plan(con, p, now)
+            for kind, txt in ev:
+                if kind == "entry":
+                    _cx_snap(con, p, "entry", d.get("m5") or [], now)
+                if kind == "exit":
+                    _cx_snap(con, p, "exit", d.get("m5") or [], now)
+                _cx_alert(con, p, txt, now)
+            if _should_prune("cx"):
+                con.execute("DELETE FROM qt_plans WHERE account=? AND ts<?", (CX_ACC, now - QT_KEEP))
+                con.execute("DELETE FROM qt_snaps WHERE account=? AND ts<?", (CX_ACC, now - QT_KEEP))
+
+
+def _cx_stats(plans):
+    done = [p for p in plans if p.get("st") in (3, 4) and p.get("tE")]
+    w = sum(1 for p in done if p.get("r", 0) > 0)
+    return {"n": len(plans), "sig": len(done), "tp": w, "sl": len(done) - w, "R": round(sum(float(p.get("r") or 0) for p in done), 2),
+            "wait": sum(1 for p in plans if p.get("st") in (0, 1)), "open": sum(1 for p in plans if p.get("st") == 2)}
+
+
+# ---------------- 🔍 Scan tab (qt) · isku dar ----------------
+def _cx_qt_part(con, acc):
+    cfg = _cx_cfg(con, request.user["account"] if getattr(request, "user", None) else acc)
+    if not cfg.get("scan", 1):
+        return {"on": 0, "scans": [], "plans": [], "ts": 0}
+    syms = set(cfg.get("syms") or CX_SYMS)
+    sc = _kv_get(con, "cxscan") or {}
+    rows = [r for r in (sc.get("list") or []) if r.get("sym") in syms]
+    plans = [p for p in _cx_plan_rows(con)[:80] if p.get("sym") in syms]
+    return {"on": 1, "scans": rows, "plans": plans, "ts": sc.get("ts") or 0}
+
+
+def _cx_qt_live(con, acc):
+    cfg = _cx_cfg(con, request.user["account"] if getattr(request, "user", None) else acc)
+    if not cfg.get("scan", 1):
+        return {"list": [], "ts": 0}
+    syms = set(cfg.get("syms") or CX_SYMS)
+    lv = _kv_get(con, "cxlive") or {}
+    return {"list": [x for x in (lv.get("list") or []) if x.get("sym") in syms], "ts": lv.get("ts") or 0}
+
+
+def _cx_req(now):
+    """🔍 SCAN HADDA -> scan crypto (ugu badnaan 1 / 60 ilbiriqsi)."""
+    with db() as con:
+        r = _kv_get(con, "cxreq") or {}
+        if now - float(r.get("t") or 0) < 60:
+            return 0
+        _kv_put(con, "cxreq", {"t": now})
+    return 1
+
+
+# ---------------- DCA ----------------
+def _cx_dca_key(d, now):
+    tm = time.gmtime(now)
+    if d.get("per") == "d":
+        return time.strftime("%Y-%m-%d", tm), tm.tm_hour >= int(d.get("hr", 9))
+    y, w, wd = datetime.fromtimestamp(now, timezone.utc).isocalendar()[:3]
+    return "%d-W%02d" % (y, w), (wd - 1 > int(d.get("dow", 0))) or (wd - 1 == int(d.get("dow", 0)) and tm.tm_hour >= int(d.get("hr", 9)))
+
+
+def _cx_dca_next(d, now):
+    hr = int(d.get("hr", 9))
+    base = int(now // 86400) * 86400
+    for k in range(0, 15):
+        t = base + k * 86400 + hr * 3600
+        if t <= now:
+            continue
+        if d.get("per") == "d" or time.gmtime(t).tm_wday == int(d.get("dow", 0)):
+            key, _ = _cx_dca_key(d, t)
+            if key != d.get("last"):
+                return t
+    return 0
+
+
+def _cx_dca_tick(acc, now):
+    with db() as con:
+        cfg = _cx_cfg(con, acc)
+    d = cfg["dca"]
+    if not d.get("on") or not cfg.get("ok"):
+        return None
+    key, due = _cx_dca_key(d, now)
+    if not due or d.get("last") == key:
+        return None
+    amt = float(d.get("amt") or 0)
+    cap = float(d.get("cap") or 0)
+    spent = float(d.get("spent") or 0)
+    if cap > 0 and spent + amt > cap + 1e-9:
+        d.update(last=key, note="xadka lacagta ($" + ("%.0f" % cap) + ") waa la gaadhay · DCA waa la joojiyay", on=0)
+        res = None
+    else:
+        ok, j = _cx_place(cfg, d.get("sym", "BTCUSDT"), "BUY", "MARKET", usdt=amt)
+        if ok:
+            q = float(j.get("executedQty") or 0)
+            cq = float(j.get("cummulativeQuoteQty") or amt)
+            d.update(last=key, n=int(d.get("n") or 0) + 1, spent=round(spent + cq, 2), qty=float(d.get("qty") or 0) + q, note="")
+            res = {"t": int(now), "sym": d.get("sym"), "side": "BUY", "type": "MARKET", "qty": q, "quote": cq, "price": (cq / q) if q else 0,
+                   "st": j.get("status", "FILLED"), "src": "DCA", "id": j.get("orderId")}
+        else:
+            d.update(last=key, note=str(j)[:140])
+            res = {"t": int(now), "sym": d.get("sym"), "side": "BUY", "type": "MARKET", "qty": 0, "quote": amt, "price": 0, "st": "KHALAD", "src": "DCA", "err": str(j)[:140]}
+    with db() as con:
+        c = _kv_get(con, "cxcfg:" + acc) or {}
+        c["dca"] = dict(c.get("dca") or {}, **d)
+        _kv_put(con, "cxcfg:" + acc, c)
+        if res:
+            _cx_log_order(con, acc, res)
+            _cx_alert(con, {"id": 0, "sym": res["sym"], "s": 1}, "📅 DCA " + ("iibsaday $" + ("%.2f" % res["quote"]) if res["st"] != "KHALAD" else "khalad: " + res.get("err", "")[:60]), now)
+    return res
+
+
+# ---------------- supervisor (lease id=2) ----------------
+def _cx_lease(me, now):
+    with db() as con:
+        con.insert_ignore("INSERT INTO bin_lease(id,holder,till) VALUES(2,'',0)", (), "(id)")
+        con.execute("UPDATE bin_lease SET holder=?, till=? WHERE id=2 AND (till<? OR holder=?)", (me, now + 25, now, me))
+        r = con.execute("SELECT holder FROM bin_lease WHERE id=2").fetchone()
+    return bool(r) and r["holder"] == me
+
+
+def _cx_tick(now, state):
+    with db() as con:
+        rows = con.execute("SELECT k,v FROM kv WHERE k LIKE ?", ("cxcfg:%",)).fetchall()
+        req = _kv_get(con, "cxreq") or {}
+    for r in rows:
+        c = _jload(r["v"], {})
+        if c.get("ok") and isinstance(c.get("dca"), dict) and c["dca"].get("on"):
+            try:
+                _cx_dca_tick(r["k"][6:], now)
+            except Exception as e:
+                log.warning("cx dca %s: %s", r["k"], e)
+    slot = int((now - 25) // 900)
+    if slot != state.get("slot") or float(req.get("t") or 0) > state.get("req", 0):
+        state["slot"] = slot
+        state["req"] = float(req.get("t") or 0)
+        state["trk"] = now
+        _cx_scan_all(now)
+    elif now - state.get("trk", 0) >= 60:
+        state["trk"] = now
+        _cx_track_all(now)
+
+
+def _cx_super():
+    me = "%s-%d-%s" % (_bsock.gethostname(), os.getpid(), secrets.token_hex(3))
+    state = {}
+    time.sleep(3)
+    while True:
+        try:
+            if _DB_READY and _cx_lease(me, time.time()):
+                _cx_tick(time.time(), state)
+        except Exception as e:
+            log.warning("cx supervisor: %s", e)
+        time.sleep(5)
+
+
+@app.before_request
+def _cx_boot():
+    if os.environ.get("CX_OFF") == "1" or _CX_PID[0] == os.getpid():
+        return
+    with _CX_BL:
+        if _CX_PID[0] == os.getpid():
+            return
+        _CX_PID[0] = os.getpid()
+        threading.Thread(target=_cx_super, name="cx-super", daemon=True).start()
+
+
+# ---------------- API ----------------
+def _cx_bal(cfg, acc, force=False):
+    v = _CX_BAL.get(acc)
+    if v and not force and time.time() - v[1] < 15 and v[2] == cfg.get("tk"):
+        return v[0]
+    cr = _cx_creds(cfg)
+    if not cr:
+        return {"err": "Binance lama xidhin"}
+    base = _cx_base(cfg)
+    c, j = _cx_http("GET", base, "/api/v3/account", {"omitZeroBalances": "true"}, cr[0], cr[1])
+    if c != 200:
+        out = {"err": _cx_err(c, j)}
+        _CX_BAL[acc] = (out, time.time(), cfg.get("tk"))
+        return out
+    bals = []
+    for b in j.get("balances") or []:
+        fr, lk = float(b.get("free") or 0), float(b.get("locked") or 0)
+        if fr + lk > 0:
+            bals.append({"a": b.get("asset"), "free": fr, "lock": lk})
+    syms = [x["a"] + "USDT" for x in bals if x["a"] not in ("USDT", "USDC", "FDUSD", "BUSD")]
+    px = {}
+    if syms:
+        c2, t = _cx_http("GET", base, "/api/v3/ticker/24hr", {"symbols": json.dumps(syms[:40], separators=(",", ":"))})
+        if c2 == 200 and isinstance(t, list):
+            for x in t:
+                try:
+                    px[x["symbol"]] = (float(x["lastPrice"]), float(x["priceChangePercent"]))
+                except (KeyError, TypeError, ValueError):
+                    pass
+    tot = chg = 0.0
+    for x in bals:
+        if x["a"] in ("USDT", "USDC", "FDUSD", "BUSD"):
+            x["px"], x["chg"] = 1.0, 0.0
+        else:
+            p = px.get(x["a"] + "USDT")
+            x["px"], x["chg"] = (p[0], p[1]) if p else (0.0, 0.0)
+        x["usd"] = round((x["free"] + x["lock"]) * x["px"], 2)
+        tot += x["usd"]
+        chg += x["usd"] * x["chg"] / 100.0
+    bals.sort(key=lambda x: -x["usd"])
+    out = {"bals": bals[:30], "tot": round(tot, 2), "chg": round(100.0 * chg / tot, 2) if tot else 0.0, "can": bool(j.get("canTrade", True))}
+    _CX_BAL[acc] = (out, time.time(), cfg.get("tk"))
+    return out
+
+
+@app.get("/api/cx/state")
+@login_required
+def api_cx_state():
+    u = request.user
+    acc = u["account"]   # Binance = account-ka qofka (admin: kiisa)
+    now = time.time()
+    with db() as con:
+        cfg = _cx_cfg(con, acc)
+        orders = _cx_lget(con, "cxord:" + acc)
+        alerts = _cx_lget(con, "cxalert")
+        plans = _cx_plan_rows(con)
+        sc = _kv_get(con, "cxscan") or {}
+    conn = bool(cfg.get("ok") and cfg.get("tk"))
+    bal = _cx_bal(cfg, acc, force=request.args.get("f") == "1") if conn else {}
+    hist = []
+    if conn:
+        with db() as con:
+            hist = _cx_lget(con, "cxhist:" + acc)
+            if bal.get("tot") and (not hist or now - float(hist[-1][0]) >= 900):
+                hist = (hist + [[int(now), bal["tot"]]])[-300:]
+                _cx_lput(con, "cxhist:" + acc, hist)
+    d = dict(cfg["dca"])
+    d["next"] = _cx_dca_next(d, now) if d.get("on") else 0
+    ab = (d.get("sym") or "BTCUSDT")[:-4]
+    d["px"] = next((x.get("px") for x in (bal.get("bals") or []) if x.get("a") == ab), 0) or 0
+    return jsonify(ok=True, account=acc, can=_bin_can(u), conn=conn, net=cfg.get("net"), perm=cfg.get("perm") or {}, since=cfg.get("since") or 0,
+                   bal=bal, dca=d, orders=orders[:30], alerts=(alerts[:20] if cfg.get("alert", 1) else []), syms=CX_SYMS,
+                   cfg={"scan": cfg.get("scan", 1), "syms": cfg.get("syms") or CX_SYMS, "alert": cfg.get("alert", 1), "maxord": cfg.get("maxord", 200.0)},
+                   stats=_cx_stats(plans), scan_ts=sc.get("ts") or 0, hist=hist, act=sum(1 for p in plans if p.get("st") in (0, 1, 2)), grid={"locked": True, "why": "tijaabo BUY-only ayaa sugaysa"}, dow=CX_DOW, now=now)
+
+
+@app.get("/api/cx/price")
+@login_required
+def api_cx_price():
+    u = request.user
+    acc = u["account"]   # Binance = account-ka qofka (admin: kiisa)
+    sym = str(request.args.get("sym") or "").upper()
+    if sym not in CX_SYMS:
+        return jsonify(ok=False, error="lammaane"), 400
+    with db() as con:
+        cfg = _cx_cfg(con, acc)
+    conn = bool(cfg.get("ok") and cfg.get("tk"))
+    base = _cx_base(cfg) if conn else CX_PUB
+    c, j = _cx_http("GET", base, "/api/v3/ticker/24hr", {"symbol": sym}, timeout=8)
+    if c != 200 or not isinstance(j, dict):
+        return jsonify(ok=False, error=_cx_err(c, j)), 502
+    f = _cx_exinfo(base, sym) or {}
+    free = {}
+    if conn:
+        b = _cx_bal(cfg, acc)
+        for x in b.get("bals") or []:
+            if x.get("a") in (sym[:-4], "USDT"):
+                free[x["a"]] = x.get("free", 0)
+    try:
+        px, ch = float(j.get("lastPrice") or 0), float(j.get("priceChangePercent") or 0)
+    except (TypeError, ValueError):
+        px, ch = 0.0, 0.0
+    return jsonify(ok=True, sym=sym, px=px, chg=ch, net=(cfg.get("net") if conn else "pub"), minn=f.get("minn", 0), step=f.get("step", 0),
+                   tick=f.get("tick", 0), base=sym[:-4], free=free)
+
+
+@app.post("/api/cx/connect")
+@login_required
+def api_cx_connect():
+    u = request.user
+    if not _bin_can(u):
+        return jsonify(ok=False, error="Ogolaansho ma lihid."), 403
+    b = request.get_json(silent=True) or {}
+    acc = u["account"]   # Binance = account-ka qofka (admin: kiisa)
+    key, sec = str(b.get("key") or "").strip(), str(b.get("secret") or "").strip()
+    net = "real" if b.get("net") == "real" else "test"
+    if not re.fullmatch(r"[A-Za-z0-9]{20,128}", key) or not re.fullmatch(r"[A-Za-z0-9]{20,128}", sec):
+        return jsonify(ok=False, error="API key / secret qaab khaldan."), 400
+    base = CX_TEST if net == "test" else CX_REAL
+    c, j = _cx_http("GET", base, "/api/v3/account", {"omitZeroBalances": "true"}, key, sec)
+    if c != 200:
+        return jsonify(ok=False, error=_cx_err(c, j)), 400
+    perm = {"read": True, "spot": bool(j.get("canTrade", True)), "wd": None, "ip": None}
+    if net == "real":
+        c2, r = _cx_http("GET", base, "/sapi/v1/account/apiRestrictions", {}, key, sec)
+        if c2 != 200:
+            return jsonify(ok=False, error="Ogolaanshaha furaha lama hubin karo: " + _cx_err(c2, r)), 400
+        perm.update(wd=bool(r.get("enableWithdrawals")), ip=bool(r.get("ipRestrict")), spot=bool(r.get("enableSpotAndMarginTrading", perm["spot"])))
+        if perm["wd"]:
+            return jsonify(ok=False, error="Furahan Withdraw waa SHIDAN YAHAY → ammaan ma aha. Binance › API Management → Withdraw dami, kadib isku day."), 400
+    now = time.time()
+    with db() as con:
+        c0 = _kv_get(con, "cxcfg:" + acc) or {}
+        c0.update(tk=_bin_enc(json.dumps({"k": key, "s": sec})), ok=1, net=net, perm=perm, since=int(now))
+        _kv_put(con, "cxcfg:" + acc, c0)
+    _CX_BAL.pop(acc, None)
+    return jsonify(ok=True, net=net, perm=perm)
+
+
+@app.post("/api/cx/disconnect")
+@login_required
+def api_cx_disconnect():
+    u = request.user
+    if not _bin_can(u):
+        return jsonify(ok=False, error="Ogolaansho ma lihid."), 403
+    acc = u["account"]   # Binance = account-ka qofka (admin: kiisa)
+    with db() as con:
+        c0 = _kv_get(con, "cxcfg:" + acc) or {}
+        for k in ("tk", "ok", "perm", "since"):
+            c0.pop(k, None)
+        if isinstance(c0.get("dca"), dict):
+            c0["dca"]["on"] = 0
+        _kv_put(con, "cxcfg:" + acc, c0)
+    _CX_BAL.pop(acc, None)
+    return jsonify(ok=True)
+
+
+@app.post("/api/cx/order")
+@login_required
+def api_cx_order():
+    u = request.user
+    if not _bin_can(u):
+        return jsonify(ok=False, error="Ogolaansho ma lihid."), 403
+    b = request.get_json(silent=True) or {}
+    acc = u["account"]   # Binance = account-ka qofka (admin: kiisa)
+    sym = str(b.get("sym") or "").upper()
+    side = "SELL" if b.get("side") == "SELL" else "BUY"
+    typ = "LIMIT" if b.get("type") == "LIMIT" else "MARKET"
+    if not re.fullmatch(r"[A-Z0-9]{2,16}USDT", sym):
+        return jsonify(ok=False, error="Lammaane USDT ah dooro."), 400
+    usdt = _cx_num(b.get("usdt"), 0, 1e7, 0)
+    qty = _cx_num(b.get("qty"), 0, 1e12, 0)
+    price = _cx_num(b.get("price"), 0, 1e9, 0)
+    with db() as con:
+        cfg = _cx_cfg(con, acc)
+    if not cfg.get("ok"):
+        return jsonify(ok=False, error="Binance lama xidhin."), 400
+    mx = float(cfg.get("maxord") or 0)
+    est = usdt if usdt > 0 else (qty * price if price > 0 else 0)
+    if side == "BUY" and mx > 0 and est > mx + 1e-9:
+        return jsonify(ok=False, error="Xadka amar kasta waa $" + ("%.0f" % mx) + " (SITIN)."), 400
+    ok, j = _cx_place(cfg, sym, side, typ, usdt=usdt, qty=qty, price=price, sell_all=bool(b.get("all")))
+    now = time.time()
+    if not ok:
+        return jsonify(ok=False, error=j), 400
+    q = float(j.get("executedQty") or 0)
+    cq = float(j.get("cummulativeQuoteQty") or 0)
+    o = {"t": int(now), "sym": sym, "side": side, "type": typ, "qty": q or float(j.get("origQty") or 0), "quote": cq,
+         "price": (cq / q) if q else float(j.get("price") or 0), "st": j.get("status", ""), "src": "GACAN", "id": j.get("orderId")}
+    with db() as con:
+        _cx_log_order(con, acc, o)
+    _CX_BAL.pop(acc, None)
+    return jsonify(ok=True, order=o)
+
+
+@app.post("/api/cx/config")
+@login_required
+def api_cx_config():
+    u = request.user
+    if not _bin_can(u):
+        return jsonify(ok=False, error="Ogolaansho ma lihid."), 403
+    b = request.get_json(silent=True) or {}
+    acc = u["account"]   # Binance = account-ka qofka (admin: kiisa)
+    with db() as con:
+        c0 = _kv_get(con, "cxcfg:" + acc) or {}
+        if "scan" in b:
+            c0["scan"] = 1 if b.get("scan") else 0
+        if "alert" in b:
+            c0["alert"] = 1 if b.get("alert") else 0
+        if isinstance(b.get("syms"), list):
+            c0["syms"] = [x for x in CX_SYMS if x in b["syms"]] or ["BTCUSDT"]
+        if "maxord" in b:
+            c0["maxord"] = round(_cx_num(b.get("maxord"), 0, 100000, 200), 2)
+        if isinstance(b.get("dca"), dict):
+            d0 = dict(CX_DEF["dca"], **(c0.get("dca") or {}))
+            x = b["dca"]
+            if "on" in x:
+                if x.get("on") and not c0.get("ok"):
+                    return jsonify(ok=False, error="Marka hore Binance ku xidh."), 400
+                d0["on"] = 1 if x.get("on") else 0
+                if d0["on"]:
+                    d0["note"] = ""
+            if x.get("sym") in CX_SYMS:
+                d0["sym"] = x["sym"]
+            if "amt" in x:
+                d0["amt"] = round(_cx_num(x.get("amt"), 5, 10000, 20), 2)
+            if x.get("per") in ("d", "w"):
+                d0["per"] = x["per"]
+            if "dow" in x:
+                d0["dow"] = int(_cx_num(x.get("dow"), 0, 6, 0))
+            if "hr" in x:
+                d0["hr"] = int(_cx_num(x.get("hr"), 0, 23, 9))
+            if "cap" in x:
+                d0["cap"] = round(_cx_num(x.get("cap"), 0, 1000000, 300), 2)
+            if x.get("reset"):
+                d0.update(spent=0, n=0, qty=0, last="", note="")
+            c0["dca"] = d0
+        if b.get("off_all"):
+            c0["dca"] = dict(CX_DEF["dca"], **(c0.get("dca") or {}))
+            c0["dca"]["on"] = 0
+        _kv_put(con, "cxcfg:" + acc, c0)
+    return jsonify(ok=True)
 
 
 def _ev_merge(con, acc, items, now):
@@ -8398,6 +9374,84 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
 .qtbl th{color:var(--ink3);font-size:9.5px}.qtbl td:first-child,.qtbl th:first-child{text-align:left}
 
 .qtst.s1.q15{background:rgba(38,166,91,.16)!important;color:#7ff0b0!important}
+
+/* ===== v13.19: ₿ BINANCE (spot) · 📅 DCA · 🔍 SCAN CRYPTO (MUUJI) ===== */
+#cxCard{position:relative;margin:4px 0 10px;border-radius:20px;border:2px solid #f0b90b;background:#0b0907;padding:16px;display:flex;align-items:center;gap:14px;cursor:pointer;
+  box-shadow:0 0 18px rgba(240,185,11,.35),inset 0 0 14px rgba(240,185,11,.08);animation:cxGlow 2.8s ease-in-out infinite}
+@keyframes cxGlow{50%{box-shadow:0 0 26px rgba(240,185,11,.55),inset 0 0 14px rgba(240,185,11,.12)}}
+#cxCard .bt{font-size:34px;font-weight:900;color:#f0b90b;flex:none;width:34px;text-align:center}
+#cxCard .tx{flex:1;min-width:0}#cxCard .tx b{display:block;font-size:17px;letter-spacing:.06em;color:#fff}
+#cxCard .tx small{display:block;font-size:11.5px;color:#9aa4b2;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#cxCard .rt{text-align:right;flex:none}#cxCard .rt b{display:block;font-size:19px;font-weight:900}#cxCard .rt small{font-size:11.5px;font-weight:800}
+.cxmini{display:flex;gap:8px;margin:0 0 14px}
+.cxmini div{flex:1;min-width:0;border:1px solid var(--line);border-radius:14px;padding:9px 11px;background:var(--surface)}
+.cxmini span{display:block;font-size:10px;font-weight:800;color:var(--ink3);letter-spacing:.08em}
+.cxmini b{display:block;font-size:14px}.cxmini small{display:block;font-size:11px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cx{padding-bottom:20px}
+.cxh{display:flex;align-items:center;gap:10px;margin:4px 0 10px}
+.cxlg{width:34px;height:34px;border-radius:50%;background:#f0b90b;color:#111;font-weight:900;font-size:20px;display:flex;align-items:center;justify-content:center;flex:none}
+.cxh h2{font-size:18px;font-weight:900;letter-spacing:.04em;margin:0}
+.cxh small{display:block;font-size:11px;color:var(--ink3);margin-top:-2px}
+.cxpill{margin-left:auto;font-size:11px;font-weight:800;padding:5px 10px;border-radius:99px;border:1px solid var(--line);color:var(--ink3);white-space:nowrap}
+.cxpill.g{color:#8ff0b9;border-color:rgba(25,194,107,.5);background:rgba(25,194,107,.1)}
+.cxpill.r{color:#ff9a9d;border-color:rgba(229,72,77,.5);background:rgba(229,72,77,.1)}
+.cxcard{border-color:rgba(240,185,11,.45)!important}
+.cxnet button.on{border-color:#f0b90b!important;color:#f0b90b!important;background:rgba(240,185,11,.1)!important;box-shadow:0 0 10px rgba(240,185,11,.25)!important}
+.cxstep{display:flex;gap:10px;align-items:flex-start;margin:8px 0}
+.cxstep>b{width:22px;height:22px;border-radius:50%;background:#f0b90b;color:#111;font-size:12px;display:flex;align-items:center;justify-content:center;flex:none}
+.cxstep p{margin:0;font-size:12.5px;line-height:1.45;color:var(--ink2)}
+.cxin{margin-top:8px;font-family:ui-monospace,monospace;font-size:13px}
+.cxgo{width:100%;height:50px;border:0;border-radius:14px;background:#f0b90b;color:#111;font-weight:900;font-size:15px;letter-spacing:.06em;cursor:pointer;margin-top:10px;box-shadow:0 6px 20px rgba(240,185,11,.25)}
+.cxgo:disabled{opacity:.55}
+.cxgo.b{background:linear-gradient(135deg,#19c26b,#0f9a55);color:#fff;box-shadow:0 6px 20px rgba(25,194,107,.3)}
+.cxgo.s{background:linear-gradient(135deg,#e5484d,#b8323a);color:#fff;box-shadow:0 6px 20px rgba(229,72,77,.3)}
+.cxmu{border-color:rgba(240,185,11,.55)!important;background:rgba(240,185,11,.05)!important;margin-top:10px}
+.cxseg button{font-size:11.5px!important;padding:9px 2px!important}
+.cxtot canvas{display:block;width:100%;height:auto;margin-top:8px}
+.cxbig{display:flex;align-items:baseline;gap:10px}.cxbig b{font-size:30px;font-weight:900}.cxbig span{font-size:14px;font-weight:800}
+.cxrow{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+.cxrow:last-child{border-bottom:0}
+.cxrow>div{min-width:0}.cxrow b{display:block;font-size:14px}.cxrow small{display:block;font-size:11.5px;color:var(--ink3)}
+.cxrow .r{margin-left:auto;text-align:right}
+.cxic{width:32px;height:32px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-weight:900;font-size:14px;color:#111;flex:none}
+.cxbb{display:flex;gap:8px;margin:0 0 12px}
+.cxbb button{flex:1;height:48px;border-radius:14px;font-weight:900;font-size:15px;cursor:pointer}
+.cxbuy{background:rgba(38,166,91,.18);color:#7ff0b0;border:1px solid #26a65b}
+.cxsell{background:rgba(224,57,62,.15);color:#ff9a9d;border:1px solid #e0393e}
+.cxdis{border-color:#5a5a5a!important;color:#c3c2b7!important;background:transparent!important}
+.cxside button.on.b{border-color:#26a65b!important;color:#7ff0b0!important;background:rgba(38,166,91,.16)!important;box-shadow:none!important}
+.cxside button.on.s{border-color:#e0393e!important;color:#ff9a9d!important;background:rgba(224,57,62,.14)!important;box-shadow:none!important}
+.cxchips{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 6px}
+.cxchips button{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--surface);color:var(--ink2);border-radius:99px;padding:5px 11px 5px 5px;font-weight:800;font-size:12.5px;cursor:pointer}
+.cxchips button .cxic{width:22px;height:22px;font-size:11px}
+#cxAmQ button,#cxQtQ button{padding:6px 12px}
+.cxchips button.on{border-color:#f0b90b;color:#fff;background:rgba(240,185,11,.12)}
+.cxpx{display:flex;align-items:baseline;gap:8px;margin:8px 0 2px}.cxpx span{font-size:11px;color:var(--ink3);font-weight:800}.cxpx b{font-size:22px;font-weight:900}.cxpx em{font-style:normal;font-size:12px;font-weight:800}
+.cxsel{width:auto!important;min-width:130px}
+.cxdst{display:grid;grid-template-columns:1fr;gap:0;margin-top:8px}
+.cxdst div{display:grid;grid-template-columns:1fr auto;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px}
+.cxdst span{color:var(--ink2)}.cxdst b{text-align:right}.cxdst small{grid-column:1/3;font-size:11px;color:var(--ink3)}
+.cxlock{opacity:.55;cursor:not-allowed}
+.cxlk{border:1px dashed #f0b90b;border-radius:12px;padding:10px;font-size:12px;color:#ffd966;margin-top:8px;background:rgba(240,185,11,.06);line-height:1.45}
+.cxoff{width:100%;height:48px;border-radius:14px;background:rgba(224,57,62,.15);color:#ff9a9d;border:1px solid #e0393e;font-weight:900;font-size:14px;cursor:pointer;margin-top:10px}
+.cxal{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+.cxal:last-child{border-bottom:0}.cxal span{font-size:11px;color:var(--ink3)}.cxal em{grid-column:1/3;font-style:normal;font-weight:700}
+.cxcf{display:flex;flex-direction:column;gap:5px}.cxcf div{display:flex;justify-content:space-between;gap:10px;background:#211c2e;border:1px solid #3a3150;border-radius:10px;padding:8px 10px;font-size:13px}
+.cfm .bt .g{background:rgba(25,194,107,.2);border:1px solid #19c26b;color:#bbf7d0}
+.appbar button.cxnav.on{color:#f0b90b}
+/* Scan: ₿ crypto */
+.qtflt{display:flex;gap:6px;margin:0 0 10px}
+.qtflt button{flex:1;border:1px solid var(--line);border-radius:12px;padding:8px 6px;background:var(--surface);color:var(--ink2);font-weight:800;font-size:12px;cursor:pointer}
+.qtflt button.on{border-color:#1ea7ff;color:#fff;background:rgba(30,167,255,.14)}
+.qtflt button[data-v="cr"]{color:#f0b90b}.qtflt button[data-v="cr"].on{border-color:#f0b90b;background:rgba(240,185,11,.1)}
+.qttag{font-size:9px;font-weight:900;padding:2px 6px;border-radius:6px;margin-left:5px;vertical-align:middle;white-space:nowrap}
+.qttag.cr{background:#3a2c08;color:#f0b90b}
+.qtrow.cr{grid-template-columns:116px 1fr auto}
+.qtcxa{display:flex;gap:8px;margin-top:8px}
+.qtcxa button{flex:1;height:44px;border-radius:12px;font-weight:900;font-size:13.5px;cursor:pointer}
+/* nav: 11 badhan · shaashad yar */
+@media(max-width:430px){.appbar button{font-size:8.4px;letter-spacing:-.02em}.appbar svg{width:19px;height:19px}}
+@media(max-width:380px){.appbar button{font-size:7.6px}.appbar svg{width:18px;height:18px}}
 </style></head><body>
 
 <div class="offban" id="offBan" hidden><b id="offBanT">KHADKA WAA GO'AY · DAAWASHO OO KELIYA</b><small id="offBanS">—</small></div>   <!-- v13.5: 📴 -->
@@ -8471,6 +9525,12 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
       <div class="tx"><b>CHART SCANNER</b><small>AI-POWERED TRADE ANALYSIS</small></div><div class="go"></div><div class="dots"><i class="on"></i><i></i><i></i></div>
     </div>
     <div class="qtmini" id="qtMini"></div>
+
+    <!-- v13.19: ₿ BINANCE -->
+    <div id="cxCard" role="button" tabindex="0" aria-label="Binance">
+      <div class="bt">₿</div><div class="tx"><b>BINANCE · SPOT</b><small id="cxCS">—</small></div><div class="rt"><b id="cxCV">—</b><small id="cxCC">—</small></div>
+    </div>
+    <div class="cxmini" id="cxMini"></div>
 
     <!-- v13.14: ⚡ BINARY -->
     <div id="binCard" hidden role="button" tabindex="0" aria-label="Binary">
@@ -9401,8 +10461,9 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
   <!-- ============ v13.15: 🔍 CHART SCANNER · 📌 QORSHE TOOS ============ -->
   <section class="pane" id="pScan"><div class="qt">
     <div class="qth"><svg viewBox="0 0 24 24"><path d="M4 4v16h16"/><path d="M8 16v-4M12 16V8M16 16v-6"/></svg>
-      <div><h2>CHART SCANNER</h2><small>AI falanqeyn · xog dhab ah (MT5)</small></div><span class="qtpill" id="qtPill">—</span></div>
+      <div><h2>CHART SCANNER</h2><small>AI falanqeyn · MT5 + ₿ Binance</small></div><span class="qtpill" id="qtPill">—</span></div>
     <div class="qtseg" id="qtSeg"><button type="button" data-v="scan" class="on">🔍 SCAN</button><button type="button" data-v="plan">📌 QORSHE<b id="qtPN" hidden></b></button><button type="button" data-v="set">⚙ SITIN</button></div>
+    <div class="qtflt" id="qtFlt"><button type="button" data-v="all" class="on">ALL</button><button type="button" data-v="mt">MT5</button><button type="button" data-v="cr">₿ CRYPTO</button></div>
 
     <div id="qtVScan">
       <div class="qtmode" id="qtMode"><button type="button" data-m="live" class="on">⚡ LIVE<em>MT5 xog dhab · sax ah</em></button><button type="button" data-m="shot">📷 SAWIR<em>screenshot · qiyaas</em></button></div>
@@ -9410,14 +10471,15 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
         <div class="card" id="qtSG"></div>
         <div class="card"><p class="qtk">LAMMAANAYAASHA <em id="qtScT">—</em></p><div id="qtRows"><p class="qtnote">Xog weli ma jirto · EA v72.6 ayaa 15 daqiiqo kasta soo diraya.</p></div></div>
         <button class="qtgo" id="qtGo" type="button">🔍 SCAN HADDA</button>
-        <p class="qtnote" id="qtGoN">Bot-ka (VPS) ayaa xogta dhabta ah soo diraya · 10–40 ilbiriqsi</p>
+        <p class="qtnote" id="qtGoN">Bot-ka (VPS) ayaa xogta MT5 soo diraya · ₿ crypto: server-ka (Binance) · 10–40 ilbiriqsi</p>
         <div id="qtRes" hidden>
           <div class="card qtcv" style="margin-top:10px"><div class="qtcvh"><span id="qtRSym">—</span><span id="qtRT">—</span></div><canvas id="qtCv" width="760" height="480"></canvas></div>
           <div class="card"><div class="qtbias"><div class="tag n" id="qtBias">—</div><div class="bx"><b id="qtBiasT">—</b><div class="qtnote" style="margin:0">Isku raac: <b id="qtScore">—</b></div><div class="qtbar"><i id="qtScoreB"></i></div></div></div></div>
           <div class="card qtchk" id="qtChk"></div>
           <div class="card" id="qtPlanC"><p class="qtk">FIKRAD TRADE <em>falanqeyn</em></p><div class="qtlv" id="qtLv"></div><p class="qtnote" id="qtRR"></p></div>
-          <div class="card"><p class="qtk">🤖 SHARAX <em id="qtAiSrc">—</em></p><p class="qtai" id="qtAi">—</p><button type="button" class="qtsm" id="qtAiB">🤖 AI sharax</button><p class="qtnote" id="qtAiN"></p></div>
-          <div class="card qthon"><p class="qtk" style="color:#ffd27a">DAACADNIMO</p><p>Setup trend + zone (dahab 31 bil): <b>1,211 jeer · guul 35% · PF 1.01</b>. QORSHE TOOS: XAQIIJIN <b>PF 1.18</b> · M15 + CHoCH <b>PF 1.21 · 276 trade</b> — lama caddeyn. Scanner-ku <b>indho</b> ayuu ku siiyaa; trade ma furo.</p></div>
+          <div class="card"><p class="qtk">🤖 SHARAX <em id="qtAiSrc">—</em></p><p class="qtai" id="qtAi">—</p><button type="button" class="qtsm" id="qtAiB">🤖 AI sharax</button><p class="qtnote" id="qtAiN"></p>
+            <div class="qtcxa" id="qtCxA" hidden><button type="button" class="cxsell" id="qtCxD" style="background:#2a2440;color:#fff;border-color:#3a3150">🔔 Digniin</button><button type="button" class="cxbuy" id="qtCxB">₿ IIBSO gacan</button></div></div>
+          <div class="card qthon"><p class="qtk" style="color:#ffd27a">DAACADNIMO</p><p>Setup trend + zone (dahab 31 bil): <b>1,211 jeer · guul 35% · PF 1.01</b>. QORSHE TOOS: XAQIIJIN <b>PF 1.18</b> · M15 + CHoCH <b>PF 1.21 · 276 trade</b> — lama caddeyn. Scanner-ku <b>indho</b> ayuu ku siiyaa; trade ma furo. <b style="color:#f0b90b">₿ Crypto</b> (BTC 21 bil): PF 0.76 → <b>MUUJI oo keliya</b> · trade toos ah ma jiro.</p></div>
         </div>
       </div>
       <div id="qtShotBox" hidden>
@@ -9432,6 +10494,7 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
 
     <div id="qtVPlan" hidden>
       <div class="qtstats" id="qtStats"></div>
+      <p class="qtnote" id="qtCxN" hidden style="margin:-4px 0 10px">₿ natiijada crypto waa <b>virtual</b> (signal CHoCH → TP / SL) · lacag lama gelin.</p>
       <div id="qtPlans"></div>
       <p class="qtnote">Qorshe kasta: xogta scan-ka + 3 sawir (SCAN · GELITAAN · XIDH) · riix si aad u furto.</p>
     </div>
@@ -9472,6 +10535,90 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
       <div class="card qthon"><p>Tijaabo dahab 31 bil: M15 + CHoCH <b>PF 1.21</b> → + RSI · ★ lot · BE 1.5R <b>PF 1.36 · DD nus</b>. Tijaabooyin badan isla xogta → qayb waa nasiib. Forex (EURUSD · GBPUSD · USDJPY …) <b>lama tijaabin</b> → DEMO marka hore, kadib QORSHE › natiijada lammaane kasta eeg.</p></div>
     </div>
   </div></section>
+  <!-- ============ v13.19: ₿ BINANCE (spot) · 📅 DCA · 🔍 SCAN CRYPTO (MUUJI) ============ -->
+  <section class="pane" id="pBinance"><div class="cx">
+    <div class="cxh"><div class="cxlg">₿</div>
+      <div><h2>BINANCE</h2><small id="cxSub">Spot · lama xidhin</small></div><span class="cxpill" id="cxPill">—</span></div>
+
+    <!-- lama xidhin -->
+    <div id="cxCon" hidden>
+      <div class="card cxcard"><p class="qtk">₿ KU XIDH BINANCE <em>hal mar oo keliya</em></p>
+        <div class="qtmode cxnet" id="cxNet"><button type="button" data-v="test" class="on">🧪 TESTNET<em>lacag been ah · tijaabo</em></button><button type="button" data-v="real">💰 REAL<em>lacag dhab ah</em></button></div>
+        <div class="cxstep"><b>1</b><p id="cxStep1">testnet.binance.vision → <b>Log in with GitHub</b> → <b>Generate HMAC_SHA256 Key</b> → koobi API Key + Secret</p></div>
+        <div class="cxstep"><b>2</b><p>Ogolaansho: <b>Reading ✓ · Spot Trading ✓ · Withdraw ✕</b> (REAL: Withdraw shidan → waa la diidaa)</p></div>
+        <div class="cxstep"><b>3</b><p>REAL: <b>Restrict access to trusted IPs</b> → IP-ga server-ka (Railway) geli · ammaan dheeraad ah</p></div>
+        <input id="cxKey" type="text" autocomplete="off" spellcheck="false" placeholder="API Key" class="cxin">
+        <input id="cxSec" type="password" autocomplete="off" spellcheck="false" placeholder="Secret Key" class="cxin">
+        <button class="cxgo" id="cxConB" type="button">KU XIDH</button>
+        <p class="qtnote" id="cxConN"></p></div>
+      <div class="card"><p style="font-size:12.5px;line-height:1.5;margin:0">🔐 Furaha waxaa haya <b>server-ka</b> (encrypted) · app-ku dib uma muujiyo · <b style="color:#ff9a9d">Withdraw haddii uu shidan yahay → waa la diidaa</b>. Railway region: <b>Yurub / Aasiya</b> (Mareykan → Binance 451).</p></div>
+      <div class="card cxmu"><p style="font-size:12.5px;line-height:1.5;margin:0"><b style="color:#f0b90b">🔍 SCAN CRYPTO</b> wuu shaqeeyaa xitaa adigoon xidhin (xog dadweyne) → tab <b>Scan › ₿ CRYPTO</b>.</p></div>
+    </div>
+
+    <!-- xidhan -->
+    <div id="cxMain" hidden>
+      <div class="qtseg cxseg" id="cxSeg"><button type="button" data-v="h" class="on">💼 HANTI</button><button type="button" data-v="t">⇄ IIBSO</button><button type="button" data-v="b">🤖 BOT</button><button type="button" data-v="l">☰ TAARIIKH</button></div>
+
+      <div id="cxVh">
+        <div class="card cxtot"><p class="qtk">HANTIDA GUUD <em id="cxTotT">—</em></p><div class="cxbig"><b id="cxTot">—</b><span id="cxChg">—</span></div><canvas id="cxSpark" width="760" height="150"></canvas></div>
+        <div class="card" id="cxBals"><p class="qtnote" style="margin:0">—</p></div>
+        <div class="cxbb"><button type="button" class="cxbuy" id="cxGoB">IIBSO</button><button type="button" class="cxsell" id="cxGoS">IIBI</button></div>
+        <div class="card" id="cxPerm"></div>
+        <button type="button" class="qtsm cxdis" id="cxDis">⏏ Ka goo Binance</button>
+      </div>
+
+      <div id="cxVt" hidden>
+        <div class="card">
+          <div class="qtmode cxside" id="cxSide"><button type="button" data-v="BUY" class="on b">IIBSO · BUY</button><button type="button" data-v="SELL" class="s">IIBI · SELL</button></div>
+          <p class="qtk">LAMMAANE</p><div class="cxchips" id="cxSym"></div>
+          <div class="cxpx"><span id="cxPxS">—</span><b id="cxPx">—</b><em id="cxPxC">—</em></div>
+          <div class="qtmode" id="cxTyp" style="margin-top:8px"><button type="button" data-v="MARKET" class="on">MARKET<em>hadda · qiimaha suuqa</em></button><button type="button" data-v="LIMIT">LIMIT<em>qiime aad dooratay</em></button></div>
+          <div id="cxPrW" hidden><p class="qtk">QIIMAHA (LIMIT) <em>USDT</em></p><input id="cxPr" type="number" inputmode="decimal" step="any" class="cxin" placeholder="0.00"></div>
+          <div id="cxAmW"><p class="qtk">LACAG <em>USDT</em></p><input id="cxAm" type="number" inputmode="decimal" step="any" class="cxin" placeholder="20"><div class="cxchips" id="cxAmQ"><button type="button" data-v="10">$10</button><button type="button" data-v="20">$20</button><button type="button" data-v="50">$50</button><button type="button" data-v="100">$100</button></div></div>
+          <div id="cxQtW" hidden><p class="qtk">TIRADA <em id="cxQtU">—</em></p><input id="cxQt" type="number" inputmode="decimal" step="any" class="cxin" placeholder="0.0"><div class="cxchips" id="cxQtQ"><button type="button" data-v="0.25">25%</button><button type="button" data-v="0.5">50%</button><button type="button" data-v="1">DHAMMAAN</button></div></div>
+          <p class="qtnote" id="cxEst">—</p>
+          <button class="cxgo" id="cxOrd" type="button">IIBSO</button>
+          <p class="qtnote" id="cxOrdN"></p></div>
+        <div class="card qthon"><p>Amar kasta waa <b>xaqiijin</b> ka hor · xadka amar kasta (BOT › XADKA) · spot oo keliya → <b>SELL</b> = iibi wixii aad haysato (short ma jiro).</p></div>
+      </div>
+
+      <div id="cxVb" hidden>
+        <div class="card">
+          <div class="qtfr"><div><b>📅 DCA</b><small id="cxDcaS">—</small></div><div class="qtsw" id="cxDcaOn"><i></i></div></div>
+          <p class="qtk" style="margin-top:10px">LAMMAANE</p><div class="cxchips" id="cxDcaSym"></div>
+          <div class="qtfr"><div>Lacag mar kasta<small>USDT</small></div><div class="qtstp" data-k="amt" data-lo="5" data-hi="10000" data-st="5"><button type="button">−</button><b>—</b><button type="button">+</button></div></div>
+          <div class="qtfr" style="flex-wrap:wrap"><div style="width:100%">Goorma</div><div class="qtmode" id="cxDcaPer" style="margin:0;width:100%"><button type="button" data-v="d">MAALIN KASTA</button><button type="button" data-v="w">TODDOBAAD KASTA</button></div></div>
+          <div class="qtfr" id="cxDowR"><div>Maalinta</div><select id="cxDcaDow" class="cxsel"></select></div>
+          <div class="qtfr"><div>Saacadda<small>UTC</small></div><div class="qtstp" data-k="hr" data-lo="0" data-hi="23" data-st="1"><button type="button">−</button><b>—</b><button type="button">+</button></div></div>
+          <div class="qtfr"><div>Xadka lacagta guud<small>marka la gaadho → DCA wuu istaagaa · 0 = xad la'aan</small></div><div class="qtstp" data-k="cap" data-lo="0" data-hi="100000" data-st="50"><button type="button">−</button><b>—</b><button type="button">+</button></div></div>
+          <div class="cxdst" id="cxDcaSt"></div>
+          <button class="cxgo" id="cxDcaSave" type="button">KAYDI DCA</button><p class="qtnote" id="cxDcaN"></p>
+        </div>
+        <div class="card"><div class="qtfr" style="border:0"><div><b>🪜 GRID EMA ₿</b><small>1% · EMA H1 · BUY oo keliya (spot)</small></div><div class="qtsw cxlock"><i></i></div></div>
+          <div class="cxlk" id="cxGridL">🔒 Waa xidhan yahay — tijaabo BUY-only ayaa sugaysa. Waxaa la furaa oo keliya haddii tijaabadu faa'iido keento.</div></div>
+        <div class="card"><p class="qtk">🔍 SCAN CRYPTO <em>₿ MUUJI · trade ma jiro</em></p>
+          <div class="qtfr"><div>Scan crypto<small>M15 kasta · tab Scan › ₿ CRYPTO</small></div><div class="qtsw" id="cxScOn"><i></i></div></div>
+          <div class="cxchips" id="cxScSym" style="margin-top:8px"></div>
+          <div class="qtfr" style="border:0"><div>🔔 Digniin<small>qorshe cusub · taabasho · signal · TP / SL (virtual)</small></div><div class="qtsw" id="cxAlOn"><i></i></div></div></div>
+        <div class="card"><p class="qtk" style="color:#ff9a9d">🛑 XADKA AMMAANKA</p>
+          <div class="qtfr"><div>Lacag ugu badan amar kasta<small>IIBSO gacan · 0 = xad la'aan</small></div><div class="qtstp" data-k="maxord" data-lo="0" data-hi="100000" data-st="50"><button type="button">−</button><b>—</b><button type="button">+</button></div></div>
+          <div class="qtfr"><div>DCA xadka guud<small>kor ku eeg</small></div><b id="cxCapV">—</b></div>
+          <div class="qtfr" style="border:0"><div>Withdraw<small>furaha</small></div><b style="color:#7ff0b0">✕ (sax)</b></div>
+          <button class="cxgo" id="cxSetSave" type="button" style="background:#2a2440;color:#fff;box-shadow:none">KAYDI SITINKA</button>
+          <button type="button" class="cxoff" id="cxOff">⏻ DAMI DHAMMAAN BOT-YADA</button><p class="qtnote" id="cxSetN"></p></div>
+      </div>
+
+      <div id="cxVl" hidden>
+        <div class="card"><p class="qtk">☰ AMARRADA <em id="cxOrdT">—</em></p><div id="cxOrds"></div></div>
+        <div class="card"><p class="qtk">🔔 DIGNIIN <em>scan crypto · DCA</em></p><div id="cxAlerts"></div></div>
+        <div class="card"><p class="qtk">🔍 ₿ MUUJI · NATIIJO VIRTUAL <em>trade ma jiro</em></p><div class="qtstats" id="cxVst"></div>
+          <p class="qtnote">Signal kasta (CHoCH M5) waxaa lagu xisaabiyaa TP / SL virtual ah · lacag lama gelin · tijaabo BTC 21 bil: PF 0.76.</p></div>
+      </div>
+    </div>
+
+    <!-- scan crypto: had iyo jeer -->
+    <div class="card cxmu" id="cxMuC"><p style="font-size:12.5px;line-height:1.5;margin:0"><b style="color:#f0b90b">₿ MUUJI</b> = scan + qorshe + digniin oo keliya. Trade toos ah crypto <b>ma jiro</b> (tijaabo BTC: PF 0.76). <span id="cxMuN"></span></p></div>
+  </div></section>
 
   <div class="qtsheet" id="qtSheet" hidden></div>
   <div class="qtfull" id="qtFull" hidden><div class="qtfs" id="qtFS"><canvas id="qtFC" width="760" height="640"></canvas><img id="qtFI" alt="" hidden><div class="hd"><b id="qtFH">—</b><span><button type="button" class="qtx" id="qtFV" hidden>📷 MT5</button><button type="button" class="qtx" id="qtFR" title="jiif / taag">⟲</button><button type="button" class="qtx" id="qtFX">✕</button></span></div><p id="qtFN"></p></div></div>
@@ -9482,6 +10629,8 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
     <svg viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1Z"/></svg>Guud</button>
   <button data-tab="Scan">   <!-- v13.15 -->
     <svg viewBox="0 0 24 24"><path d="M4 4v16h16"/><path d="M8 16v-4M12 16V8M16 16v-6"/></svg>Scan</button>
+  <button data-tab="Binance" class="cxnav">   <!-- v13.19 -->
+    <svg viewBox="0 0 24 24"><path d="M8 4v16M11 4v2M11 18v2"/><path d="M6 6h7a3 3 0 0 1 0 6H6M6 12h8a3 3 0 0 1 0 6H6"/></svg>Binance</button>
   <button data-tab="Trade">
     <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg>Trade</button>
   <button data-tab="Binary" class="bnnav">   <!-- v13.14 -->
@@ -14123,6 +15272,7 @@ function tab(n){
   if(n==="Analiis") loadLevels(true);                 // v12.3
   if(n==="Binary"){ try{ bnLoad(); }catch(e){} }      // v13.14
   if(n==="Scan"){ try{ qtLoad(); }catch(e){} }         // v13.15
+  if(n==="Binance"){ try{ cxLoad(); }catch(e){} }      // v13.19
   try{ localStorage.setItem("mp_tab",n); }catch(e){}
   scrollTo({top:0,behavior:"instant"});
 }
@@ -14336,7 +15486,10 @@ function bnChart(){
 })();
 
 /* ======================== v13.15: 🔍 CHART SCANNER · 📌 QORSHE TOOS (EA v72.6) ======================== */
-const QT={st:null, live:null, sel:"", view:"scan", mode:"live", busy:false, reqAt:0, shot:"", ed:null, dirty:false, pl:null, t:0};
+const QT={st:null, live:null, sel:"", view:"scan", mode:"live", busy:false, reqAt:0, shot:"", ed:null, dirty:false, pl:null, t:0, flt:"all"};
+function qtFok(x){ return QT.flt==="all" || (QT.flt==="cr")===!!(x&&x.cr); }   /* v13.19: ₿ */
+function qtPid(p){ return p.cr?("₿"+(p.id-1000000)):String(p.id); }
+function qtCrTag(){ return '<span class="qttag cr">₿ MUUJI</span>'; }
 function qtE(id){ return document.getElementById(id); }
 function qtQ(){ return accSel?("account="+encodeURIComponent(accSel.value)):""; }
 async function qtGet(u){
@@ -14354,7 +15507,7 @@ function qtAr(v){ return v>0?"▲":(v<0?"▼":"—"); }
 function qtTm(t){ if(!t) return "—"; const d=new Date(t*1000); return String(d.getUTCDate()).padStart(2,"0")+" "+J2_MS[d.getUTCMonth()]+" "+String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0"); }
 function qtHM(t){ if(!t) return "—"; const d=new Date(t*1000); return String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0"); }
 function qtStC(st){ return "qtst s"+(st||0); }
-function qtStL(p){ return (p.st===1 && p.q15)?((p.md===1?"M5":"M15")+" ✓"):qtStN(p.st); }   /* v13.16 · v13.17 */
+function qtStL(p){ if(p.cr && p.st===2) return "SIGNAL ₿"; return (p.st===1 && p.q15)?((p.md===1?"M5":"M15")+" ✓"):qtStN(p.st); }   /* v13.16 · v13.17 · v13.19 */
 const QT_MDN=["TOOS · M15 xidhid","XAQIIJIN · M5 xidhid + CHoCH M5","M15 xidhid + CHoCH M5"];
 function qtStN(st){ const L=(QT.st&&QT.st.st)||["SUGAYA","TAABTAY","LA GALAY","TP","SL","DHACAY","KA CARAY","LA JOOJIYAY","XIDHAN"]; return L[st]||"—"; }
 
@@ -14383,11 +15536,13 @@ function qtPaint(){
   const p=qtE("qtPill"), on=d.cfg && d.cfg.on;
   p.className="qtpill"+(on?" on":""); p.textContent=on?("QORSHE ON · "+(d.stats.wait||0)+" sugaya"):"QORSHE OFF";
   const pn=qtE("qtPN"); const w=(d.stats.wait||0)+(d.stats.open||0); pn.hidden=!w; pn.textContent=w;
-  qtE("qtScT").textContent=d.scan_ts?("scan "+qtHM(d.scan_ts+0)+" · "+(d.scans||[]).length+" lammaane"):"—";
+  const ts=QT.flt==="cr"?d.cx_ts:(QT.flt==="mt"?d.scan_ts:Math.max(d.scan_ts||0,d.cx_ts||0));
+  qtE("qtScT").textContent=ts?("scan "+qtHM(Math.floor(ts))+" · "+(d.scans||[]).filter(qtFok).length+" lammaane"):"—";
   qtRows(); qtSG(); qtPlans(); qtSetPaint();
 }
 function qtSG(){
   const s=(QT.st&&QT.st.sum)||{}, el=qtE("qtSG"); if(!el) return;
+  el.hidden=(QT.flt==="cr");   /* v13.19 */
   const g=["OFF","DHEXE","ADAG"][s.scg]; const sg=s.sg||[0,0,0];
   el.innerHTML='<p class="qtk">🔍 SCAN ALBAAB · GRID TREND EMA <em>'+(g||"—")+'</em></p>'
     +(s.scg?('<div class="qtch" style="margin-bottom:6px"><i class="'+(sg[0]>0?"u":(sg[0]<0?"d":""))+'">M15 '+qtAr(sg[0])+'</i><i class="'+(sg[1]>0?"u":(sg[1]<0?"d":""))+'">H1 '+qtAr(sg[1])+'</i>'
@@ -14396,12 +15551,13 @@ function qtSG(){
      :'<p class="qtnote" style="margin:0">Albaabku waa damman · grid-ku M15 oo keliya ayuu eegaa.</p>');
 }
 function qtRows(){
-  const L=(QT.st&&QT.st.scans)||[], box=qtE("qtRows"); if(!L.length) return;
+  const L=((QT.st&&QT.st.scans)||[]).filter(qtFok), box=qtE("qtRows");
+  if(!L.length){ box.innerHTML='<p class="qtnote">'+(QT.flt==="cr"?((QT.st&&QT.st.cx===0)?"₿ Scan crypto waa damsan · Binance › BOT › SCAN CRYPTO.":"₿ Scan crypto weli ma dhicin · server-ka ayaa M15 kasta scan gareeya · riix 🔍 SCAN HADDA."):"Xog weli ma jirto · EA v72.6 ayaa 15 daqiiqo kasta soo diraya.")+'</p>'; return; }
   const lv=QT.live?QT.live.list:[];
   box.innerHTML=L.map(r=>{
     const tr=r.tr||[0,0,0], cl=r.res===1?((tr[0]>0)?"b":"s"):"n";
     const has=lv.some(x=>x.sym===r.sym);
-    return '<div class="qtrow'+(QT.sel===r.sym?" sel":"")+'" data-s="'+esc(r.sym)+'"><b>'+esc(r.sym)+(r.t8?"":' <small style="color:var(--ink3)">ⓘ</small>')+'</b>'
+    return '<div class="qtrow'+(QT.sel===r.sym?" sel":"")+'" data-s="'+esc(r.sym)+'"><b>'+esc(r.sym)+(r.cr?'<br><span class="qttag cr" style="margin:0">₿ MUUJI</span>':(r.t8?"":' <small style="color:var(--ink3)">ⓘ</small>'))+'</b>'
       +'<div class="qtch">'+["M15","H1","H4"].map((n,i)=>'<i class="'+(tr[i]>0?"u":(tr[i]<0?"d":""))+'">'+n+" "+qtAr(tr[i])+'</i>').join("")+(has?'<i>📸</i>':'')+'</div>'
       +'<span class="qtres '+cl+'">'+esc(r.txt||"—")+'</span></div>';
   }).join("");
@@ -14411,16 +15567,18 @@ async function qtScanNow(){
   if(QT.busy) return;
   const b=qtE("qtGo"); QT.busy=true; b.disabled=true; b.textContent="🔍 SCAN-gareynaya…";
   const t0=Date.now()/1000; const r=await qtPost("/api/qt/scan",{});
-  if(!r.ok){ QT.busy=false; b.disabled=false; b.textContent="🔍 SCAN HADDA"; qtE("qtGoN").textContent=r.error||"Lama dirin."; return; }
-  QT.reqAt=r.at||t0; qtE("qtGoN").textContent="Amarka waa la diray · bot-ka (VPS) ayaa xogta soo diraya…";
+  const cro=QT.flt==="cr";   /* v13.19: ₿ crypto -> server-ka (EA looma baahna) */
+  if(!r.ok && !cro){ QT.busy=false; b.disabled=false; b.textContent="🔍 SCAN HADDA"; qtE("qtGoN").textContent=r.error||"Lama dirin."; return; }
+  QT.reqAt=r.at||t0; qtE("qtGoN").textContent=cro?"₿ server-ka ayaa Binance ka soo qaadaya xogta…":"Amarka waa la diray · bot-ka (VPS) ayaa xogta soo diraya…";
   let n=0;
   const poll=async()=>{
     n++; const d=await qtGet("/api/qt/live");
-    if(d && d.ok && d.ts>=QT.reqAt-1 && d.list && d.list.length){
+    const fl=d&&d.list?d.list.filter(qtFok):[];
+    if(d && d.ok && (cro?(d.cx_ts>=QT.reqAt-1):(d.ts>=QT.reqAt-1)) && fl.length){
       QT.live=d; QT.busy=false; b.disabled=false; b.textContent="🔍 SCAN HADDA";
-      qtE("qtGoN").textContent="✓ "+d.list.length+" lammaane · "+qtHM(Math.floor(d.ts));
-      if(!QT.sel || !d.list.some(x=>x.sym===QT.sel)){ const t=d.list.find(x=>x.t8)||d.list[0]; QT.sel=t.sym; }
-      qtRows(); qtShowRes(); return; }
+      qtE("qtGoN").textContent="✓ "+fl.length+" lammaane · "+qtHM(Math.floor(cro?d.cx_ts:d.ts));
+      if(!QT.sel || !fl.some(x=>x.sym===QT.sel)){ const t=fl.find(x=>x.t8||x.cr)||fl[0]; QT.sel=t.sym; }
+      qtLoad(); qtRows(); qtShowRes(); return; }
     if(n>=22){ QT.busy=false; b.disabled=false; b.textContent="🔍 SCAN HADDA"; qtE("qtGoN").textContent="Bot-ku weli ma jawaabin (VPS / EA v72.6 hubi) · xogtii u dambeysay ayaa muuqata.";
       if(d && d.ok && d.list && d.list.length){ QT.live=d; qtShowRes(); } return; }
     setTimeout(poll,3000);
@@ -14431,7 +15589,8 @@ function qtShowRes(){
   const L=QT.live?QT.live.list:[]; const it=L.find(x=>x.sym===QT.sel); const box=qtE("qtRes");
   if(!it || !it.f || !it.f.px){ box.hidden=true; return; }
   box.hidden=false; const f=it.f, dg=it.dg;
-  qtE("qtRSym").textContent=it.sym+" · M15 · LIVE"+(it.t8?"":" · muuji kaliya");
+  qtE("qtRSym").textContent=it.sym+" · M15 · "+(it.cr?"₿ Binance · MUUJI":("LIVE"+(it.t8?"":" · muuji kaliya")));
+  const ca=qtE("qtCxA"); if(ca) ca.hidden=!it.cr;   /* v13.19 */
   qtE("qtRT").textContent=qtTm(it.srv);
   qtLiveDraw(qtE("qtCv"),it);
   const bt=qtE("qtBias"); bt.textContent=f.bias; bt.className="tag "+(f.bias==="BUY"?"b":(f.bias==="SELL"?"s":"n"));
@@ -14521,13 +15680,15 @@ async function qtShotGo(){
 }
 /* ---------- QORSHE ---------- */
 function qtPlans(){
-  const d=QT.st; if(!d) return; const s=d.stats||{};
-  qtE("qtStats").innerHTML='<div><span>QORSHE</span><b>'+(s.n||0)+'</b></div><div><span>TRADE</span><b>'+(s.tr||0)+'</b></div><div><span>GUUL</span><b>'+(s.tr?(s.wr+"%"):"—")+'</b></div>'
+  const d=QT.st; if(!d) return; let s=d.stats||{};
+  if(QT.flt==="cr"){ const c=d.cxstats||{}; s={n:c.n, tr:c.sig, wr:c.sig?Math.round(1000*c.tp/c.sig)/10:0, R:c.R}; }   /* v13.19: ₿ virtual */
+  qtE("qtCxN").hidden=(QT.flt==="mt");
+  qtE("qtStats").innerHTML='<div><span>QORSHE</span><b>'+(s.n||0)+'</b></div><div><span>'+(QT.flt==="cr"?"SIGNAL":"TRADE")+'</span><b>'+(s.tr||0)+'</b></div><div><span>GUUL</span><b>'+(s.tr?(s.wr+"%"):"—")+'</b></div>'
     +'<div><span>R WADAR</span><b style="color:'+((s.R||0)>=0?"#7ff0b0":"#ff9a9d")+'">'+(s.tr?((s.R>0?"+":"")+Number(s.R).toFixed(1)):"—")+'</b></div>';
-  const L=d.plans||[], box=qtE("qtPlans");
-  if(!L.length){ box.innerHTML='<div class="card"><p class="qtnote" style="margin:0">Qorshe weli ma jiro. EA v72.6 (QORSHE TOOS ON) ayaa M15 kasta scan gareeya · London / NY.</p></div>'; return; }
+  const L=(d.plans||[]).filter(qtFok), box=qtE("qtPlans");
+  if(!L.length){ box.innerHTML='<div class="card"><p class="qtnote" style="margin:0">'+(QT.flt==="cr"?"₿ Qorshe crypto weli ma jiro · server-ka ayaa M15 kasta scan gareeya (trend M15 · H1 · H4 isku raac + zone).":"Qorshe weli ma jiro. EA v72.6 (QORSHE TOOS ON) ayaa M15 kasta scan gareeya · London / NY.")+'</p></div>'; return; }
   box.innerHTML=L.slice(0,40).map(p=>{ const dg=p.dg, b=p.s>0;
-    return '<div class="qtpl" data-p="'+p.id+'"><div class="hd"><b>#'+p.id+' · '+esc(p.sym)+' · <span style="color:'+(b?"#7ff0b0":"#ff9a9d")+'">'+(b?"BUY":"SELL")+'</span>'+(p.tr8?"":' <small style="color:var(--ink3)">ⓘ muuji</small>')+'</b>'
+    return '<div class="qtpl" data-p="'+p.id+'"><div class="hd"><b>#'+qtPid(p)+' · '+esc(p.sym)+' · <span style="color:'+(b?"#7ff0b0":"#ff9a9d")+'">'+(b?"BUY":"SELL")+'</span>'+(p.cr?qtCrTag():(p.tr8?"":' <small style="color:var(--ink3)">ⓘ muuji</small>'))+'</b>'
       +'<span class="'+qtStC(p.st)+(p.st===1&&p.q15?" q15":"")+'">'+qtStL(p)+((p.st===3||p.st===4||p.st===8)&&p.tE?(" "+(p.r>0?"+":"")+Number(p.r).toFixed(1)+"R"):"")+'</span></div>'
       +'<div class="ln"><span>zone '+qtF(p.lo,dg)+'–'+qtF(p.hi,dg)+'</span><span style="color:#ff9a9d">SL '+qtF(p.sl,dg)+'</span><span style="color:#7ff0b0">TP '+qtF(p.tp,dg)+'</span><span>'+qtTm(p.t)+'</span></div></div>'; }).join("");
 }
@@ -14564,7 +15725,7 @@ function qtMT5Draw(cv,sn,kind,s,mini){
   g.fillStyle=zc; g.fillRect(xs,Y(p.hi),xe-xs,Math.max(1,Y(p.lo)-Y(p.hi)));
   const dl=(y,col)=>{ g.strokeStyle=col; g.lineWidth=Math.max(1,1.4*s); g.setLineDash([6*s,4*s]); g.beginPath(); g.moveTo(xs,y); g.lineTo(xe,y); g.stroke(); g.setLineDash([]); };
   dl(Y(slv),"#ff6347"); dl(Y(tpv),"#3cb371");
-  if(!mini){ g.fillStyle=buy?"#3cb371":"#ff6347"; g.font="bold "+fs+"px sans-serif"; g.fillText("#"+p.id+" "+(buy?"BUY":"SELL")+" ZONE · "+qtStL(p),xs+4*s,buy?Y(p.hi)-5*s:Y(p.lo)+fs+3*s); g.font=fs+"px sans-serif";
+  if(!mini){ g.fillStyle=buy?"#3cb371":"#ff6347"; g.font="bold "+fs+"px sans-serif"; g.fillText("#"+qtPid(p)+" "+(buy?"BUY":"SELL")+" ZONE · "+qtStL(p),xs+4*s,buy?Y(p.hi)-5*s:Y(p.lo)+fs+3*s); g.font=fs+"px sans-serif";
     const rt=(t,y,col)=>{ const w=g.measureText(t).width; g.fillStyle="rgba(11,14,19,.8)"; g.fillRect(xe-w-10*s,y-fs,w+6*s,fs*1.3); g.fillStyle=col; g.fillText(t,xe-w-7*s,y); };
     rt("TP "+F(tpv),Y(tpv)-4*s,"#3cb371"); rt("SL "+F(slv),Y(slv)+fs+3*s,"#ff6347"); }
   /* scan line */
@@ -14594,10 +15755,10 @@ async function qtOpen(pid){
   const d=await qtGet("/api/qt/plan/"+pid); if(!d||!d.ok) return; QT.pl=d;
   const p=d.plan, dg=p.dg, b=p.s>0, sn=d.snaps||{}, tr=p.tr||[0,0,0];
   const sh=qtE("qtSheet");
-  const rows=[["Waqti scan",qtTm(p.t)],["Lammaane",esc(p.sym)+(p.tr8?"":" · muuji kaliya")],["Trend M15 · H1 · H4",'<span class="'+(tr[0]>0?"g":"r")+'">'+qtAr(tr[0])+" "+qtAr(tr[1])+" "+qtAr(tr[2])+'</span>'],
+  const rows=[["Waqti scan",qtTm(p.t)],["Lammaane",esc(p.sym)+(p.cr?" · ₿ Binance · MUUJI (virtual)":(p.tr8?"":" · muuji kaliya"))],["Trend M15 · H1 · H4",'<span class="'+(tr[0]>0?"g":"r")+'">'+qtAr(tr[0])+" "+qtAr(tr[1])+" "+qtAr(tr[2])+'</span>'],
     ["Xeelad","SR "+(b?"demand":"supply")+" (pivot M15) · "+(QT_MDN[p.md||0]||"TOOS")],["Zone",qtF(p.lo,dg)+" – "+qtF(p.hi,dg)],
-    ["SL (qorshe)",'<span class="r">'+qtF(p.sl,dg)+'</span>'],["TP",'<span class="g">'+qtF(p.tp,dg)+'</span>'],["Ansax ilaa",qtTm(p.exp)],["🧰 Qalab",(p.ob?'<span class="g">OB ✓</span>':'<span style="opacity:.5">OB ✕</span>')+" · "+(p.fvg?'<span class="g">FVG ✓</span>':'<span style="opacity:.5">FVG ✕</span>')+(p.tE?(" · "+(p.vol?'<span class="g">VOL ✓</span>':'<span style="opacity:.5">VOL ✕</span>')+(p.rsi?" · RSI "+Number(p.rsi).toFixed(0):"")+" · "+(Number(p.mul||1)<1?"★ lot nus":"★★ lot buuxa")):"")],
-    ...(p.tE?[["🔒 Maamul",((p.mgf||0)&1?'<span class="g">BE ✓</span>':"BE —")+((p.mgf||0)&2?' · <span class="g">½ xidhay</span>':"")]]:[]),["Xaalad",'<span class="'+qtStC(p.st)+(p.st===1&&p.q15?" q15":"")+'">'+qtStL(p)+'</span>'+(p.why?(" · "+esc(p.why)):"")]];
+    ["SL (qorshe)",'<span class="r">'+qtF(p.sl,dg)+'</span>'],["TP",'<span class="g">'+qtF(p.tp,dg)+'</span>'],["Ansax ilaa",qtTm(p.exp)],["🧰 Qalab",(p.ob?'<span class="g">OB ✓</span>':'<span style="opacity:.5">OB ✕</span>')+" · "+(p.fvg?'<span class="g">FVG ✓</span>':'<span style="opacity:.5">FVG ✕</span>')+(p.tE?(" · "+(p.vol?'<span class="g">VOL ✓</span>':'<span style="opacity:.5">VOL ✕</span>')+(p.rsi?" · RSI "+Number(p.rsi).toFixed(0):"")+(p.cr?"":(" · "+(Number(p.mul||1)<1?"★ lot nus":"★★ lot buuxa")))):"")],
+    ...(p.tE&&!p.cr?[["🔒 Maamul",((p.mgf||0)&1?'<span class="g">BE ✓</span>':"BE —")+((p.mgf||0)&2?' · <span class="g">½ xidhay</span>':"")]]:[]),["Xaalad",'<span class="'+qtStC(p.st)+(p.st===1&&p.q15?" q15":"")+'">'+qtStL(p)+'</span>'+(p.why?(" · "+esc(p.why)):"")]];
   const ok='<b class="g">✓</b>';
   const ent=!!(p.tE&&p.eP);
   const inz=p.tT?(b?(p.ext<=p.hi+1e-9):(p.ext>=p.lo-1e-9)):false;
@@ -14610,7 +15771,7 @@ async function qtOpen(pid){
     ["Waqti",qtHM(p.t),ent?(qtHM(p.tE)+" ("+Math.round((p.tE-p.t)/60)+" daq)"):"—",ent?((p.tE-p.t)<=(p.exp-p.t)?ok:""):""],
     ["Trend",qtAr(tr[0])+qtAr(tr[1])+qtAr(tr[2]),ent?(qtAr(tr[0])+qtAr(tr[1])+qtAr(tr[2])):"—",ent?ok:""]];
   const T=d.trade;
-  sh.innerHTML='<div class="hd"><h3>#'+p.id+' · '+esc(p.sym)+' · <span style="color:'+(b?"#7ff0b0":"#ff9a9d")+'">'+(b?"BUY":"SELL")+'</span></h3><button type="button" class="qtx" id="qtShX">✕</button></div>'
+  sh.innerHTML='<div class="hd"><h3>#'+qtPid(p)+' · '+esc(p.sym)+' · <span style="color:'+(b?"#7ff0b0":"#ff9a9d")+'">'+(b?"BUY":"SELL")+'</span></h3><button type="button" class="qtx" id="qtShX">✕</button></div>'
     +'<div class="card"><p class="qtk">🔍 XOGTA SCAN-KA <em>la kaydiyay</em></p><div class="qttb">'+rows.map(r=>'<div><span>'+r[0]+'</span><b>'+r[1]+'</b></div>').join("")+'</div></div>'
     +'<div class="card"><p class="qtk">📸 SAWIRRADA KAYDSAN</p><div class="qtths">'
     +[["scan","① SCAN",p.t],["entry","② GELITAAN",p.tE],["exit","③ XIDH",p.tX]].map(k=>{ const im=(d.imgs||[]).indexOf(k[0])>=0;
@@ -14619,11 +15780,13 @@ async function qtOpen(pid){
     +'<div class="card"><p class="qtk">✅ ISBARBARDHIG · SCAN ↔ GELITAAN</p><div class="qtcmp">'+cmp.map(r=>'<div><span>'+r[0]+'</span><b>'+r[1]+'</b><b>'+r[2]+'</b>'+r[3]+'</div>').join("")+'</div></div>'
     +(T?('<div class="card"><p class="qtk">☰ TRADE-KA (Journal)</p><div class="qttb"><div><span>Ticket</span><b>#'+esc(String(T.tk))+'</b></div><div><span>Lot</span><b>'+Number(T.lot||0).toFixed(2)+'</b></div>'
       +'<div><span>Gelitaan → xidh</span><b>'+esc(String(T.entry))+' → '+esc(String(T.exitp))+'</b></div><div><span>Faa&#39;iido</span><b class="'+(Number(T.profit)>=0?"g":"r")+'">'+j2M(T.profit)+'</b></div></div></div>'):'')
-    +((p.st===0||p.st===1)&&QT.st&&QT.st.can?'<button type="button" class="qtsm" id="qtCan" style="border-color:#e5484d;color:#ffb3b5;background:rgba(229,72,77,.12)">✕ Jooji qorshahan</button>':'');
+    +(p.cr?('<div class="card cxmu"><p style="font-size:12.5px;line-height:1.5;margin:0"><b style="color:#f0b90b">₿ MUUJI</b> · qorshahan trade toos ah ma laha · natiijadu waa virtual. '+(b&&p.st<=2?"Haddii aad rabto, gacan ku iibso:":"Spot: SELL = iibi wixii aad haysato.")+'</p>'+(b&&p.st<=2?'<div class="qtcxa"><button type="button" class="cxbuy" id="qtShB">₿ IIBSO gacan · '+esc(p.sym)+'</button></div>':'')+'</div>'):'')
+    +(!p.cr&&(p.st===0||p.st===1)&&QT.st&&QT.st.can?'<button type="button" class="qtsm" id="qtCan" style="border-color:#e5484d;color:#ffb3b5;background:rgba(229,72,77,.12)">✕ Jooji qorshahan</button>':'');
   sh.hidden=false;
   sh.querySelectorAll(".qtth").forEach(el=>{ const k=el.dataset.k, cv=el.querySelector("canvas"); if(cv) qtMT5Draw(cv,sn[k],k,0.5,true);
     if(sn[k] || (d.imgs||[]).indexOf(k)>=0) el.addEventListener("click",()=>qtFull(k)); });
   qtE("qtShX").addEventListener("click",()=>{ sh.hidden=true; });
+  const sb=qtE("qtShB"); if(sb) sb.addEventListener("click",()=>{ sh.hidden=true; try{ cxGoTrade(p.sym,"BUY"); }catch(e){} });
   const cb=qtE("qtCan"); if(cb) cb.addEventListener("click",async()=>{ cb.disabled=true; const r=await qtPost("/api/qt/cancel",{pid:p.id}); cb.textContent=r.ok?"✓ amarka waa la diray":(r.error||"Khalad"); setTimeout(qtLoad,4000); });
 }
 function qtImgU(pid,k){ const q=qtQ(); return "/api/qt/img/"+pid+"/"+k+(q?("?"+q):""); }
@@ -14641,7 +15804,7 @@ function qtFullRender(){
   const n={scan:"Scan: zone + SL + TP ayaa horay loo calaamadeeyay — qiimuhu weli ma iman.",
     entry:(p.tE?("Qiimuhu zone-kii buu yimid (taabtay "+qtF(p.ext,dg)+") → "+(p.md===2?"M15 ✓ → CHoCH M5 → ":(p.md===1?"M5 ✓ → CHoCH M5 → ":"M15 ✓ → "))+(p.s>0?"BUY ":"SELL ")+qtF(p.eP,dg)+" · SL "+qtF(p.eSL,dg)):("Gelitaan ma dhicin · "+(p.why||""))),
     exit:qtStN(p.st)+" · "+(p.r>0?"+":"")+Number(p.r||0).toFixed(2)+"R · xidh "+qtF(p.xP,dg)}[k];
-  qtE("qtFH").textContent="#"+p.id+" · "+(p.sym||"")+" · "+t; qtE("qtFN").textContent=n;
+  qtE("qtFH").textContent="#"+qtPid(p)+" · "+(p.sym||"")+" · "+t; qtE("qtFN").textContent=n;
   const hasImg=(d.imgs||[]).indexOf(k)>=0, vb=qtE("qtFV");
   vb.hidden=!(hasImg && sn); vb.textContent=QT.fimg?"📷 MT5":"✏️ chart"; vb.classList.toggle("on",!!QT.fimg);
   const im=qtE("qtFI"), cv=qtE("qtFC");
@@ -14670,6 +15833,7 @@ async function qtSave(){
 function qtView(v){
   QT.view=v; qtE("qtSeg").querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.dataset.v===v));
   qtE("qtVScan").hidden=(v!=="scan"); qtE("qtVPlan").hidden=(v!=="plan"); qtE("qtVSet").hidden=(v!=="set");
+  const fl=qtE("qtFlt"); if(fl) fl.hidden=(v==="set");   /* v13.19 */
 }
 function qtModeSet(m){
   QT.mode=m; qtE("qtMode").querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.dataset.m===m));
@@ -14679,6 +15843,11 @@ function qtModeSet(m){
   if(!qtE("pScan")) return;
   const c=qtE("qtCard"); if(c){ c.addEventListener("click",()=>tab("Scan")); c.addEventListener("keydown",e=>{ if(e.key==="Enter") tab("Scan"); }); }
   qtE("qtSeg").addEventListener("click",e=>{ const b=e.target.closest("button"); if(b) qtView(b.dataset.v); });
+  qtE("qtFlt").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b) return; QT.flt=b.dataset.v;   /* v13.19: ₿ */
+    qtE("qtFlt").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b)); qtPaint();
+    const it=QT.live&&QT.live.list.find(x=>x.sym===QT.sel); if(it && !qtFok(it)){ QT.sel=""; qtE("qtRes").hidden=true; } });
+  qtE("qtCxB").addEventListener("click",()=>{ try{ cxGoTrade(QT.sel,"BUY"); }catch(e){} });
+  qtE("qtCxD").addEventListener("click",()=>{ try{ tab("Binance"); setTimeout(()=>{ if(CX.st&&CX.st.conn) cxView("l"); },300); }catch(e){} });
   qtE("qtMode").addEventListener("click",e=>{ const b=e.target.closest("button"); if(b) qtModeSet(b.dataset.m); });
   qtE("qtGo").addEventListener("click",qtScanNow);
   qtE("qtAiB").addEventListener("click",qtAiNow);
@@ -14711,6 +15880,224 @@ function qtModeSet(m){
     if(QT.st) go(); else qtLoad().then(go); });
   setInterval(()=>{ qtCard(); const on=qtE("pScan").classList.contains("on"); if(on && Date.now()-QT.t>15000) qtLoad(); },5000);
   setTimeout(qtCard,1500);
+})();
+
+/* ======================== v13.19: ₿ BINANCE (spot) · 📅 DCA · 🔍 SCAN CRYPTO (MUUJI) ======================== */
+const CX={st:null, view:"h", net:"test", side:"BUY", sym:"BTCUSDT", typ:"MARKET", px:null, ed:null, dirty:false, t:0, busy:false};
+const CX_IC={BTC:["₿","#f7931a"],ETH:["Ξ","#627eea"],SOL:["S","#14f195"],BNB:["B","#f0b90b"],XRP:["X","#9aa4b2"],USDT:["₮","#26a17b"],USDC:["$","#2775ca"]};
+function cxE(id){ return document.getElementById(id); }
+function cxUsd(v){ const n=Number(v)||0; return (n<0?"-$":"$")+Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function cxN(v,d){ const n=Number(v)||0; if(d!=null) return n.toFixed(d); const a=Math.abs(n); return n.toFixed(a>=1000?2:(a>=1?4:(a>=0.01?5:8))).replace(/0+$/,"").replace(/[.]$/,""); }
+function cxPct(v){ const n=Number(v)||0; return (n>0?"+":"")+n.toFixed(2)+"%"; }
+function cxIc(a){ const c=CX_IC[a]||[String(a||"?").slice(0,1),"#8b8a82"]; return '<span class="cxic" style="background:'+c[1]+'">'+esc(c[0])+'</span>'; }
+function cxDay(t){ if(!t) return "—"; const d=new Date(t*1000), L=(CX.st&&CX.st.dow)||["Isniin","Talaado","Arbaco","Khamiis","Jimce","Sabti","Axad"]; return L[(d.getUTCDay()+6)%7]+" "+String(d.getUTCHours()).padStart(2,"0")+":00"; }
+
+async function cxLoad(force){
+  if(CX.busy) return; CX.busy=true;
+  try{ const d=await qtGet("/api/cx/state"+(force?"?f=1":"")); if(d && d.ok){ CX.st=d; CX.t=Date.now();
+      if(!CX.ed || !CX.dirty){ const c=d.cfg||{}, dc=d.dca||{}; CX.ed={on:dc.on?1:0, sym:dc.sym||"BTCUSDT", amt:Number(dc.amt)||20, per:dc.per||"w", dow:Number(dc.dow)||0, hr:dc.hr==null?9:Number(dc.hr), cap:dc.cap==null?300:Number(dc.cap),
+        scan:c.scan==null?1:c.scan, alert:c.alert==null?1:c.alert, syms:(c.syms||d.syms||[]).slice(), maxord:c.maxord==null?200:Number(c.maxord)}; }
+      cxPaint(); } }
+  catch(e){} finally{ CX.busy=false; }
+}
+/* ---------- Guud: kaarka ₿ ---------- */
+function cxCard(){
+  const c=cxE("cxCard"), d=CX.st; if(!c) return;
+  const v=cxE("cxCV"), s=cxE("cxCS"), ch=cxE("cxCC"), m=cxE("cxMini");
+  if(!d){ s.textContent="Spot · ku xidh · scan crypto"; return; }
+  const b=d.bal||{};
+  if(d.conn && !b.err){ v.textContent=cxUsd(b.tot||0); ch.textContent=cxPct(b.chg||0)+" maanta"; ch.style.color=(b.chg||0)>=0?"#7ff0b0":"#ff9a9d";
+    s.textContent=(d.net==="real"?"REAL":"TESTNET")+" · "+((b.bals||[]).length)+" lacag"+(d.dca&&d.dca.on?" · DCA ON":""); }
+  else if(d.conn){ v.textContent="—"; ch.textContent="khalad"; ch.style.color="#ff9a9d"; s.textContent=b.err||"Binance"; }
+  else { v.textContent="KU XIDH"; ch.textContent="TESTNET / REAL"; ch.style.color="#f0b90b"; s.textContent="Spot · lama xidhin · scan crypto wuu shaqeeyaa"; }
+  if(m){ const dc=d.dca||{};
+    m.innerHTML='<div><span>📅 DCA</span><b>'+(dc.on?(cxUsd(dc.amt).replace(".00","")+" / "+(dc.per==="d"?"maalin":"toddobaad")):"OFF")+'</b><small>'+(dc.on&&dc.next?("xiga: "+cxDay(dc.next)):(dc.note?esc(dc.note).slice(0,40):"BOT › DCA"))+'</small></div>'
+      +'<div><span>🔍 SCAN ₿</span><b style="color:#f0b90b">'+(d.cfg&&d.cfg.scan?((d.act||0)+" qorshe"):"OFF")+'</b><small>muuji + digniin</small></div>'; }
+}
+/* ---------- paint ---------- */
+function cxPaint(){
+  cxCard();
+  const d=CX.st; if(!d) return;
+  cxE("cxCon").hidden=!!d.conn; cxE("cxMain").hidden=!d.conn;
+  const p=cxE("cxPill"), b=d.bal||{};
+  if(!d.conn){ p.className="cxpill"; p.textContent="LAMA XIDHIN"; cxE("cxSub").textContent="Spot · ku xidh hal mar"; }
+  else if(b.err){ p.className="cxpill r"; p.textContent="KHALAD"; cxE("cxSub").textContent=b.err; }
+  else { p.className="cxpill g"; p.textContent="● XIDHAN"; cxE("cxSub").textContent="Spot · "+(d.net==="real"?"REAL":"TESTNET")+" · server 24/7"; }
+  cxE("cxMuN").textContent=d.scan_ts?("Scan u dambeeyay "+qtHM(Math.floor(d.scan_ts))+" · "+(d.act||0)+" qorshe firfircoon."):"";
+  if(!d.conn){ cxNetPaint(); return; }
+  cxHanti(); cxTrPaint(); cxBotPaint(); cxLog();
+}
+function cxNetPaint(){
+  cxE("cxNet").querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.dataset.v===CX.net));
+  cxE("cxStep1").innerHTML=CX.net==="real"?"binance.com → <b>Account › API Management</b> → <b>Create API</b> (System generated) → koobi API Key + Secret":"testnet.binance.vision → <b>Log in with GitHub</b> → <b>Generate HMAC_SHA256 Key</b> → koobi API Key + Secret";
+  cxE("cxConB").textContent=CX.net==="real"?"KU XIDH · REAL":"KU XIDH · TESTNET";
+}
+function cxHanti(){
+  const d=CX.st, b=d.bal||{};
+  cxE("cxTot").textContent=b.err?"—":cxUsd(b.tot||0);
+  const c=cxE("cxChg"); c.textContent=b.err?"":cxPct(b.chg||0); c.style.color=(b.chg||0)>=0?"#7ff0b0":"#ff9a9d";
+  cxE("cxTotT").textContent=d.net==="real"?"REAL":"TESTNET";
+  cxSpark();
+  const L=b.bals||[], box=cxE("cxBals");
+  box.innerHTML=b.err?('<p class="qtnote" style="margin:0;color:#ff9a9d">'+esc(b.err)+'</p>'):(L.length?L.slice(0,12).map(x=>'<div class="cxrow">'+cxIc(x.a)+'<div><b>'+esc(x.a)+'</b><small>'+cxN(x.free+x.lock)+(x.lock?(' · 🔒 '+cxN(x.lock)):'')+'</small></div>'
+    +'<div class="r"><b>'+cxUsd(x.usd)+'</b><small style="color:'+(x.chg>0?"#7ff0b0":(x.chg<0?"#ff9a9d":"var(--ink3)"))+'">'+cxPct(x.chg)+'</small></div></div>').join(""):'<p class="qtnote" style="margin:0">Hanti ma jirto.</p>');
+  const pm=d.perm||{}, ok='<b style="color:#7ff0b0">✓</b>';
+  cxE("cxPerm").innerHTML='<p class="qtk" style="color:#7ff0b0">✓ WAA LA XIDHAY <em>'+(d.since?qtTm(d.since):"")+'</em></p>'
+    +'<div class="qtfr"><span>Reading</span>'+ok+'</div><div class="qtfr"><span>Spot trading</span>'+(pm.spot===false?'<b style="color:#ff9a9d">✕</b>':ok)+'</div>'
+    +'<div class="qtfr"><span>Withdraw</span>'+(d.net==="real"?'<b style="color:#7ff0b0">✕ (sax)</b>':'<b style="color:var(--ink3)">testnet</b>')+'</div>'
+    +'<div class="qtfr" style="border:0"><span>IP restriction</span>'+(d.net==="real"?(pm.ip?ok:'<b style="color:#ffd27a">✕ · talo: shid</b>'):'<b style="color:var(--ink3)">—</b>')+'</div>';
+}
+function cxSpark(){
+  const cv=cxE("cxSpark"); if(!cv) return; const g=cv.getContext("2d"), W=cv.width, H=cv.height; g.clearRect(0,0,W,H);
+  const h=(CX.st&&CX.st.hist)||[]; if(h.length<2){ g.fillStyle="#5d6773"; g.font="22px sans-serif"; g.fillText("taariikh hanti: 15 daqiiqo kasta ayaa la kaydiyaa",8,H/2); return; }
+  const v=h.map(x=>x[1]), lo=Math.min(...v), hi=Math.max(...v), r=(hi-lo)||1, up=v[v.length-1]>=v[0];
+  g.strokeStyle=up?"#26a65b":"#e0393e"; g.lineWidth=4; g.beginPath();
+  v.forEach((q,i)=>{ const x=i*(W-8)/(v.length-1)+4, y=H-10-(H-20)*(q-lo)/r; i?g.lineTo(x,y):g.moveTo(x,y); }); g.stroke();
+}
+/* ---------- IIBSO ---------- */
+function cxTrPaint(){
+  const d=CX.st; if(!d) return; const syms=d.syms||[];
+  cxE("cxSide").querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.dataset.v===CX.side));
+  cxE("cxSym").innerHTML=syms.map(s=>'<button type="button" data-v="'+s+'" class="'+(s===CX.sym?"on":"")+'">'+cxIc(s.slice(0,-4))+esc(s.slice(0,-4))+'</button>').join("");
+  cxE("cxTyp").querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.dataset.v===CX.typ));
+  const buy=CX.side==="BUY";
+  cxE("cxPrW").hidden=CX.typ!=="LIMIT"; cxE("cxAmW").hidden=!buy; cxE("cxQtW").hidden=buy; cxE("cxQtU").textContent=CX.sym.slice(0,-4);
+  const ob=cxE("cxOrd"); ob.textContent=(buy?"IIBSO ":"IIBI ")+CX.sym.slice(0,-4)+" · "+CX.typ; ob.className="cxgo "+(buy?"b":"s");
+  cxEst();
+}
+async function cxPrice(){
+  const s=CX.sym; cxE("cxPx").textContent="…";
+  const d=await qtGet("/api/cx/price?sym="+encodeURIComponent(s)); if(s!==CX.sym) return;
+  if(!d || !d.ok){ cxE("cxPx").textContent="—"; cxE("cxPxC").textContent=(d&&d.error)||""; return; }
+  CX.px=d; cxE("cxPxS").textContent=s+" · "+(d.net==="real"?"REAL":(d.net==="test"?"TESTNET":"suuq"));
+  cxE("cxPx").textContent=cxN(d.px,d.px>=100?2:4); const c=cxE("cxPxC"); c.textContent=cxPct(d.chg); c.style.color=d.chg>=0?"#7ff0b0":"#ff9a9d";
+  if(CX.typ==="LIMIT" && !cxE("cxPr").value) cxE("cxPr").value=cxN(d.px,d.px>=100?2:4);
+  cxEst();
+}
+function cxEst(){
+  const p=CX.px, e=cxE("cxEst"); if(!e) return;
+  if(!p || p.sym!==CX.sym){ e.textContent="—"; return; }
+  const px=CX.typ==="LIMIT"?(Number(cxE("cxPr").value)||0):p.px, fr=p.free||{};
+  if(CX.side==="BUY"){ const a=Number(cxE("cxAm").value)||0; e.textContent=(a&&px?("≈ "+cxN(a/px)+" "+p.base+" @ "+cxN(px,px>=100?2:4)):"Lacag USDT geli")+" · haysaa $"+cxN(fr.USDT||0,2)+(p.minn?(" · ugu yaraan $"+cxN(p.minn,0)):"")+(CX.st.cfg&&CX.st.cfg.maxord?(" · xad $"+cxN(CX.st.cfg.maxord,0)):""); }
+  else { const q=Number(cxE("cxQt").value)||0; e.textContent=(q&&px?("≈ $"+cxN(q*px,2)+" @ "+cxN(px,px>=100?2:4)):"Tirada geli")+" · haysaa "+cxN(fr[p.base]||0)+" "+p.base; }
+}
+function cxOrder(){
+  const buy=CX.side==="BUY", p=CX.px||{}, s=CX.sym, b={sym:s, side:CX.side, type:CX.typ};
+  if(buy) b.usdt=Number(cxE("cxAm").value)||0; else b.qty=Number(cxE("cxQt").value)||0;
+  if(CX.typ==="LIMIT") b.price=Number(cxE("cxPr").value)||0;
+  if(!buy && CX.all){ b.all=1; }
+  if(buy && !(b.usdt>0)){ cxE("cxOrdN").textContent="Lacag USDT geli."; return; }
+  if(!buy && !(b.qty>0) && !b.all){ cxE("cxOrdN").textContent="Tirada geli."; return; }
+  const net=(CX.st&&CX.st.net)==="real";
+  const html='<div class="cxcf"><div><span>Lammaane</span><b>'+esc(s)+'</b></div><div><span>Amar</span><b style="color:'+(buy?"#7ff0b0":"#ff9a9d")+'">'+(buy?"IIBSO · BUY":"IIBI · SELL")+' · '+CX.typ+'</b></div>'
+    +(buy?('<div><span>Lacag</span><b>'+cxUsd(b.usdt)+'</b></div>'):('<div><span>Tirada</span><b>'+(b.all?"DHAMMAAN":cxN(b.qty))+' '+esc(s.slice(0,-4))+'</b></div>'))
+    +(CX.typ==="LIMIT"?('<div><span>Qiimaha</span><b>'+cxN(b.price)+'</b></div>'):('<div><span>Qiimaha hadda</span><b>≈ '+(p.px?cxN(p.px,p.px>=100?2:4):"—")+'</b></div>'))
+    +'<div><span>Account</span><b style="color:'+(net?"#ffd27a":"#9fd6ff")+'">'+(net?"💰 REAL · lacag dhab ah":"🧪 TESTNET")+'</b></div></div>';
+  cfmOpen({title:(buy?"IIBSO ":"IIBI ")+s.slice(0,-4)+"?", html:html, ok:buy?"HAA · IIBSO":"HAA · IIBI", okCls:buy?"g":"d", onOk:async()=>{
+    const o=cxE("cxOrd"); o.disabled=true; cxE("cxOrdN").textContent="la dirayaa…";
+    const r=await qtPost("/api/cx/order",b); o.disabled=false;
+    if(!r.ok){ cxE("cxOrdN").textContent="✕ "+(r.error||"Khalad"); return; }
+    const x=r.order||{}; cxE("cxOrdN").textContent="✓ "+(x.side==="BUY"?"La iibsaday ":"La iibiyay ")+cxN(x.qty)+" "+s.slice(0,-4)+(x.quote?(" · "+cxUsd(x.quote)):"")+" · "+(x.st||"");
+    CX.all=false; cxE("cxQt").value=""; setTimeout(()=>{ cxLoad(true); cxPrice(); },800); } });
+}
+/* ---------- BOT ---------- */
+function cxBotPaint(){
+  const e=CX.ed, d=CX.st; if(!e||!d) return; const dc=d.dca||{};
+  cxE("cxDcaOn").classList.toggle("on",!!e.on);
+  cxE("cxDcaS").textContent=cxUsd(e.amt).replace(".00","")+" "+(e.per==="d"?"maalin kasta":("toddobaad kasta · "+(d.dow||[])[e.dow]))+" "+String(e.hr).padStart(2,"0")+":00 UTC · "+e.sym.slice(0,-4);
+  cxE("cxDcaSym").innerHTML=(d.syms||[]).map(s=>'<button type="button" data-v="'+s+'" class="'+(s===e.sym?"on":"")+'">'+cxIc(s.slice(0,-4))+esc(s.slice(0,-4))+'</button>').join("");
+  cxE("cxDcaPer").querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.dataset.v===e.per));
+  cxE("cxDowR").hidden=e.per!=="w";
+  const sel=cxE("cxDcaDow"); if(!sel.options.length) sel.innerHTML=(d.dow||[]).map((n,i)=>'<option value="'+i+'">'+esc(n)+'</option>').join(""); sel.value=String(e.dow);
+  document.querySelectorAll("#cxVb .qtstp").forEach(s=>{ const k=s.dataset.k, v=e[k]; s.querySelector("b").textContent=(k==="hr")?(String(v).padStart(2,"0")+":00"):((k==="cap"||k==="maxord")?(Number(v)>0?cxUsd(v).replace(".00",""):"OFF"):cxUsd(v).replace(".00","")); });
+  cxE("cxCapV").textContent=Number(e.cap)>0?cxUsd(e.cap).replace(".00",""):"OFF";
+  const val=(Number(dc.qty)||0)*(Number(dc.px)||0), sp=Number(dc.spent)||0;
+  cxE("cxDcaSt").innerHTML='<div><span>Wadarta la maalgashaday</span><b>'+cxUsd(sp)+'</b><small>'+(dc.n||0)+' iibsasho'+(dc.qty?(" · celcelis "+cxN(sp/dc.qty,2)):"")+'</small></div>'
+    +'<div><span>Qiimaha hadda</span><b style="color:'+(val>=sp?"#7ff0b0":"#ff9a9d")+'">'+(dc.qty&&dc.px?(cxUsd(val)+" · "+cxPct(sp?100*(val-sp)/sp:0)):"—")+'</b><small>'+(dc.qty?(cxN(dc.qty)+" "+esc((dc.sym||"").slice(0,-4))):"")+'</small></div>'
+    +'<div><span>Iibsiga xiga</span><b>'+(dc.on&&dc.next?cxDay(dc.next):"—")+'</b><small>'+(dc.note?esc(dc.note):(Number(e.cap)>0?("xad "+cxUsd(e.cap).replace(".00","")+" · haray "+cxUsd(Math.max(0,e.cap-sp)).replace(".00","")):"xad la'aan"))+'</small></div>';
+  cxE("cxScOn").classList.toggle("on",!!e.scan); cxE("cxAlOn").classList.toggle("on",!!e.alert);
+  cxE("cxScSym").innerHTML=(d.syms||[]).map(s=>'<button type="button" data-v="'+s+'" class="'+(e.syms.indexOf(s)>=0?"on":"")+'">'+cxIc(s.slice(0,-4))+esc(s.slice(0,-4))+'</button>').join("");
+}
+async function cxSaveDca(){
+  const e=CX.ed, b=cxE("cxDcaSave"); if(!e) return; b.disabled=true;
+  const r=await qtPost("/api/cx/config",{dca:{on:e.on, sym:e.sym, amt:e.amt, per:e.per, dow:e.dow, hr:e.hr, cap:e.cap}});
+  b.disabled=false; cxE("cxDcaN").textContent=r.ok?"✓ La kaydiyay · server-ka ayaa iibsanaya waqtiga la gaadho (24/7).":("✕ "+(r.error||"Khalad"));
+  if(r.ok){ CX.dirty=false; cxLoad(); }
+}
+async function cxSaveSet(){
+  const e=CX.ed, b=cxE("cxSetSave"); if(!e) return; b.disabled=true;
+  const r=await qtPost("/api/cx/config",{scan:e.scan, alert:e.alert, syms:e.syms, maxord:e.maxord});
+  b.disabled=false; cxE("cxSetN").textContent=r.ok?"✓ La kaydiyay":("✕ "+(r.error||"Khalad"));
+  if(r.ok){ CX.dirty=false; cxLoad(); try{ QT.t=0; }catch(x){} }
+}
+function cxOffAll(){
+  cfmOpen({title:"Dami dhammaan bot-yada?", html:"DCA waa la joojinayaa (hantidaada lama iibinayo). Dib ayaad u shidi kartaa BOT › DCA.", ok:"HAA · DAMI", okCls:"d", onOk:async()=>{
+    const r=await qtPost("/api/cx/config",{off_all:1}); cxE("cxSetN").textContent=r.ok?"✓ Bot-yada waa la damiyay":("✕ "+(r.error||"Khalad")); CX.dirty=false; cxLoad(); } });
+}
+/* ---------- TAARIIKH ---------- */
+function cxLog(){
+  const d=CX.st; if(!d) return; const L=d.orders||[];
+  cxE("cxOrdT").textContent=L.length+" amar";
+  cxE("cxOrds").innerHTML=L.length?L.map(o=>'<div class="cxrow">'+cxIc(String(o.sym||"").slice(0,-4))+'<div><b style="color:'+(o.side==="BUY"?"#7ff0b0":"#ff9a9d")+'">'+(o.side==="BUY"?"IIBSO":"IIBI")+' '+esc(String(o.sym||"").slice(0,-4))+'</b><small>'+qtTm(o.t)+' · '+esc(o.src||"")+' · '+esc(o.type||"")+'</small></div>'
+    +'<div class="r"><b>'+(o.st==="KHALAD"?'<span style="color:#ff9a9d">KHALAD</span>':(o.quote?cxUsd(o.quote):cxN(o.qty)))+'</b><small>'+(o.st==="KHALAD"?esc(String(o.err||"").slice(0,40)):(cxN(o.qty)+(o.price?(" @ "+cxN(o.price,o.price>=100?2:4)):"")+" · "+esc(o.st||"")))+'</small></div></div>').join(""):'<p class="qtnote" style="margin:0">Amar weli ma jiro.</p>';
+  const A=d.alerts||[];
+  cxE("cxAlerts").innerHTML=A.length?A.map(a=>'<div class="cxal"><span>'+qtTm(a.t)+'</span><b>'+esc(a.sym||"")+(a.pid?(" #"+(a.pid-1000000)):"")+'</b><em style="color:'+(a.s>0?"#7ff0b0":"#ff9a9d")+'">'+esc(a.txt||"")+'</em></div>').join(""):'<p class="qtnote" style="margin:0">'+(d.cfg&&d.cfg.alert?"Digniin weli ma jirto.":"Digniinta waa damsan (BOT › SCAN CRYPTO).")+'</p>';
+  const s=d.stats||{};
+  cxE("cxVst").innerHTML='<div><span>QORSHE</span><b>'+(s.n||0)+'</b></div><div><span>SIGNAL</span><b>'+(s.sig||0)+'</b></div><div><span>TP / SL</span><b>'+(s.tp||0)+' / '+(s.sl||0)+'</b></div>'
+    +'<div><span>R VIRTUAL</span><b style="color:'+((s.R||0)>=0?"#7ff0b0":"#ff9a9d")+'">'+(s.sig?((s.R>0?"+":"")+Number(s.R).toFixed(1)):"—")+'</b></div>';
+}
+/* ---------- view ---------- */
+function cxView(v){
+  CX.view=v; cxE("cxSeg").querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.dataset.v===v));
+  ["h","t","b","l"].forEach(k=>{ cxE("cxV"+k).hidden=(k!==v); });
+  if(v==="t") cxPrice();
+}
+function cxGoTrade(sym,side){
+  if(sym) CX.sym=sym; if(side) CX.side=side; tab("Binance");
+  setTimeout(()=>{ if(CX.st&&CX.st.conn){ cxView("t"); cxTrPaint(); } },300);
+}
+(function(){
+  if(!cxE("pBinance")) return;
+  const c=cxE("cxCard"); if(c){ c.addEventListener("click",()=>tab("Binance")); c.addEventListener("keydown",e=>{ if(e.key==="Enter") tab("Binance"); }); }
+  cxE("cxNet").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b) return; CX.net=b.dataset.v; cxNetPaint(); });
+  cxE("cxConB").addEventListener("click",async()=>{
+    const k=cxE("cxKey").value.trim(), s=cxE("cxSec").value.trim(), n=cxE("cxConN"), b=cxE("cxConB");
+    if(!k||!s){ n.textContent="API Key iyo Secret labadaba geli."; return; }
+    b.disabled=true; n.textContent="hubinaya furaha…";
+    const r=await qtPost("/api/cx/connect",{key:k, secret:s, net:CX.net}); b.disabled=false;
+    if(!r.ok){ n.textContent="✕ "+(r.error||"Khalad"); return; }
+    cxE("cxKey").value=""; cxE("cxSec").value=""; n.textContent="✓ Waa la xidhay"; cxView("h"); cxLoad(true); });
+  cxE("cxSeg").addEventListener("click",e=>{ const b=e.target.closest("button"); if(b) cxView(b.dataset.v); });
+  cxE("cxGoB").addEventListener("click",()=>{ CX.side="BUY"; cxView("t"); cxTrPaint(); });
+  cxE("cxGoS").addEventListener("click",()=>{ CX.side="SELL"; cxView("t"); cxTrPaint(); });
+  cxE("cxDis").addEventListener("click",()=>cfmOpen({title:"Ka goo Binance?", html:"Furaha waa laga tirtirayaa server-ka · DCA waa la damiyaa. Hantidaada Binance waxba kuma dhacaan.", ok:"HAA · KA GOO", okCls:"d",
+    onOk:async()=>{ await qtPost("/api/cx/disconnect",{}); CX.st=null; cxLoad(true); } }));
+  cxE("cxSide").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b) return; CX.side=b.dataset.v; CX.all=false; cxTrPaint(); });
+  cxE("cxSym").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b) return; CX.sym=b.dataset.v; CX.px=null; cxE("cxPr").value=""; CX.all=false; cxTrPaint(); cxPrice(); });
+  cxE("cxTyp").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b) return; CX.typ=b.dataset.v; cxTrPaint(); if(CX.typ==="LIMIT" && CX.px && !cxE("cxPr").value) cxE("cxPr").value=cxN(CX.px.px,CX.px.px>=100?2:4); cxEst(); });
+  cxE("cxAmQ").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b) return; cxE("cxAm").value=b.dataset.v; cxEst(); });
+  cxE("cxQtQ").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b||!CX.px) return; const f=Number(b.dataset.v), have=Number((CX.px.free||{})[CX.px.base]||0);
+    CX.all=(f===1); cxE("cxQt").value=cxN(have*f); cxEst(); });
+  ["cxAm","cxQt","cxPr"].forEach(id=>cxE(id).addEventListener("input",()=>{ if(id==="cxQt") CX.all=false; cxEst(); }));
+  cxE("cxOrd").addEventListener("click",cxOrder);
+  cxE("cxDcaOn").addEventListener("click",()=>{ if(!CX.ed) return; CX.ed.on=CX.ed.on?0:1; CX.dirty=true; cxBotPaint(); });
+  cxE("cxDcaSym").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b||!CX.ed) return; CX.ed.sym=b.dataset.v; CX.dirty=true; cxBotPaint(); });
+  cxE("cxDcaPer").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b||!CX.ed) return; CX.ed.per=b.dataset.v; CX.dirty=true; cxBotPaint(); });
+  cxE("cxDcaDow").addEventListener("change",e=>{ if(!CX.ed) return; CX.ed.dow=Number(e.target.value)||0; CX.dirty=true; cxBotPaint(); });
+  document.querySelectorAll("#cxVb .qtstp").forEach(s=>{ const bs=s.querySelectorAll("button");
+    const step=dir=>{ if(!CX.ed) return; const k=s.dataset.k, lo=Number(s.dataset.lo), hi=Number(s.dataset.hi), st=Number(s.dataset.st);
+      CX.ed[k]=Math.max(lo,Math.min(hi,Math.round((Number(CX.ed[k])+dir*st)/st)*st)); CX.dirty=true; cxBotPaint(); };
+    bs[0].addEventListener("click",()=>step(-1)); bs[1].addEventListener("click",()=>step(1)); });
+  cxE("cxDcaSave").addEventListener("click",cxSaveDca);
+  cxE("cxScOn").addEventListener("click",()=>{ if(!CX.ed) return; CX.ed.scan=CX.ed.scan?0:1; CX.dirty=true; cxBotPaint(); });
+  cxE("cxAlOn").addEventListener("click",()=>{ if(!CX.ed) return; CX.ed.alert=CX.ed.alert?0:1; CX.dirty=true; cxBotPaint(); });
+  cxE("cxScSym").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b||!CX.ed) return; const s=b.dataset.v, L=CX.ed.syms, i=L.indexOf(s);
+    if(i>=0){ if(L.length>1) L.splice(i,1); } else L.push(s); CX.dirty=true; cxBotPaint(); });
+  cxE("cxSetSave").addEventListener("click",cxSaveSet);
+  cxE("cxOff").addEventListener("click",cxOffAll);
+  setInterval(()=>{ const on=cxE("pBinance").classList.contains("on"), g=cxE("pGuud")&&cxE("pGuud").classList.contains("on");
+    if((on && Date.now()-CX.t>20000) || (g && Date.now()-CX.t>45000)) cxLoad(); },5000);
+  setTimeout(cxLoad,1800);
 })();
 </script></body></html>"""
 
