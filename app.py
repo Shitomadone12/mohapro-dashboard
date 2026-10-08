@@ -20,6 +20,8 @@ Web (session auth):
   /login /register /logout /dashboard /admin
   GET  /api/state         -> xogta account-ka user-ka
   POST /api/command       -> amar loo diro EA-da
+  v13.15: 🔍 CHART SCANNER (Guud neon · tab Scan: LIVE MT5 · SAWIR AI) · 🔍 SCAN ALBAAB (GRID TREND EMA · OFF/DHEXE/ADAG) ·
+          📌 QORSHE TOOS (SR/SMC: scan → zone · SL · TP → gelitaan · 3 sawir · isbarbardhig · Journal) · 🤖 AI ikhtiyaari (ANTHROPIC_API_KEY) - EA v72.3
   v13.14: ⚡ BINARY (Deriv API) - tab cusub · Rise / Fall · RSI 30/70 M1 · bot-ku server-ka ayuu ku socdaa 24/7 · xad maalinle · martingale MA JIRO · DEMO (REAL = 300 trade + win > 55%)
   v13.13: ⇅ LABADA = GRID SPOT (EA v72.2) - range ±2% · 5 lakab · BUY hoos / TP lakab kor · KAR AL · SL · Maamul sitinka SPOT · Heerarka xariiqyada
   v13.12: 🛰 XAALADDA BOT-KA (Analiis): VPS / PC · HADDA (SUG · TRADE · JOOG) · hubinta · maanta + DHACDOOYINKA (EA v72.1.7)
@@ -50,6 +52,7 @@ Web (session auth):
   v12.22: 🎯 ZONE YAR (zn) · 💱 LAMAANAHA (pairs · SET:PAIRS=h..) - EA v70.8
   GET/POST /api/music     -> v12.20: 🎵 liiska heesaha (link-yo)
   GET  /api/binary/state · POST /api/binary/connect|disconnect|config|run -> v13.14: ⚡ BINARY (Deriv)
+  POST /qt (EA) · GET /api/qt/state|live|plan/<id> · POST /api/qt/scan|cancel|ai|photo -> v13.15: 🔍 SCAN · 📌 QORSHE TOOS
 """
 
 import os, re, json, time, sqlite3, hmac, secrets, logging, threading
@@ -310,6 +313,14 @@ SET_LIMITS = {          # key: (min, max, noocaa)
     "GRMM":      (0, 10080, "int"),  # grid ugu dheer (daq)
     "TKSPM":     (0, 10,   "float"), # filter spread: dhaqdhaqaaq >= X x spread (0 = off)
     "TKTR":      (0, 1,    "int"),   # filter trend EMA50 M5
+    "SCG":       (0, 2,    "int"),   # v13.15 (EA v72.3): 🔍 SCAN ALBAAB 0 OFF · 1 DHEXE · 2 ADAG
+    "QTON":      (0, 1,    "int"),   # 📌 QORSHE TOOS shidan
+    "QTMODE":    (0, 1,    "int"),   # 0 TOOS · 1 XAQIIJIN (CHoCH M5)
+    "QTMAX":     (1, 20,   "int"),   # qorshayaal firfircoon ugu badan
+    "QTH":       (1, 48,   "int"),   # muddo qorshe (saac)
+    "QTRISK":    (0.1, 5,  "float"), # khatar % trade kasta
+    "QTDAY":     (0, 20,   "int"),   # trade maalintii (0 = xad la'aan)
+    "QTDRAW":    (0, 1,    "int"),   # chart-ka ku sawir
 }
 BSK_KEYS = ("BSK", "BSKSIG", "BSKN", "BSKENT", "BSKRISK", "BSKMAX", "BSKDAY", "BSKSPR",
             "BSKTP", "BSKTGT", "BSKBE", "BSKLOCK", "BSKSES", "BSKBLK", "BSKDTOL", "BSKDNECK", "BSKDTP")
@@ -323,13 +334,14 @@ TK_KEYS = ("TK", "TKONLY", "TKW", "TKK", "TKMV", "TKSEC", "TKLOT", "TKRISK", "TK
 ZN_KEYS = ("ZNON", "ZNTF", "ZNSH", "ZNT", "ZNW", "ZNMX", "ZNSL", "ZNTP")   # v12.22 (EA v70.8): 🎯 ZONE YAR
 CB_KEYS = ("CBON", "CBTF", "CBN", "CBSQ")
 CORE_KEYS = ("C1ON", "C1DL", "C2ON", "C2DL")   # v13.0 (EA v72.0): 🧩 2 CORE
+QT_KEYS = ("SCG", "QTON", "QTMODE", "QTMAX", "QTH", "QTRISK", "QTDAY", "QTDRAW")   # v13.15 (EA v72.3): 🔍 · 📌
 GR_KEYS = ("GRON", "GRONLY", "GRDIR", "GRSTR", "GRSTEP", "GRSATR", "GRSPX", "GRLV", "GRLOT", "GRTP", "GRLK", "GRLKP", "GRBM", "GRTPR", "GRLKR", "GRLPB", "GRSTPR", "GRLBR", "GRLBTP", "GRLBSL", "GRLKD", "GRLBM", "GRFMAX",
            "GRETF", "GREF", "GRES", "GRSTPP", "GRTPM", "GRTPX", "GRLKX", "GRSLX", "GRHGMT",
            "GRSL", "GRHL", "GRCD", "GRMD", "GRDL", "GRNW", "GRHS", "GRHE", "GRMM")   # v12.25 (EA v71.0): 🪜 GRID STOP                                  # v12.24 (EA v70.9): 📏 CABBIR LAMAANE
 PR_KEYS = ("PAIRS", "PRON", "PRMAX")                                       # v12.22 (EA v70.8): 💱 LAMAANAHA (admin · macmiil-ka looma gudbiyo)
 
 # v12.18 (EA v70.6): ⚙️ INPUT - dhammaan input-yada EA-ga (p34.py ayaa soo saaray · EA-ga iyo app-ka isku hash)
-INP_SCHEMA_JSON = r'''{"h":"09cc42c6","ver":"72.2","n":377,"groups":[{"name":"0 · TIJAABO (v65.3)","cat":"SYS"},{"name":"0c · ATR ADAPTIVE (v66.5 - SL/TP suuqa ayuu la socdaa)","cat":"MAIN"},{"name":"0a · STEP-LOCK (v66.2 - faa'iido xidhid tallaabo tallaabo)","cat":"MAIN"},{"name":"0b · SNIPER MODE (v66)","cat":"MAIN"},{"name":"🥇 GOLD BASKET (v69.0 · XAUUSD oo keliya)","cat":"GOLD"},{"name":"⚡ TICK SCALPER · XAUUSD (v70.0)","cat":"TICK"},{"name":"1 · SHATI & AMMAAN","cat":"SYS"},{"name":"2 · XEELAD - DOORASHO","cat":"MAIN"},{"name":"3 · XADKA TIRADA TRADE-KA (is-dul-saarid)","cat":"PROT"},{"name":"4 · KHATAR & LOT","cat":"PROT"},{"name":"5 · XADKA AMMAANKA (khasaare / faa'iido)","cat":"PROT"},{"name":"6 · SL / TP (aasaaska)","cat":"MAIN"},{"name":"7 · BREAK-EVEN & TRAILING","cat":"MAIN"},{"name":"8 · QAYB-XIRID (Partial / ScaleOut / TP-Ladder)","cat":"MAIN"},{"name":"9 · XIRITAAN HORE","cat":"MAIN"},{"name":"10 · FILTER - XAALADDA SUUQA","cat":"FILT"},{"name":"11 · FILTER - EMA (JIHADA · H1 + H4)","cat":"FILT"},{"name":"12 · FILTER - TREND FOLLOW","cat":"FILT"},{"name":"13 · FILTER - KALE","cat":"FILT"},{"name":"14 · WAQTI & SESSION","cat":"FILT"},{"name":"15 · WARARKA (NEWS)","cat":"PROT"},{"name":"16 · XEELAD: SR (Support / Resistance)","cat":"SRSD"},{"name":"19 · XEELAD: SMC (Smart Money)","cat":"SMC"},{"name":"19b · ★ SCORING & LOT (v68.1)","cat":"MAIN"},{"name":"22 · HABKA FULINTA","cat":"SYS"},{"name":"23 · PROP FIRM","cat":"PROT"},{"name":"24 · TELEGRAM","cat":"SYS"},{"name":"25 · CLOUD DASHBOARD","cat":"SYS"},{"name":"26 · MUUQAALKA CHART-KA","cat":"SYS"},{"name":"21b · SUPPLY & DEMAND (v61 - mishiin cusub)","cat":"SRSD"},{"name":"27 · DIIWAAN & DEBUG","cat":"SYS"},{"name":"28 · 💱 LAMAANAHA (v70.8)","cat":"SYS"},{"name":"29 · 📏 CABBIR LAMAANE · TICK + BASKET (v70.9)","cat":"TICK"},{"name":"🧩 CORE (v72.0)","cat":"SYS"},{"name":"30 · 🪜 GRID STOP · keli (v71.0)","cat":"GRID"},{"name":"30b · ⇅ LABADA SPOT · GRID STOP (v72.2)","cat":"GRID"}],"items":[{"n":"Disable_All_Management","l":"Disable All Management","g":0,"k":1,"t":"b"},{"n":"Test_Loose_Filters","l":"TRUE = fitarada AAN zone-ka ahayn waa la dabciyay (News/Session/Cooldown/Regime-ADX/MTF/EMA200/Correlation/H1-","g":0,"k":0,"t":"b","x":0,"r":0,"m":0},{"n":"Adaptive_SLTP","l":"TRUE = SL/TP shumac kasta dib ayaa loo xisaabiyaa ATR-ka HADDA (marxaladda suuqa). Hore: hal mar oo keliya fur","g":1,"k":1,"t":"b"},{"n":"Adaptive_TF","l":"TF-ka ATR-ka","g":1,"k":0,"t":"e","x":1,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"Adaptive_SL_Mult","l":"SL = ATR x tan","g":1,"k":0,"t":"d","x":2,"r":0,"m":0},{"n":"Adaptive_TP_Mult","l":"TP = ATR x tan","g":1,"k":0,"t":"d","x":3,"r":0,"m":0},{"n":"Adaptive_Max_R","l":"xadka sare - SL/TP ha ka ballaadhan tan x kii asalka ahaa (0 = xad ma jiro)","g":1,"k":0,"t":"d","x":4,"r":0,"m":0},{"n":"Adaptive_Min_R","l":"xadka hoose - ha ka yaraan tan x kii asalka ahaa (0 = xad ma jiro)","g":1,"k":0,"t":"d","x":5,"r":0,"m":0},{"n":"Adaptive_Log","l":"qor beddel kasta","g":1,"k":0,"t":"b","x":6,"r":0,"m":0},{"n":"Lock_Mode","l":"BE_ONLY = SL wuxuu ku sii jiraa BREAK-EVEN (trade-ku meel bannaan buu helayaa) | STEP = SL tallaabo tallaabo k","g":2,"k":1,"t":"e","o":[[0,"STEP"],[1,"BE_ONLY"]]},{"n":"Lock_BE_Buffer_Pips","l":"BE_ONLY - SL = entry + intan pip (0 = entry sax ah)","g":2,"k":0,"t":"d","x":7,"r":0,"m":0},{"n":"Step_Lock_Enable","l":"TRUE = SL tallaabo tallaabo kor buu u socdaa (faa'iidada waa la xidhaa). Trade WELIGIIS lama xidho - kaliya SL","g":2,"k":1,"t":"b"},{"n":"Step_Lock_Pips","l":"tallaabo kasta (pip). SL-ku wuxuu ka dambeeyaa sicirka intaas","g":2,"k":1,"t":"d"},{"n":"Step_Lock_Start_Pips","l":"faa'iidada ugu horraysa ee SL-ku dhaqaaqo (pip). 15 -> +15 = SL break-even","g":2,"k":1,"t":"d"},{"n":"Step_Lock_Log","l":"qor tallaabo kasta (Experts log)","g":2,"k":0,"t":"b","x":8,"r":0,"m":0},{"n":"Inp_Sniper_Mode","l":"SNIPER - zone WEYN (M30) + xaqiijin yar (CHoCH M5) gudaha zone-ka -> SL cidhiidhi, RR sare. false = mishiinkii","g":3,"k":1,"t":"b"},{"n":"Sniper_LTF","l":"timeframe-ka yar ee xaqiijinta (CHoCH)","g":3,"k":0,"t":"e","x":9,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"Inp_Sniper_Touch_Bars","l":"6 saac - taabashadu waa inay dhowdahay","g":3,"k":0,"t":"i","x":10,"r":0,"m":8},{"n":"Sniper_Swing_Len","l":"xoogga swing-ka LTF (shumac dhinac kasta)","g":3,"k":0,"t":"i","x":11,"r":0,"m":0},{"n":"Sniper_SL_Buffer_Pips","l":"SL = hooseynta/sarreynta sweep-ka + inta pip","g":3,"k":0,"t":"d","x":12,"r":0,"m":0},{"n":"Sniper_SL_Min_Pips","l":"SL ugu yar (pip) - ka yar -> waa la ballaadhinayaa ilaa tan","g":3,"k":0,"t":"d","x":13,"r":0,"m":0},{"n":"Sniper_SL_ATR_TF","l":"ATR-ka SL-ka sniper-ka (JPY/GBP ayuu la qabsadaa)","g":3,"k":0,"t":"e","x":14,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"Sniper_SL_Min_ATR","l":"SL ugu yar = N x ATR (0 = off, pip-ka oo keliya)","g":3,"k":0,"t":"d","x":15,"r":0,"m":0},{"n":"Sniper_SL_Buf_ATR","l":"buffer-ka gadaasha sweep-ka = max(pip, N x ATR)","g":3,"k":0,"t":"d","x":16,"r":0,"m":0},{"n":"Sniper_SL_Spread_Mult","l":"SL ugu yar = N x spread","g":3,"k":0,"t":"d","x":17,"r":0,"m":0},{"n":"Sniper_SL_Max_ATR","l":"SL ugu weyn = max(SNSLMAX, N x ATR) (0 = SNSLMAX oo keliya)","g":3,"k":0,"t":"d","x":18,"r":0,"m":0},{"n":"Inp_Sniper_SL_Max_Pips","l":"Sniper SL Max Pips","g":3,"k":1,"t":"d"},{"n":"Inp_Sniper_RR","l":"TP = SL x tan","g":3,"k":1,"t":"d"},{"n":"Inp_Sniper_Max_Trades_Day","l":"trade ugu badan MAALINTII - DHAMMAAN lammaanayaasha/chart-yada (magic-ga MOHA). 0 = xad ma jiro","g":3,"k":1,"t":"i"},{"n":"Sniper_Symbols","l":"lammaanayaasha la ogol yahay (madhan = dhammaan). XAUUSD pip-kiisu waa ka duwan yahay - gooni u tijaabi","g":3,"k":0,"t":"s","x":19,"r":0,"m":0},{"n":"Sniper_Session_Only","l":"kaliya London + New York","g":3,"k":0,"t":"b","x":20,"r":0,"m":0},{"n":"Sniper_GMT_Start","l":"London ka hor","g":3,"k":0,"t":"i","x":21,"r":0,"m":0},{"n":"Sniper_GMT_End","l":"NY dhammaadka","g":3,"k":0,"t":"i","x":22,"r":0,"m":0},{"n":"Inp_BSK_On","l":"default ON (DOUBLE) · v69.7: OFF (ASIA ayaa beddelay) · v69.0 GOLD BASKET: XAUUSD signal kasta -> basket (lamm","g":4,"k":1,"t":"b"},{"n":"Inp_BSK_Signal","l":"signal-ka dahabka: ZONE (demand/supply) · EMA pullback · LABADA · DOUBLE (v69.9: top/bottom salka + EMA)","g":4,"k":1,"t":"e","o":[[0,"ZONE"],[1,"EMA"],[2,"BOTH"],[3,"DBL"]]},{"n":"Inp_BSK_Trades","l":"trade-yada basket-ka (2-5)","g":4,"k":1,"t":"i"},{"n":"Inp_BSK_Entry","l":"LAKAB: #1 hadda, inta kale zone-ka gudihiisa · ISKU MAR: dhammaan hadda","g":4,"k":1,"t":"e","o":[[0,"LAKAB"],[1,"ISKUMAR"]]},{"n":"Inp_BSK_Risk_Pct","l":"risk basket-ka OO DHAN (% balance) - trade-yada ayaa loo qaybiyaa, ma labanlaabmo (v69.5: 0.5-1%)","g":4,"k":1,"t":"d"},{"n":"Inp_BSK_MaxLoss_USD","l":"xad adag ($) SAQAF: xadka dhabta ah = MIN(kan, 1.2 x risk $) · 0 = auto (1.2 x risk) oo keliya","g":4,"k":1,"t":"d"},{"n":"Inp_BSK_Max_Day","l":"basket maalintii (ugu badnaan) · v69.5: 2 (3 hore)","g":4,"k":1,"t":"i"},{"n":"Inp_BSK_Max_Spread","l":"spread ugu badan (sent: 35 = $0.35)","g":4,"k":1,"t":"i"},{"n":"Inp_BSK_TP_Mode","l":"TP: JARANJAR (1R · 2R · 3R) · WADAJIR ($ bartilmaameed -> xidh dhammaan)","g":4,"k":1,"t":"e","o":[[0,"JARANJAR"],[1,"WADAJIR"]]},{"n":"Inp_BSK_Target_USD","l":"WADAJIR: bartilmaameedka faa'iidada ($)","g":4,"k":1,"t":"d"},{"n":"Inp_BSK_BE_TP1","l":"TP1 kadib -> inta kale SL = break-even (basket-ku ma khasaari karo)","g":4,"k":1,"t":"b"},{"n":"Inp_BSK_Lock","l":"qufulka faa'iidada: faa'iidada ugu sarreysa 50% ha lumin","g":4,"k":1,"t":"b"},{"n":"Inp_BSK_Session","l":"waqtiga dahabka oo keliya (London + NY, GMT hoose)","g":4,"k":1,"t":"b"},{"n":"Inp_BSK_Dir_Block","l":"2 basket oo isku jiho ah oo khasaara -> jihadaas maanta waa la joojiyaa","g":4,"k":1,"t":"b"},{"n":"BSK_GMT_Start","l":"waqtiga dahabka: bilow (GMT)","g":4,"k":0,"t":"i","x":23,"r":0,"m":0},{"n":"BSK_GMT_End","l":"waqtiga dahabka: dhammaad (GMT)","g":4,"k":0,"t":"i","x":24,"r":0,"m":0},{"n":"BSK_Layer_Expire_Min","l":"LAKAB: lakabyada aan buuxsamin X daqiiqo kadib waa la tirtiraa","g":4,"k":0,"t":"i","x":25,"r":0,"m":0},{"n":"BSK_Cooldown_Min","l":"basket xidhmay kadib - sug (daqiiqo)","g":4,"k":0,"t":"i","x":26,"r":0,"m":0},{"n":"BSK_Lock_Start_Pct","l":"qufulku wuxuu bilaabmaa marka faa'iidadu = X% risk-ka ($)","g":4,"k":0,"t":"d","x":27,"r":0,"m":0},{"n":"BSK_Lock_Keep_Pct","l":"... kadib X% faa'iidada ugu sarreysa waa la ilaaliyaa","g":4,"k":0,"t":"d","x":28,"r":0,"m":0},{"n":"BSK_MaxLoss_Mult","l":"v69.5 · xadka khasaaraha = N x risk-ga $ ee basket-ka (1.05-3)","g":4,"k":0,"t":"d","x":29,"r":0,"m":0},{"n":"BSK_Step_Lock","l":"v69.5 · TP2 kadib -> trade-yada hadhay SL = TP1 (ugu yaraan +2R)","g":4,"k":0,"t":"b","x":30,"r":0,"m":0},{"n":"BSK_EMA_Fast","l":"EMA pullback: EMA degdeg (M5)","g":4,"k":0,"t":"i","x":31,"r":1,"m":0},{"n":"BSK_EMA_Mid","l":"EMA pullback: EMA dhexe (M5 + trend TF)","g":4,"k":0,"t":"i","x":32,"r":1,"m":0},{"n":"BSK_EMA_Slow","l":"EMA pullback: EMA gaabis (trend TF)","g":4,"k":0,"t":"i","x":33,"r":1,"m":0},{"n":"BSK_Trend_TF","l":"EMA pullback: timeframe-ka trend-ka","g":4,"k":0,"t":"e","x":34,"r":1,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"BSK_Entry_TF","l":"EMA pullback: timeframe-ka gelitaanka","g":4,"k":0,"t":"e","x":35,"r":1,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"BSK_Pull_Tol_ATR","l":"EMA pullback: dulqaadka band-ka EMA (x ATR)","g":4,"k":0,"t":"d","x":36,"r":0,"m":0},{"n":"BSK_Symbols","l":"lammaanayaasha basket-ka (magaca ku jira)","g":4,"k":0,"t":"s","x":37,"r":0,"m":0},{"n":"BSK_Trend_Sep_ATR","l":"v69.4 · trend: EMA50/EMA200 (M15) kala fogaan >= N x ATR (range -> ma ganacsado)","g":4,"k":0,"t":"d","x":38,"r":0,"m":0},{"n":"BSK_Trend_Slope_ATR","l":"v69.4 · trend: EMA50 M15 janjeer (8 shumac) >= N x ATR","g":4,"k":0,"t":"d","x":39,"r":0,"m":0},{"n":"BSK_Chop_Bars","l":"v69.4 · chop: shumacyada M5 ee la eegayo","g":4,"k":0,"t":"i","x":40,"r":0,"m":0},{"n":"BSK_Chop_Max","l":"v69.4 · chop: gudbidda EMA50 ugu badan (ka badan -> ma ganacsado)","g":4,"k":0,"t":"i","x":41,"r":0,"m":0},{"n":"BSK_Need_Structure","l":"v69.4 · qaab-dhismeed M15: BUY = HH/HL · SELL = LH/LL","g":4,"k":0,"t":"b","x":42,"r":0,"m":0},{"n":"BSK_Flip_Hours","l":"v69.4 · basket kadib jihada lidka ah lama furo X saac","g":4,"k":0,"t":"i","x":43,"r":0,"m":0},{"n":"BSK_Dbl_TF","l":"timeframe-ka (M15 ayaa la tijaabiyay · M5 ma shaqeyn)","g":4,"k":0,"t":"e","x":44,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"Inp_BSK_Dbl_Tol","l":"labada sal / top kala fogaanshaha ugu badan (x ATR)","g":4,"k":1,"t":"d"},{"n":"Inp_BSK_Dbl_Neck","l":"neckline ugu yar (x ATR) salka ka sarreeya","g":4,"k":1,"t":"d"},{"n":"Inp_BSK_Dbl_TP_R","l":"TP lakab kasta (x R)","g":4,"k":1,"t":"d"},{"n":"BSK_Dbl_GapMin","l":"shumacyada u dhexeeya labada sal (ugu yar)","g":4,"k":0,"t":"i","x":45,"r":0,"m":0},{"n":"BSK_Dbl_GapMax","l":"... (ugu badan)","g":4,"k":0,"t":"i","x":46,"r":0,"m":0},{"n":"Inp_TK_On","l":"Momentum tick scalper (tijaabo: \"Every tick based on real ticks\")","g":5,"k":1,"t":"b"},{"n":"Inp_TK_Only","l":"TICK OO KELIYA: marka TICK shidan yahay, main / basket / asia lammaanahan ma furaan","g":5,"k":1,"t":"b"},{"n":"Inp_TK_Window","l":"TICK TRACKER: W = isbeddelada qiimaha ee la eegayo (3-50)","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Need","l":"TICK TRACKER: K = inta jiho isku mid ah loo baahan yahay (W ka mid)","g":5,"k":1,"t":"i"},{"n":"Inp_TK_MinMove","l":"dhaqdhaqaaqa ugu yar ee window-ka ($ qiime)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_MaxSec","l":"xawaare: window-ku ha ku dhammaado X ilbiriqsi (0 = off)","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Lot","l":"lot go'an (marka Risk = 0)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_Risk_Pct","l":"> 0: lot = risk % / Virtual SL (0 = lot go'an)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_VSL","l":"VIRTUAL SL ($ qiime · broker-ka lama tuso)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_VTP","l":"VIRTUAL TP ($ qiime · 0 = trailing oo keliya)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_BE_Trig","l":"BREAK-EVEN: faa'iido $X -> SL = entry + lock (0 = off)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_BE_Lock","l":"BREAK-EVEN: lock ($ qiime)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_Trail_Start","l":"TRAILING virtual: bilow ($ faa'iido · 0 = off)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_Trail_Dist","l":"TRAILING virtual: masaafada heerka ugu sarreeya ($)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_Hard_SL","l":"SL ADAG broker-ka ($ · ilaalin internet go'a · ugu yaraan VSL + $1)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_Max_Hold","l":"trade ugu dheer (ilbiriqsi) -> xidh (0 = off)","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Hour_Start","l":"saacadaha (waqtiga SERVER-ka): bilow","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Hour_End","l":"saacadaha (waqtiga SERVER-ka): dhammaad","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Max_Spread","l":"spread ugu badan (sent: 35 = $0.35)","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Cooldown","l":"sug X ilbiriqsi kadib trade kasta","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Max_Day","l":"trade maalintii ugu badan","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Max_Losses","l":"khasaare isku xiga -> hakad (0 = off)","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Pause_Min","l":"hakadka (daqiiqo)","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Day_Loss_Pct","l":"khasaaraha maalinlaha TICK (% balance) -> maanta jooji (0 = off)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_Day_Target_Pct","l":"faa'iidada maalinlaha (% balance) -> maanta jooji (0 = off)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_Basket","l":"BASKET (trade-yo badan) · false = HAL TRADE","g":5,"k":1,"t":"b"},{"n":"Inp_TK_Bsk_Trades","l":"trade-yada (2-5)","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Bsk_Entry","l":"lakabyada: ISKU MAR · SIGNAL KASTA","g":5,"k":1,"t":"e","o":[[0,"ALL"],[1,"SIG"]]},{"n":"Inp_TK_Bsk_Exit","l":"xidhitaan: TP KASTA · WADAJIR ($)","g":5,"k":1,"t":"e","o":[[0,"EACH"],[1,"SUM"]]},{"n":"Inp_TK_Bsk_Target","l":"bartilmaameed WADAJIR ($ faa'iidada guud)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_Bsk_BE","l":"faa'iido guud $X -> SL wadaag = celceliska entry (0 = off)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_Bsk_LotPer","l":"0.01 lot $X balance kasta (compounding · 0 = off)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_TPR_On","l":"TP RAAC - qiimuhu TP-ga marka uu u dhawaado -> TP-ga fogee + SL quful","g":5,"k":1,"t":"b"},{"n":"Inp_TK_TPR_Start","l":"bilow marka faa'iidadu gaadho X% masaafada TP-ga (50-95)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_TPR_Lock","l":"SL-ka ku quful X% masaafada TP-ga (10-90 · < Bilow)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_TPR_Step","l":"TP-ga u dheeree $X (qiime) raac kasta","g":5,"k":1,"t":"d"},{"n":"Inp_TK_TPR_Max","l":"raac ugu badan trade kasta (1-10)","g":5,"k":1,"t":"i"},{"n":"Inp_TK_TP_Mode","l":"TAKE PROFIT: VIRTUAL (bot-ka ayaa xidha) · BROKER (T/P-ga MT5)","g":5,"k":1,"t":"e","o":[[0,"VIRTUAL"],[1,"BROKER"]]},{"n":"Inp_TK_SL_Mode","l":"STOP LOSS: VIRTUAL (bot-ka ayaa xidha) · BROKER (server-ka · slippage yar)","g":5,"k":1,"t":"e","o":[[0,"VIRTUAL"],[1,"BROKER"]]},{"n":"Inp_TK_Spread_Mult","l":"filter spread: dhaqdhaqaaq >= X x spread (0 = off)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_Dir_On","l":"🧭 JIHADA SUUQA - tick-yada jihada guud oo keliya (shumacyada M1 · EMA20/50 · 5 daq · EMA50 M5)","g":5,"k":1,"t":"b"},{"n":"Inp_TK_Dir_Mode","l":"JILICSAN 2/4 · DHEXE 3/4 · ADAG 4/4 calaamadood","g":5,"k":1,"t":"e","o":[[0,"SOFT"],[1,"MID"],[2,"HARD"]]},{"n":"Inp_TK_Dir_Bars","l":"shumacyada M1 ee la eegayo (3-20)","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Dir_Need","l":"inta shumac ee jiho isku mid ah (Bars ka mid)","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Dir_Str","l":"xoogga ugu yar % (ka yar = RANGE -> ha galin)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_Dir_Wait","l":"khasaare kadib -> jihadaas sug X daqiiqo (0 = off)","g":5,"k":1,"t":"i"},{"n":"Inp_ZN_On","l":"🎯 ZONE YAR - TICK wuxuu ka galaa zone-yada yaryar oo keliya (SELL saqaf · BUY dabaq)","g":5,"k":1,"t":"b"},{"n":"Inp_ZN_TF","l":"timeframe-ka zone-yada · M1 · M5 · LABADA (M5 zone + M1 xaqiijin)","g":5,"k":1,"t":"e","o":[[0,"M1"],[1,"M5"],[2,"BOTH"]]},{"n":"Inp_ZN_Show","l":"chart-ka ku sawir (false = qari · ganacsigu wuu socdaa)","g":5,"k":1,"t":"b"},{"n":"Inp_ZN_Touch","l":"taabasho ugu yar (2-6) · ka yar = lama sawiro","g":5,"k":1,"t":"i"},{"n":"Inp_ZN_W","l":"ballaca ugu badan × ATR timeframe-ka (0.05-1.0)","g":5,"k":1,"t":"d"},{"n":"Inp_ZN_Max","l":"zone-yada la hayo · kuwa qiimaha ugu dhow (1-10)","g":5,"k":1,"t":"i"},{"n":"Inp_ZN_SL","l":"SL = zone-ka geeskiisa ± $X","g":5,"k":1,"t":"d"},{"n":"Inp_ZN_TP","l":"TP = zone-ka xiga · ama TICK caadi","g":5,"k":1,"t":"e","o":[[0,"ZONE"],[1,"TICK"]]},{"n":"Inp_TK_Trend","l":"filter trend EMA50 M5 (BUY kor oo keliya · SELL hoos oo keliya)","g":5,"k":1,"t":"b"},{"n":"Inp_TK_Panel","l":"panel qoraal ah chart-ka (default OFF - xogtu app-ka ayey ku jirtaa · tester-ka mar walba waa la tusaa)","g":5,"k":0,"t":"b","x":47,"r":0,"m":0},{"n":"License_Key","l":"Furaha shatiga (license key)","g":6,"k":2,"t":"s"},{"n":"Enable_AccountLock","l":"Ku xir account gaar ah (on/off)","g":6,"k":2,"t":"b"},{"n":"Licensed_Account","l":"Lambarka account-ka la ogolaaday (0 = mid kasta)","g":6,"k":2,"t":"i"},{"n":"Expiry_Date","l":"Taariikhda uu shatigu dhacayo","g":6,"k":2,"t":"s"},{"n":"Cloud_Auth_Token","l":"Furaha ammaanka - waa la dejiyay (v59.8). HA LA WADAAGIN FAYLKA.","g":6,"k":2,"t":"s"},{"n":"MohaPro_Key","l":"FURAHAAGA BOT-KA (app-ka ka koobi garee: Maamul/Guud). Account-kan OO KELIYA ayuu u shaqeeyaa. Madhan = furihi","g":6,"k":2,"t":"s"},{"n":"Require_Signed_Commands","l":"Require Signed Commands","g":6,"k":2,"t":"b"},{"n":"Panel_Stats_Period","l":"Panel WinRate/PF - muddo (TODAY/WEEK/MONTH/ALL)","g":6,"k":0,"t":"e","x":48,"r":0,"m":0,"o":[[0,"TODAY"],[1,"WEEK"],[2,"MONTH"],[3,"ALL"]]},{"n":"Panel_Stats_This_Symbol_Only","l":"tirakoobku lammaanahan oo keliya (false = account oo dhan)","g":6,"k":0,"t":"b","x":49,"r":0,"m":0},{"n":"Strategy_Mode","l":"Xeeladda: SR/SD · SMC · LABADA (EMA = filter kaliya)","g":7,"k":0,"t":"e","x":50,"r":1,"m":0,"o":[[0,"SRSD"],[1,"SMC"],[2,"BOTH"]]},{"n":"Trade_Timeframe","l":"Timeframe-ka ganacsiga (M1 ama M5)","g":7,"k":0,"t":"e","x":51,"r":0,"m":0,"o":[[1,"M1"],[5,"M5"]]},{"n":"One_Trade_Per_Symbol","l":"Hal trade lammaanahiiba (xeeladuhu ha isku raran)","g":8,"k":0,"t":"b","x":52,"r":0,"m":0},{"n":"Enable_Conflict_Guard","l":"Ka hortag BUY & SELL isku mar","g":8,"k":0,"t":"b","x":53,"r":0,"m":0},{"n":"Max_Open_Trades","l":"One_Trade_Per_Symbol horeba 1 buu ogolaa - hadda waa run","g":8,"k":0,"t":"i","x":54,"r":0,"m":0},{"n":"Inp_Max_Trades_Per_Day","l":"Max Trades Per Day","g":8,"k":1,"t":"i"},{"n":"MinMinutesBetweenTrades","l":"MinMinutesBetweenTrades","g":8,"k":0,"t":"i","x":55,"r":0,"m":0},{"n":"One_Trade_Per_Zone","l":"1 ZONE = 1 TRADE kaliya weligiis (SR/S&D) - marka zone la ganacsado, mar dambe lama isticmaali doono","g":8,"k":0,"t":"b","x":56,"r":0,"m":0},{"n":"Avoid_Reentry_Near_Loss","l":"ka fogow dib-u-gelid meesha khasaaraha ugu dambeeyay (zone-chop/whipsaw ka hortag)","g":8,"k":0,"t":"b","x":57,"r":0,"m":0},{"n":"Reentry_Avoid_ATR","l":"fogaanta (ATR x) khasaaraha ugu dambeeyay ee la ilaalinayo","g":8,"k":0,"t":"d","x":58,"r":0,"m":0},{"n":"Reentry_Avoid_Minutes","l":"Reentry Avoid Minutes","g":8,"k":0,"t":"i","x":59,"r":0,"m":0},{"n":"AllowMultiplePerBar","l":"Ogolow trade badan shumac kasta (false = hal trade shumacii)","g":8,"k":0,"t":"b","x":60,"r":0,"m":0},{"n":"One_Trade_Per_H1_Bar","l":"Hal trade saacaddii (H1)","g":8,"k":0,"t":"b","x":61,"r":0,"m":0},{"n":"Enable_NewBar_Only","l":"Signal kaliya marka shumac cusub furmo","g":8,"k":0,"t":"b","x":62,"r":0,"m":0},{"n":"Inp_Risk_Percent","l":"Khatarta trade kasta (% haraaga)","g":9,"k":1,"t":"d"},{"n":"Auto_Lot","l":"Lot toos ah oo ka yimaada khatarta % (on/off)","g":9,"k":0,"t":"b","x":63,"r":0,"m":0},{"n":"InitialLot","l":"Lot-ka bilowga (marka Auto Lot damman yahay)","g":9,"k":0,"t":"d","x":64,"r":0,"m":0},{"n":"Enable_Dynamic_Risk","l":"Enable Dynamic Risk","g":9,"k":0,"t":"b","x":65,"r":0,"m":0},{"n":"DynRisk_Loss_Trigger","l":"Immisa khasaare kadib ayaa khatarta la yareeyaa","g":9,"k":0,"t":"i","x":66,"r":0,"m":0},{"n":"DynRisk_Reduced_Pct","l":"Khatarta la yareeyay (%)","g":9,"k":0,"t":"d","x":67,"r":0,"m":0},{"n":"MagicNumber","l":"Magic number - aqoonsiga bot-ka","g":9,"k":2,"t":"i"},{"n":"Inp_Daily_Loss_Limit_Percent","l":"Xadka khasaaraha maalinlaha (%)","g":10,"k":1,"t":"d"},{"n":"Max_Losses_Per_Day","l":"Khasaare ugu badan maalintii","g":10,"k":0,"t":"i","x":68,"r":0,"m":0},{"n":"Max_Consecutive_Losses","l":"Khasaare isku xigta oo ugu badan","g":10,"k":0,"t":"i","x":69,"r":0,"m":0},{"n":"Max_True_Consecutive_Losses","l":"shabaqa ammaanka DHABTA ah","g":10,"k":0,"t":"i","x":70,"r":0,"m":0},{"n":"Inp_Max_Total_Drawdown_Pct","l":"Drawdown-ka guud ee ugu badan (%)","g":10,"k":1,"t":"d"},{"n":"Enable_ExtraSafety","l":"Ammaan dheeraad ah (on/off)","g":10,"k":0,"t":"b","x":71,"r":1,"m":0},{"n":"Daily_Profit_Target_Pct","l":"Bartilmaameedka faa'iidada maalinlaha (%)","g":10,"k":0,"t":"d","x":72,"r":0,"m":0},{"n":"Weekly_Profit_Target_Pct","l":"Bartilmaameedka faa'iidada usbuucle (%)","g":10,"k":0,"t":"d","x":73,"r":0,"m":0},{"n":"Enable_Daily_Profit_Lock","l":"Enable Daily Profit Lock","g":10,"k":0,"t":"b","x":74,"r":0,"m":0},{"n":"Enable_Weekly_Profit_Lock","l":"Enable Weekly Profit Lock","g":10,"k":0,"t":"b","x":75,"r":0,"m":0},{"n":"Enable_PortfolioMgmt","l":"Maareynta portfolio (on/off)","g":10,"k":0,"t":"b","x":76,"r":0,"m":0},{"n":"Max_Portfolio_Risk","l":"Khatarta guud ee ugu badan (%)","g":10,"k":0,"t":"d","x":77,"r":0,"m":0},{"n":"Equity_Protection_Pct","l":"Ilaalinta equity-ga (%)","g":10,"k":0,"t":"d","x":78,"r":0,"m":0},{"n":"SLTP_Mode","l":"Halka SL/TP laga qaato: FIXED (pips go'an) / ATR / SMC_PRO","g":11,"k":0,"t":"e","x":79,"r":0,"m":0,"o":[[0,"FIXED"],[1,"ATR"],[2,"SMC_PRO"]]},{"n":"StopLoss_Pips_Fixed","l":"SL: fogaanta (pips) - habka FIXED","g":11,"k":0,"t":"i","x":80,"r":0,"m":0},{"n":"TakeProfit_Pips_Fixed","l":"TP: fogaanta (pips) - habka FIXED","g":11,"k":0,"t":"i","x":81,"r":0,"m":0},{"n":"ATR_Period_Core","l":"Muddada ATR-ka aasaasiga ah","g":11,"k":0,"t":"i","x":82,"r":0,"m":0},{"n":"Safety_Buffer_Pips","l":"Buffer-ka ammaanka (pips)","g":11,"k":0,"t":"i","x":83,"r":0,"m":0},{"n":"Enforce_Min_RR","l":"Khasab ka dhig RR-ga ugu yar (on/off)","g":11,"k":0,"t":"b","x":84,"r":0,"m":0},{"n":"Min_SL_ATR_Floor","l":"SL-ka UGU YAR (x ATR)","g":11,"k":0,"t":"d","x":85,"r":0,"m":0},{"n":"Min_SL_Spread_Mult","l":"SL-ku waa inuu >= N x spread noqdaa","g":11,"k":0,"t":"d","x":86,"r":0,"m":0},{"n":"Debug_SLTP_Log","l":"qor RAAC-RAACA SL/TP talaabo kasta (Experts log)","g":11,"k":0,"t":"b","x":87,"r":0,"m":0},{"n":"Skip_If_SL_Clamped","l":"haddii SL la ballaadhiyo -> KA TAG (halkii la sii wado)","g":11,"k":0,"t":"b","x":88,"r":0,"m":0},{"n":"Zone_SL_Min_ATR","l":"SD-gu SL-kiisa DISTAL+0.35ATR buu leeyahay","g":11,"k":0,"t":"d","x":89,"r":0,"m":0},{"n":"RR_Skip_If_Short","l":"Haddii bartilmaameedku ku filneyn -> KA TAG (halkii TP la riixi lahaa)","g":11,"k":0,"t":"b","x":90,"r":0,"m":0},{"n":"Force_RR_From_SL","l":"TP = SL x Min_RR_Ratio (RR 1.3 KHASAB - xeelad kastaa)","g":11,"k":0,"t":"b","x":91,"r":0,"m":0},{"n":"Min_RR_Ratio","l":"Min RR Ratio","g":11,"k":0,"t":"d","x":92,"r":0,"m":0},{"n":"TargetProfitUSD","l":"Bartilmaameedka faa'iidada ($) - 0 = damman","g":11,"k":0,"t":"d","x":93,"r":0,"m":0},{"n":"Rev_Structural_SL","l":"Rogmasho: SL ku saleysan qaab-dhismeedka (on/off)","g":11,"k":0,"t":"b","x":94,"r":0,"m":0},{"n":"Rev_SL_Lookback","l":"Rogmasho SL: immisa shumac dib loo eegayo","g":11,"k":0,"t":"i","x":95,"r":0,"m":0},{"n":"Rev_SL_Max_ATR","l":"Rogmasho SL: fogaanta ugu badan (x ATR)","g":11,"k":0,"t":"d","x":96,"r":0,"m":0},{"n":"SMC_SL_Max_ATR","l":"SMC: SL-ga ugu fog (x ATR)","g":11,"k":0,"t":"d","x":97,"r":0,"m":0},{"n":"Liquidity_TP_Min_R","l":"Liquidity TP: R-ga ugu yar","g":11,"k":0,"t":"d","x":98,"r":0,"m":0},{"n":"EnableBreakEven","l":"BE - TP-ga ha jarin","g":12,"k":1,"t":"b"},{"n":"BE_Trigger_R","l":"TP=3R. 2.0R = 2/3 jidka. Haddii BE la shido, ka hor ma jarayo.","g":12,"k":0,"t":"d","x":99,"r":0,"m":0},{"n":"BE_Lock_R","l":"BE Lock R","g":12,"k":0,"t":"d","x":100,"r":0,"m":0},{"n":"Enable_FastBE","l":"FAST BE - kaliya TP Ladder la isticmaalo - HA SHIDIN","g":12,"k":0,"t":"b","x":101,"r":0,"m":0},{"n":"FastBE_Trigger_R","l":"Fast BE: immisa R faa'iido kadib","g":12,"k":0,"t":"d","x":102,"r":0,"m":0},{"n":"FastBE_Lock_R","l":"Fast BE: faa'iidada la xidhayo (R)","g":12,"k":0,"t":"d","x":103,"r":0,"m":0},{"n":"Enable_ATR_Trailing","l":"Enable ATR Trailing","g":12,"k":0,"t":"b","x":104,"r":1,"m":0},{"n":"ATR_Trail_Start_Mult","l":"ATR: multiplier-ka bilowga trail-ka","g":12,"k":0,"t":"d","x":105,"r":0,"m":0},{"n":"ATR_Trail_Step_Mult","l":"ATR: multiplier-ka tallaabada trail-ka","g":12,"k":0,"t":"d","x":106,"r":0,"m":0},{"n":"EnableTrailingStop","l":"Trailing stop - SL sicirka raaca (on/off)","g":12,"k":0,"t":"b","x":107,"r":1,"m":0},{"n":"Trail_Start_R","l":"Trail: R-ga bilowga","g":12,"k":0,"t":"d","x":108,"r":0,"m":0},{"n":"Trail_Step_R","l":"Trail: R-ga tallaabada","g":12,"k":0,"t":"d","x":109,"r":0,"m":0},{"n":"TrailingStartPips","l":"Trailing: pips-ka bilowga","g":12,"k":0,"t":"i","x":110,"r":0,"m":0},{"n":"TrailingStepPips","l":"Trailing: pips-ka tallaabada","g":12,"k":0,"t":"i","x":111,"r":0,"m":0},{"n":"EnablePartialClose","l":"Xidh qayb ka mid ah trade-ka (on/off)","g":13,"k":0,"t":"b","x":112,"r":1,"m":0},{"n":"PartialClosePips","l":"Qayb-xidhid: pips","g":13,"k":0,"t":"i","x":113,"r":0,"m":0},{"n":"PartialClosePercent","l":"Qayb-xidhid: boqolkiiba","g":13,"k":0,"t":"i","x":114,"r":0,"m":0},{"n":"Enable_ScaleOut","l":"Enable ScaleOut","g":13,"k":0,"t":"b","x":115,"r":1,"m":0},{"n":"ScaleOut_R1_Pct","l":"Scale out +1R: boqolkiiba la xidhayo","g":13,"k":0,"t":"i","x":116,"r":0,"m":0},{"n":"ScaleOut_R2_Pct","l":"Scale out +2R: boqolkiiba la xidhayo","g":13,"k":0,"t":"i","x":117,"r":0,"m":0},{"n":"Prop_Scale_Out","l":"Prop Scale Out","g":13,"k":0,"t":"b","x":118,"r":0,"m":0},{"n":"Enable_TP_Ladder","l":"TP Ladder - TP qaybsan + SL tallaabo (on/off) - HA SHIDIN","g":13,"k":0,"t":"b","x":119,"r":1,"m":0},{"n":"TPL_TP1_R","l":"TP Ladder: TP1 immisa R (xidh 50%, SL breakeven)","g":13,"k":0,"t":"d","x":120,"r":1,"m":0},{"n":"TPL_TP2_R","l":"TP Ladder: TP2 immisa R (xidh 25%)","g":13,"k":0,"t":"d","x":121,"r":1,"m":0},{"n":"TPL_TP3_R","l":"TP Ladder: TP3 immisa R (xidh inta hadhay)","g":13,"k":0,"t":"d","x":122,"r":1,"m":0},{"n":"TPL_TP4_R","l":"TP Ladder: TP4 immisa R","g":13,"k":0,"t":"d","x":123,"r":1,"m":0},{"n":"TPL_TP1_Pct","l":"TP Ladder: TP1 boqolkiiba","g":13,"k":0,"t":"i","x":124,"r":1,"m":0},{"n":"TPL_TP2_Pct","l":"TP Ladder: TP2 boqolkiiba","g":13,"k":0,"t":"i","x":125,"r":1,"m":0},{"n":"TPL_TP3_Pct","l":"TP Ladder: TP3 boqolkiiba","g":13,"k":0,"t":"i","x":126,"r":1,"m":0},{"n":"TPL_TP4_Pct","l":"TP Ladder: TP4 boqolkiiba","g":13,"k":0,"t":"i","x":127,"r":1,"m":0},{"n":"TPL_Trail_Final","l":"TP Ladder: trail qaybta u dambaysa (on/off)","g":13,"k":0,"t":"b","x":128,"r":0,"m":0},{"n":"TPL_Trail_Step_R","l":"TP Ladder: tallaabada trail-ka (R)","g":13,"k":0,"t":"d","x":129,"r":0,"m":0},{"n":"Enable_USD_ProfitLock","l":"Enable USD ProfitLock","g":13,"k":0,"t":"b","x":130,"r":1,"m":0},{"n":"LockProfit_USD","l":"Faa'iidada ($) ee la xidhayo","g":13,"k":0,"t":"d","x":131,"r":0,"m":0},{"n":"LockProfit_KeepPct","l":"Faa'iidada: boqolkiiba la haynayo","g":13,"k":0,"t":"d","x":132,"r":0,"m":0},{"n":"LockProfit_Trigger_R","l":"Faa'iidada: R-ga shaqaynaya","g":13,"k":0,"t":"d","x":133,"r":0,"m":0},{"n":"Enable_Stagnant_Exit","l":"Xidh trade aan waxba qabanayn N shumac kadib (on/off)","g":14,"k":0,"t":"b","x":134,"r":1,"m":0},{"n":"Stagnant_Bars","l":"Immisa shumac trade-ku furan yahay ka hor hubinta","g":14,"k":0,"t":"i","x":135,"r":0,"m":0},{"n":"Stagnant_Max_R","l":"Xidh haddii faa'iidadu u dhaxayso -R iyo +R (trade taagan)","g":14,"k":0,"t":"d","x":136,"r":0,"m":0},{"n":"Close_Profit_Before_News","l":"Xidh trade faa'iido leh warka ka hor (on/off)","g":14,"k":0,"t":"b","x":137,"r":0,"m":0},{"n":"News_Exit_Minutes","l":"Daqiiqado warka ka hor oo la xidhayo","g":14,"k":0,"t":"i","x":138,"r":0,"m":0},{"n":"News_Exit_Min_Profit_USD","l":"Kaliya xidh haddii faa'iidadu ka badan tahay ($) - 0 = mid kasta","g":14,"k":0,"t":"d","x":139,"r":0,"m":0},{"n":"News_Exit_High_Only","l":"Kaliya wararka WEYN (false = Weyn + Dhexe)","g":14,"k":0,"t":"b","x":140,"r":0,"m":0},{"n":"News_Exit_Close_Losers","l":"Sidoo kale xidh trade khasaare leh (on/off)","g":14,"k":0,"t":"b","x":141,"r":0,"m":0},{"n":"CloseWeekend","l":"Xidh trade-yada dhammaadka usbuuca (on/off)","g":14,"k":0,"t":"b","x":142,"r":0,"m":0},{"n":"Enable_Market_Regime","l":"Kaliya ganacso xaaladda suuqa ee saxda ah (on/off)","g":15,"k":0,"t":"b","x":143,"r":0,"m":0},{"n":"Regime_Lookback","l":"Xaaladda suuqa: immisa shumac dib loo eegayo","g":15,"k":0,"t":"i","x":144,"r":0,"m":0},{"n":"Filter2_ADX_Strong","l":"ADX filter","g":15,"k":0,"t":"b","x":145,"r":0,"m":0},{"n":"Filter2_ADX_MinLevel","l":"ADX ugu yar (20 = trend caadi, sare = adag)","g":15,"k":0,"t":"d","x":146,"r":0,"m":0},{"n":"Filter2_ADX_Period","l":"Muddada ADX-ga filter-ka","g":15,"k":0,"t":"i","x":147,"r":0,"m":0},{"n":"Filter_Low_Volatility","l":"ha ganacsan suuq aan dhaqaaqayn","g":15,"k":0,"t":"b","x":148,"r":0,"m":0},{"n":"Min_ATR_Pips","l":"ATR ugu yar (pips)","g":15,"k":0,"t":"d","x":149,"r":0,"m":0},{"n":"MaxSpread","l":"Spread ugu badan (points)","g":15,"k":0,"t":"i","x":150,"r":0,"m":0},{"n":"Enable_Dynamic_Spread","l":"xadka spread-ka oo ATR raaca","g":15,"k":0,"t":"b","x":151,"r":0,"m":0},{"n":"DynSpread_ATR_Mult","l":"Spread firfircoon: multiplier ATR","g":15,"k":0,"t":"d","x":152,"r":0,"m":0},{"n":"DynSpread_Min_Cap","l":"Spread firfircoon: xadka ugu hooseeya","g":15,"k":0,"t":"i","x":153,"r":0,"m":0},{"n":"DynSpread_Max_Cap","l":"Spread firfircoon: xadka ugu sarreeya","g":15,"k":0,"t":"i","x":154,"r":0,"m":0},{"n":"Enable_Extension_Guard","l":"ha eryin spike (sicirka aad uga fog EMA50)","g":15,"k":0,"t":"b","x":155,"r":0,"m":0},{"n":"Max_Extension_ATR","l":"Fogaanta ugu badan EMA50 (x ATR) - hoos = adag","g":15,"k":0,"t":"d","x":156,"r":0,"m":0},{"n":"EMA_Filter_On","l":"EMA = FILTER jihada (trade ma furo) · on/off","g":16,"k":1,"t":"b"},{"n":"EMA_F_H1_Period","l":"EMA-ga H1 (dahab)","g":16,"k":0,"t":"i","x":157,"r":1,"m":0},{"n":"EMA_F_H4_Period","l":"EMA-ga H4 (buluug)","g":16,"k":0,"t":"i","x":158,"r":1,"m":0},{"n":"EMA_F_Strict","l":"true = EMA50 H1 + EMA200 H4 isku hagaagsan · false = H4 kaliya","g":16,"k":0,"t":"b","x":159,"r":0,"m":0},{"n":"EMA_Range_Guard","l":"RANGE (suuqu isku fadhiyo) -> ha ganacsan","g":16,"k":0,"t":"b","x":160,"r":1,"m":0},{"n":"EMA_Range_Bars","l":"RANGE - H1 shumacyada la eegayo (24 = 1 maalin)","g":16,"k":0,"t":"i","x":161,"r":0,"m":0},{"n":"EMA_Range_Crosses","l":"range adag oo keliya","g":16,"k":0,"t":"i","x":162,"r":0,"m":0},{"n":"EMA_Range_Slope_ATR","l":"EMA50 H1 isbeddelka 6 saac < x ATR H1 -> siman","g":16,"k":0,"t":"d","x":163,"r":0,"m":0},{"n":"Enable_TrendFollow","l":"Raac trendka - albaabka xeeladaha trend (on/off)","g":17,"k":0,"t":"b","x":164,"r":0,"m":0},{"n":"TF_Require_Volume","l":"TF Require Volume","g":17,"k":0,"t":"b","x":165,"r":0,"m":0},{"n":"TF_Volume_Ratio","l":"Trend: saamiga volume-ka loo baahan yahay","g":17,"k":0,"t":"d","x":166,"r":0,"m":0},{"n":"TF_Require_MACD","l":"TF Require MACD","g":17,"k":0,"t":"b","x":167,"r":0,"m":0},{"n":"MACD_Fast","l":"MACD degdeg (fast)","g":17,"k":0,"t":"i","x":168,"r":0,"m":0},{"n":"MACD_Slow","l":"MACD gaabis (slow)","g":17,"k":0,"t":"i","x":169,"r":0,"m":0},{"n":"MACD_Signal","l":"MACD signal","g":17,"k":0,"t":"i","x":170,"r":0,"m":0},{"n":"Max_Same_Currency_Exposure","l":"Trade ugu badan oo isku lacag ku sharad ah (0 = damman)","g":18,"k":0,"t":"i","x":171,"r":0,"m":0},{"n":"Enable_Correlation_Filter","l":"Filter lammaanayaal isku xidhan (on/off)","g":18,"k":0,"t":"b","x":172,"r":0,"m":0},{"n":"Correlation_Groups","l":"Kooxaha lammaanayaasha isku xidhan ( | kala saar kooxaha )","g":18,"k":0,"t":"s","x":173,"r":0,"m":0},{"n":"Max_Correlated_Same_Dir","l":"Trade isku jiho ah oo ugu badan lammaanayaal isku xidhan","g":18,"k":0,"t":"i","x":174,"r":0,"m":0},{"n":"Require_Pattern_Confirm","l":"Kaliya ganacso marka qaab chart uu xaqiijiyo (on/off)","g":18,"k":0,"t":"b","x":175,"r":0,"m":0},{"n":"Pattern_Tol_ATR","l":"Qaab: dulqaadka Double Top / Bottom (x ATR)","g":18,"k":0,"t":"d","x":176,"r":0,"m":0},{"n":"Pattern_Lookback","l":"Qaab: immisa shumac la baadhayo","g":18,"k":0,"t":"i","x":177,"r":0,"m":0},{"n":"Use_Zone_Filter_For_Entry","l":"FILTER MEEL: kaliya gal zone SR (BUY support / SELL resistance) (on/off)","g":18,"k":0,"t":"b","x":178,"r":0,"m":0},{"n":"Enable_Session_Filter","l":"Filter-ka session-ka suuqa (on/off)","g":19,"k":0,"t":"b","x":179,"r":0,"m":0},{"n":"Trade_Asian","l":"Ganacso session-ka Aasiya","g":19,"k":0,"t":"b","x":180,"r":0,"m":0},{"n":"Trade_London","l":"Ganacso session-ka London (on/off)","g":19,"k":0,"t":"b","x":181,"r":0,"m":0},{"n":"Trade_NewYork","l":"Ganacso session-ka New York (on/off)","g":19,"k":0,"t":"b","x":182,"r":0,"m":0},{"n":"Trade_Overlap_Only","l":"Kaliya waqtiga London & New York isku dhacaan (on/off)","g":19,"k":0,"t":"b","x":183,"r":0,"m":0},{"n":"Use_Time_Filter","l":"Kaliya ganacso saacadaha aad dooratay (on/off)","g":19,"k":0,"t":"b","x":184,"r":0,"m":0},{"n":"Start_Hour","l":"Saacadda bilowga (waqtiga broker-ka)","g":19,"k":0,"t":"i","x":185,"r":0,"m":0},{"n":"End_Hour","l":"Saacadda dhammaadka (waqtiga broker-ka)","g":19,"k":0,"t":"i","x":186,"r":0,"m":0},{"n":"Session_Broker_GMT_Offset","l":"GMT+3 (DST) - broker-kaagu GMT+3 ayuu yahay","g":19,"k":0,"t":"i","x":187,"r":0,"m":0},{"n":"Auto_GMT_Offset","l":"farqiga GMT tooska u hel (DST) - la talo siiyay true","g":19,"k":0,"t":"b","x":188,"r":0,"m":0},{"n":"Enable_Candle_Sync","l":"Ku xir shaqada bilowga shumaca cusub (on/off)","g":19,"k":0,"t":"b","x":189,"r":0,"m":0},{"n":"Sync_TF","l":"Timeframe-ka sync-ga shumaca","g":19,"k":0,"t":"e","x":190,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"Inp_EnableNewsFilter","l":"jooji ganacsiga waqtiga wararka (tester kuma shaqeeyo)","g":20,"k":1,"t":"b"},{"n":"News_Calendar_URL","l":"URL-ka kalandarka wararka","g":20,"k":2,"t":"s"},{"n":"News_Broker_GMT_Offset","l":"GMT+3 (DST) - waqtiga wararka","g":20,"k":0,"t":"i","x":191,"r":0,"m":0},{"n":"News_Refresh_Minutes","l":"Daqiiqado la cusboonaysiiyo wararka","g":20,"k":0,"t":"i","x":192,"r":0,"m":0},{"n":"News_Filter_High","l":"Xannib wararka saameyn WEYN leh (on/off)","g":20,"k":0,"t":"b","x":193,"r":0,"m":0},{"n":"News_Filter_Medium","l":"Xannib wararka saameyn DHEXE leh (on/off)","g":20,"k":0,"t":"b","x":194,"r":0,"m":0},{"n":"News_Filter_Low","l":"Xannib wararka saameyn YAR leh (on/off)","g":20,"k":0,"t":"b","x":195,"r":0,"m":0},{"n":"MinutesBeforeNews","l":"Daqiiqado warka ka hor oo la joojinayo","g":20,"k":0,"t":"i","x":196,"r":0,"m":0},{"n":"MinutesAfterNews","l":"Daqiiqado warka ka dib oo la joojinayo","g":20,"k":0,"t":"i","x":197,"r":0,"m":0},{"n":"News_Block_If_Fetch_Fails","l":"Xannib haddii wararka la soo dejin waayo (on/off)","g":20,"k":0,"t":"b","x":198,"r":0,"m":0},{"n":"SR_Zone_TF","l":"SR: timeframe-ka zone-yada","g":21,"k":0,"t":"e","x":199,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"SR_Lookback","l":"SR: immisa shumac dib loo eegayo (HTF)","g":21,"k":0,"t":"i","x":200,"r":0,"m":0},{"n":"SR_Swing_Len","l":"SR: dhererka fractal-ka zone-yada","g":21,"k":0,"t":"i","x":201,"r":0,"m":0},{"n":"SR_Zone_ATR_Mult","l":"SR: ballaca zone-ka (x ATR HTF)","g":21,"k":0,"t":"d","x":202,"r":0,"m":0},{"n":"SR_StrengthBuffer","l":"SR: ballaca ugu yar (pips) - ATR ayaa badiyaa","g":21,"k":0,"t":"d","x":203,"r":0,"m":0},{"n":"SR_MinTouches","l":"SR: taabasho DHAB ah ugu yar","g":21,"k":0,"t":"i","x":204,"r":0,"m":0},{"n":"SR_Min_Zone_Age","l":"SR Min Zone Age","g":21,"k":0,"t":"i","x":205,"r":0,"m":0},{"n":"SR_Mode","l":"SR: habka (BOUNCE / BREAK-RETEST / LABADABA)","g":21,"k":0,"t":"e","x":206,"r":0,"m":0,"o":[[0,"BOUNCE"],[1,"BREAK_RETEST"],[2,"BOTH"]]},{"n":"SR_Use_Flip","l":"SR: zone jabay -> door beddel (R<->S) (on/off)","g":21,"k":0,"t":"b","x":207,"r":0,"m":0},{"n":"SR_Break_Buf_ATR","l":"SR: jabku waa inuu ka fog yahay (x ATR HTF)","g":21,"k":0,"t":"d","x":208,"r":0,"m":0},{"n":"SR_Max_Dist_ATR","l":"SR: fogaanta ugu badan sicir->zone (x ATR)","g":21,"k":0,"t":"d","x":209,"r":0,"m":0},{"n":"SR_Max_Penetration_ATR","l":"SR: intee shumacu zone-ka ka dhex geli karo (x ATR)","g":21,"k":0,"t":"d","x":210,"r":0,"m":0},{"n":"SR_Require_Rejection","l":"SR: u baahan diidmo shumac (rejection) (on/off)","g":21,"k":0,"t":"b","x":211,"r":0,"m":0},{"n":"SR_Rej_Wick_Pct","l":"SR: dabada shumaca / range (0.40 = 40%)","g":21,"k":0,"t":"d","x":212,"r":0,"m":0},{"n":"SR_Rej_Wick_Body","l":"SR: dabada / jidhka shumaca","g":21,"k":0,"t":"d","x":213,"r":0,"m":0},{"n":"SR_Rej_ClosePos","l":"SR: meesha close-ku ku yaal shumaca (0..1)","g":21,"k":0,"t":"d","x":214,"r":0,"m":0},{"n":"SR_Require_Volume","l":"SR: u baahan volume (on/off)","g":21,"k":0,"t":"b","x":215,"r":0,"m":0},{"n":"SR_Vol_Ratio","l":"SR: saamiga volume (marka kor la shido)","g":21,"k":0,"t":"d","x":216,"r":0,"m":0},{"n":"SR_Cooldown_Bars","l":"SR: shumac u dhexeeya laba trade oo isku zone ah","g":21,"k":0,"t":"i","x":217,"r":0,"m":0},{"n":"SR_SL_Buffer_ATR","l":"SL-ku intee buu darafka zone-ka ka baxsanaadaa (x ATR). Hore: 0.25 go'an","g":21,"k":0,"t":"d","x":218,"r":0,"m":0},{"n":"SR_SL_Multiplier","l":"SR: SL (x ATR) - marka zone la waayo","g":21,"k":0,"t":"d","x":219,"r":0,"m":0},{"n":"SR_TP_Multiplier","l":"SR: TP (x ATR) - marka zone la waayo","g":21,"k":0,"t":"d","x":220,"r":0,"m":0},{"n":"SR_Zone_TP","l":"SR: TP = zone-ka ka soo horjeeda (on/off)","g":21,"k":0,"t":"b","x":221,"r":0,"m":0},{"n":"SR_Debug","l":"SR: qor sabab kasta oo diidmo ah","g":21,"k":0,"t":"b","x":222,"r":0,"m":0},{"n":"SMC_Require_CHoCH","l":"CHoCH iyo EMA trend way is diidayeen - BOS OB (trend) ayaa ugu fiican","g":22,"k":0,"t":"b","x":223,"r":0,"m":0},{"n":"SMC_Require_FVG","l":"SMC Require FVG","g":22,"k":0,"t":"b","x":224,"r":0,"m":0},{"n":"SMC_Require_Sweep","l":"SMC Require Sweep","g":22,"k":0,"t":"b","x":225,"r":0,"m":0},{"n":"SMC_Require_PremDisc","l":"BUY discount / SELL premium kaliya - dhexda ma jirto","g":22,"k":0,"t":"b","x":226,"r":0,"m":0},{"n":"SMC_Require_LTF_CHoCH","l":"SMC Require LTF CHoCH","g":22,"k":0,"t":"b","x":227,"r":0,"m":0},{"n":"SMC_Use_HTF_Bias","l":"EMA filter-ka ayaa jihada qabta","g":22,"k":0,"t":"b","x":228,"r":0,"m":0},{"n":"SMC_MinTouches","l":"SMC: immisa jeer heerka la taabtay","g":22,"k":0,"t":"i","x":229,"r":0,"m":0},{"n":"OB_Mitigation_Perc","l":"Order Block: boqolkiiba la buuxiyay (%)","g":22,"k":0,"t":"d","x":230,"r":0,"m":0},{"n":"SMC_Lookback","l":"SMC: immisa shumac dib loo eegayo","g":22,"k":0,"t":"i","x":231,"r":0,"m":0},{"n":"SMC_StrengthBuffer","l":"SMC: xoogga ugu yar (buffer)","g":22,"k":0,"t":"d","x":232,"r":0,"m":0},{"n":"SMC_SL_Multiplier","l":"SMC: SL (x ATR)","g":22,"k":0,"t":"d","x":233,"r":0,"m":0},{"n":"SMC_TP_Multiplier","l":"SMC: TP (x ATR)","g":22,"k":0,"t":"d","x":234,"r":0,"m":0},{"n":"SMC_SwingLen","l":"SMC: dhererka swing-ga","g":22,"k":0,"t":"i","x":235,"r":0,"m":0},{"n":"SMC_Equilibrium_Pct","l":"SMC: dhexda (equilibrium) %","g":22,"k":0,"t":"d","x":236,"r":0,"m":0},{"n":"SMC_Impulse_ATR","l":"SMC Impulse ATR","g":22,"k":0,"t":"d","x":237,"r":0,"m":0},{"n":"SMC_Impulse_MaxBars","l":"SMC: shumac ugu badan OB -> jab","g":22,"k":0,"t":"i","x":238,"r":0,"m":0},{"n":"SMC_BOS_MaxAge","l":"30 shumac M5 = 2.5 saac kaliya -> 8 saac","g":22,"k":0,"t":"i","x":239,"r":0,"m":0},{"n":"SMC_OB_BodyOnly","l":"SMC: zone-ka OB = jidhka kaliya (false = shumaca oo dhan)","g":22,"k":0,"t":"b","x":240,"r":0,"m":0},{"n":"SMC_Sweep_Lookback","l":"SMC: sweep - shumac dib loo eegayo","g":22,"k":0,"t":"i","x":241,"r":0,"m":0},{"n":"SMC_Max_Dist_ATR","l":"SMC Max Dist ATR","g":22,"k":0,"t":"d","x":242,"r":0,"m":0},{"n":"SMC_Entry_Buf_ATR","l":"SMC: dulqaadka gelitaanka (x ATR)","g":22,"k":0,"t":"d","x":243,"r":0,"m":0},{"n":"SMC_Require_Rejection","l":"SMC: u baahan diidmo shumac (on/off)","g":22,"k":0,"t":"b","x":244,"r":0,"m":0},{"n":"SMC_Rej_Wick_Pct","l":"SMC: dabada shumaca / range","g":22,"k":0,"t":"d","x":245,"r":0,"m":0},{"n":"SMC_Cooldown_Bars","l":"SMC: shumac u dhexeeya laba trade oo isku OB ah","g":22,"k":0,"t":"i","x":246,"r":0,"m":0},{"n":"SMC_Zone_TP","l":"SMC: TP = liquidity-ga xiga (on/off)","g":22,"k":0,"t":"b","x":247,"r":0,"m":0},{"n":"SMC_Debug","l":"SMC: qor sabab kasta oo diidmo ah","g":22,"k":0,"t":"b","x":248,"r":0,"m":0},{"n":"SMC_HTF_TF","l":"SMC: timeframe-ka sare","g":22,"k":0,"t":"e","x":249,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"SMC_HTF_EMA","l":"SMC: EMA-ga timeframe-ka sare","g":22,"k":0,"t":"i","x":250,"r":0,"m":0},{"n":"SMC_Structural_SL","l":"SMC: SL ku saleysan qaab-dhismeedka (on/off)","g":22,"k":0,"t":"b","x":251,"r":0,"m":0},{"n":"SMC_LTF","l":"SMC: timeframe-ka hoose","g":22,"k":0,"t":"e","x":252,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"SMC_Sniper_CHoCH","l":"Sniper -> sug CHoCH M5 ka hor gelitaanka (on/off)","g":22,"k":0,"t":"b","x":253,"r":0,"m":0},{"n":"SMC_Touch_Bars","l":"Sniper - OB-ga waa inuu la taabtay shumacyadan gudahood (12 x M5 = 1 saac)","g":22,"k":0,"t":"i","x":254,"r":0,"m":0},{"n":"Inp_Entry_Max_Dist_Pips","l":"Entry Max Dist Pips","g":22,"k":0,"t":"d","x":255,"r":0,"m":8},{"n":"SMC_Extreme_Bars","l":"OB-gu waa inuu yahay salka/dusha shumacyadan (48 x M5 = 4 saac) - 0 = damman","g":22,"k":0,"t":"i","x":256,"r":0,"m":0},{"n":"SMC_Extreme_Tol_ATR","l":"dulqaadka cidhifka OB-ga (x ATR)","g":22,"k":0,"t":"d","x":257,"r":0,"m":0},{"n":"Stars_Enable","l":"★ scoring (on/off)","g":23,"k":0,"t":"b","x":258,"r":0,"m":0},{"n":"Stars_Min","l":"★ ugu yar: 2 = ★ ka tag · 1 = dhammaan","g":23,"k":1,"t":"i"},{"n":"Lot_Pct_2Star","l":"★★ = lot-ka boqolkiisa (★★★ = 100%)","g":23,"k":1,"t":"d"},{"n":"ExecMode","l":"Habka fulinta MARKET order-ka (SMART / MARKET). v66.1: pending order (LIMIT) gebi ahaanba waa la saaray - EXEC","g":24,"k":0,"t":"e","x":259,"r":0,"m":0,"o":[[0,"INSTANT"],[1,"SMART"],[2,"LIMIT"]]},{"n":"Enable_ECN_StopFallback","l":"ECN: SL/TP kadib dir haddii la diido (on/off)","g":24,"k":0,"t":"b","x":260,"r":0,"m":0},{"n":"MaxRetries","l":"Isku day mar kale oo ugu badan","g":24,"k":0,"t":"i","x":261,"r":0,"m":0},{"n":"RetryDelayMs","l":"Daahitaanka isku dayga (ms)","g":24,"k":0,"t":"i","x":262,"r":0,"m":0},{"n":"MaxSlippagePips","l":"Slippage ugu badan (pips)","g":24,"k":0,"t":"i","x":263,"r":0,"m":0},{"n":"UseVirtualOrders","l":"Amaro virtual ah - SL/TP xasuusta ku hay (on/off)","g":24,"k":0,"t":"b","x":264,"r":0,"m":0},{"n":"Enable_Stealth_Mode","l":"Hab qarsoodi - broker-ku SL/TP ha arkin (on/off)","g":24,"k":0,"t":"b","x":265,"r":0,"m":0},{"n":"Loose_Entry_Mode","l":"HAB DEBECSAN: trade badan, filter yar (on/off)","g":24,"k":0,"t":"b","x":266,"r":0,"m":0},{"n":"Simple_Mode","l":"HAB FUDUD: SL/TP go'an, maamul automatic ah ma jiro (on/off)","g":24,"k":0,"t":"b","x":267,"r":0,"m":0},{"n":"PropMode","l":"Habka Prop Firm (NONE = damman)","g":25,"k":0,"t":"e","x":268,"r":0,"m":0,"o":[[0,"NONE"],[1,"FTMO"],[2,"MFF"],[3,"CUSTOM"]]},{"n":"Prop_Max_Daily_DD","l":"Prop: drawdown maalinle ugu badan (%)","g":25,"k":0,"t":"d","x":269,"r":0,"m":0},{"n":"Prop_Max_Total_DD","l":"Prop: drawdown guud ugu badan (%)","g":25,"k":0,"t":"d","x":270,"r":0,"m":0},{"n":"Prop_Min_Trading_Days","l":"Prop: maalmo ganacsi ugu yar","g":25,"k":0,"t":"d","x":271,"r":0,"m":0},{"n":"Prop_No_Weekend","l":"Prop: ha ganacsan dhammaadka usbuuca (on/off)","g":25,"k":0,"t":"b","x":272,"r":0,"m":0},{"n":"Prop_No_News","l":"Prop: ha ganacsan waqtiga wararka (on/off)","g":25,"k":0,"t":"b","x":273,"r":0,"m":0},{"n":"Prop_Consistency_Max","l":"Prop: xeerka is-waafaqidda ugu badan (%)","g":25,"k":0,"t":"d","x":274,"r":0,"m":0},{"n":"EnableTelegram","l":"Dir digniinaha Telegram (on/off)","g":26,"k":0,"t":"b","x":275,"r":0,"m":0},{"n":"TG_BotToken","l":"Telegram: token-ka bot-ka (GELI halkan)","g":26,"k":2,"t":"s"},{"n":"TG_ChatID","l":"Telegram: Chat ID (GELI halkan)","g":26,"k":2,"t":"s"},{"n":"TG_DailySummary","l":"Telegram: soo koobid maalinle (on/off)","g":26,"k":0,"t":"b","x":276,"r":0,"m":0},{"n":"TG_WeeklySummary","l":"Telegram: soo koobid usbuucle (on/off)","g":26,"k":0,"t":"b","x":277,"r":0,"m":0},{"n":"TG_DrawdownAlert","l":"Telegram: digniin drawdown (on/off)","g":26,"k":0,"t":"b","x":278,"r":0,"m":0},{"n":"TG_DrawdownAlertPct","l":"Telegram: boqolkiiba drawdown-ka digniinta","g":26,"k":0,"t":"d","x":279,"r":0,"m":0},{"n":"TG_TradeDetails","l":"Telegram: faahfaahinta trade-ka (on/off)","g":26,"k":0,"t":"b","x":280,"r":0,"m":0},{"n":"TG_ErrorAlerts","l":"Telegram: digniin qalad (on/off)","g":26,"k":0,"t":"b","x":281,"r":0,"m":0},{"n":"TG_TradeCloseAlert","l":"Telegram: digniin xidhitaanka trade (on/off)","g":26,"k":0,"t":"b","x":282,"r":0,"m":0},{"n":"TG_NewsAlert","l":"Telegram: digniin warar (on/off)","g":26,"k":0,"t":"b","x":283,"r":0,"m":0},{"n":"TG_RejectedAlerts","l":"Telegram: digniin trade la diiday (on/off)","g":26,"k":0,"t":"b","x":284,"r":0,"m":0},{"n":"TG_Reject_Cooldown_Min","l":"Telegram: daqiiqado u dhexeeya digniinaha diidmada","g":26,"k":0,"t":"i","x":285,"r":0,"m":0},{"n":"TG_Error_Cooldown_Sec","l":"Telegram: ilbiriqsiyo u dhexeeya digniinaha qaladka","g":26,"k":0,"t":"i","x":286,"r":0,"m":0},{"n":"EnableCloudDashboard","l":"Dashboard-ka cloud-ka (on/off)","g":27,"k":2,"t":"b"},{"n":"CloudDashboardURL","l":"URL-ka dashboard-ka","g":27,"k":2,"t":"s"},{"n":"CloudCommandURL","l":"URL-ka amarada","g":27,"k":2,"t":"s"},{"n":"Cloud_Bot_Name","l":"Magaca bootka ee dashboard-ka (gaar u ah EA kasta)","g":27,"k":2,"t":"s"},{"n":"Enable_Connection_Guard","l":"Ilaali xiriirka internet-ka (on/off)","g":27,"k":2,"t":"b"},{"n":"Enable_Reconnect_Alert","l":"Digniin marka xiriirku dib u soo noqdo (on/off)","g":27,"k":2,"t":"b"},{"n":"Cloud_Push_Seconds","l":"intee ilbiriqsi kasta ayaa xogta la dirayaa (hore 15). Kordhi = bandwidth yar","g":27,"k":2,"t":"i"},{"n":"Cloud_Cmd_Seconds","l":"amarrada intee ilbiriqsi kasta (hore 10)","g":27,"k":2,"t":"i"},{"n":"Cloud_Journal_Max","l":"immisa trade oo xidhan ayaa push kasta la dirayaa (hore 120)","g":27,"k":2,"t":"i"},{"n":"Cloud_Timeout_Ms","l":"Sug xogta guud (ms) - internet gaabis 8000-12000","g":27,"k":2,"t":"i"},{"n":"Journal_Timeout_Ms","l":"Sug jornalka (ms) - Render hurda 20000","g":27,"k":2,"t":"i"},{"n":"Journal_Batch_Max","l":"Trade tiro badan oo hal mar la diro (yaree = dhakhso)","g":27,"k":2,"t":"i"},{"n":"Journal_Only_New","l":"Kaliya kuwa cusub dir (ha dirin mar walba isku mid)","g":27,"k":2,"t":"b"},{"n":"UI_Premium","l":"chart-ka cusub (panel glass + xuduud dahab ah) - false = panel-kii hore","g":28,"k":0,"t":"b","x":287,"r":0,"m":0},{"n":"UI_Scale","l":"cabbirka panel-ka (0 = toos, DPI-ga shaashadda) · 1.0 / 1.25 / 1.5","g":28,"k":0,"t":"d","x":288,"r":0,"m":0},{"n":"UI_Show_EMA","l":"EMA qurxin chart-ka (daruur · glow · cross · qiimaha)","g":28,"k":0,"t":"b","x":289,"r":0,"m":0},{"n":"UI_Show_Zones","l":"zone-yada SD (★) + dhaqaaqa la filayo (ATR D1) chart-ka ku sawir","g":28,"k":0,"t":"b","x":290,"r":0,"m":0},{"n":"BrandName","l":"Magaca panel-ka","g":28,"k":0,"t":"s","x":291,"r":0,"m":0},{"n":"Watermark_Text","l":"Qoraalka watermark-ka","g":28,"k":0,"t":"s","x":292,"r":0,"m":0},{"n":"Watermark_Size","l":"Cabbirka watermark-ka","g":28,"k":0,"t":"i","x":293,"r":0,"m":0},{"n":"Watermark_Color","l":"Midabka watermark-ka","g":28,"k":0,"t":"c","x":294,"r":0,"m":0},{"n":"Show_Trade_Signals","l":"Tus calaamadaha signal-ka (on/off)","g":28,"k":0,"t":"b","x":295,"r":0,"m":0},{"n":"Show_Trade_Markers","l":"Tus calaamadaha trade-ka (on/off)","g":28,"k":0,"t":"b","x":296,"r":0,"m":0},{"n":"Marker_Size","l":"Cabbirka calaamadda","g":28,"k":0,"t":"i","x":297,"r":0,"m":0},{"n":"Buy_Marker_Color","l":"Midabka calaamadda BUY","g":28,"k":0,"t":"c","x":298,"r":0,"m":0},{"n":"Sell_Marker_Color","l":"Midabka calaamadda SELL","g":28,"k":0,"t":"c","x":299,"r":0,"m":0},{"n":"Show_Dynamic_Zones","l":"Tus zone-yada firfircoon (on/off)","g":28,"k":0,"t":"b","x":300,"r":0,"m":0},{"n":"Show_Trade_Panel","l":"panel-ka trade-yada furan (hoose-bidix) SL/TP pip","g":28,"k":0,"t":"b","x":301,"r":0,"m":0},{"n":"Show_Control_Panel","l":"CONTROL PANEL-ka hore (badhamo xeelad/LOT/SL/TP) - shid/dami adigoo doorta, uma baahnid F7 recompile","g":28,"k":0,"t":"b","x":302,"r":1,"m":0},{"n":"CPanel_X","l":"CONTROL PANEL - X (marka Use_New_Left_Panel=true) - waad bedeli kartaa","g":28,"k":0,"t":"i","x":303,"r":0,"m":0},{"n":"CPanel_Y","l":"kor, la simay dashboard-ka bidix: CONTROL PANEL - Y (marka Use_New_Left_Panel=true) - waad bedeli kartaa","g":28,"k":0,"t":"i","x":304,"r":0,"m":0},{"n":"CPanel_Gap_Below_Strat","l":"CILAD-XALI - marka Use_New_Left_Panel=FALSE (STRATEGY PERFORMANCE panel-ku muuqdo), CONTROL PANEL-ku meel bann","g":28,"k":0,"t":"i","x":305,"r":0,"m":0},{"n":"Panel_Always_Show","l":"tus xitaa marka trade furan aan jirin (si aad u hubiso)","g":28,"k":0,"t":"b","x":306,"r":0,"m":0},{"n":"Panel_X","l":"dashboard-ka bidix kuma dul fadhiisto: fogaanta bidixda (panel-kii hore 280 buu ballaadhan yahay)","g":28,"k":0,"t":"i","x":307,"r":0,"m":0},{"n":"Panel_Y_Margin","l":"fogaanta hoose","g":28,"k":0,"t":"i","x":308,"r":0,"m":0},{"n":"Panel_Font_Scale","l":"cabbirka qoraalka (1.0 = caadi, 0.9 = yar)","g":28,"k":0,"t":"d","x":309,"r":0,"m":0},{"n":"Use_New_Left_Panel","l":"panel-ka bidixda ee CUSUB (qiimayaashu MIDIG bay ku toosan yihiin)","g":28,"k":0,"t":"b","x":310,"r":0,"m":0},{"n":"LPanel_X","l":"panel-ka bidixda - X","g":28,"k":0,"t":"i","x":311,"r":0,"m":0},{"n":"LPanel_Y","l":"panel-ka bidixda - Y","g":28,"k":0,"t":"i","x":312,"r":0,"m":0},{"n":"Show_Trend_Lines","l":"Tus xariiqaha trendka (on/off)","g":28,"k":0,"t":"b","x":313,"r":0,"m":0},{"n":"SR_Draw_Zones","l":"SR Draw Zones","g":28,"k":0,"t":"b","x":314,"r":0,"m":0},{"n":"SD_Profile","l":"heerka zone-ka · TAYO = inputs-ka hoose (adag) · DHEXE = isku dheelli · BADAN = trade badan","g":29,"k":1,"t":"e","o":[[0,"TAYO"],[1,"DHEXE"],[2,"BADAN"]]},{"n":"Enable_SD_Engine","l":"isticmaal SUPPLY&DEMAND halkii SR-kii hore (on/off)","g":29,"k":0,"t":"b","x":315,"r":0,"m":0},{"n":"SD_Zone_TF","l":"timeframe-ka zone-yada","g":29,"k":0,"t":"e","x":316,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"SD_Lookback","l":"immisa shumac dib loo eegayo","g":29,"k":0,"t":"i","x":317,"r":0,"m":0},{"n":"SD_Base_Max_Bars","l":"shumac ugu badan oo base ah (1-5)","g":29,"k":0,"t":"i","x":318,"r":0,"m":0},{"n":"SD_Base_Max_Range_ATR","l":"base shumac kasta range-kiisu ka yar (x ATR)","g":29,"k":0,"t":"d","x":319,"r":0,"m":0},{"n":"SD_Base_Max_Body_Pct","l":"base jidhku ka yar","g":29,"k":0,"t":"d","x":320,"r":0,"m":0},{"n":"Inp_SD_Impulse_Min_ATR","l":"SD Impulse Min ATR","g":29,"k":0,"t":"d","x":321,"r":0,"m":8},{"n":"Inp_SD_Impulse_Min_Pips","l":"zone xoog leh","g":29,"k":0,"t":"d","x":322,"r":0,"m":8},{"n":"Inp_SD_Touch_React_Min_Pips","l":"SD Touch React Min Pips","g":29,"k":0,"t":"d","x":323,"r":0,"m":8},{"n":"SD_Swing_Extreme","l":"swing-na sidoo kale","g":29,"k":0,"t":"b","x":324,"r":0,"m":0},{"n":"SD_Impulse_Max_Bars","l":"SD: shumac ugu badan oo baxsasho ah","g":29,"k":0,"t":"i","x":325,"r":0,"m":0},{"n":"SD_Impulse_Body_Pct","l":"shumaca 1aad ee baxsashada jidhkiisu ka badan","g":29,"k":0,"t":"d","x":326,"r":0,"m":0},{"n":"Inp_SD_Max_Touches","l":"zone cusub/nadiif ah","g":29,"k":0,"t":"i","x":327,"r":0,"m":8},{"n":"SD_Min_Zone_Age","l":"SD: shumac ugu yar oo zone-ku jiray","g":29,"k":0,"t":"i","x":328,"r":0,"m":0},{"n":"SD_Max_Zone_Age","l":"zone WEYN wuu duugoobaa - 31 maalmood kuma filna","g":29,"k":0,"t":"i","x":329,"r":0,"m":0},{"n":"SD_Max_Dist_ATR","l":"fogaanta 8 -> 15 ATR","g":29,"k":0,"t":"d","x":330,"r":0,"m":0},{"n":"SD_SL_Buffer_ATR","l":"SD: SL-ku intee buu DISTAL-ka ka baxsanaadaa (x ATR)","g":29,"k":0,"t":"d","x":331,"r":0,"m":0},{"n":"SD_SL_Max_ATR","l":"SD: SL ugu ballaadhan (x ATR) - ka tag haddii ka weyn","g":29,"k":0,"t":"d","x":332,"r":0,"m":0},{"n":"SD_RR","l":"TP = SL x tan","g":29,"k":0,"t":"d","x":333,"r":0,"m":0},{"n":"SD_Require_Confirm","l":"SD: u baahan shumac diidmo (rejection) (on/off)","g":29,"k":0,"t":"b","x":334,"r":0,"m":0},{"n":"SD_Confirm_Wick_Pct","l":"dabada shumaca / range","g":29,"k":0,"t":"d","x":335,"r":0,"m":0},{"n":"SD_Kill_On_Break","l":"SD: close ka baxsan distal -> zone WAA LA TUURAA (on/off)","g":29,"k":0,"t":"b","x":336,"r":0,"m":0},{"n":"SD_Break_Buf_ATR","l":"SD: buffer-ka jabinta (x ATR)","g":29,"k":0,"t":"d","x":337,"r":0,"m":0},{"n":"Inp_SD_Require_BOS","l":"baxsashadu waa inay JABISAA qaab-dhismeedkii hore (BOS)","g":29,"k":0,"t":"b","x":338,"r":0,"m":8},{"n":"SD_BOS_Lookback","l":"SD BOS Lookback","g":29,"k":0,"t":"i","x":339,"r":0,"m":0},{"n":"SD_Swing_Zones","l":"zone ka dhis SWING HIGH/LOW (base looma baahna)","g":29,"k":0,"t":"b","x":340,"r":0,"m":0},{"n":"SD_Swing_Len","l":"shumac dhinac kasta oo swing-ka qeexaya","g":29,"k":0,"t":"i","x":341,"r":0,"m":0},{"n":"SD_Swing_Imp_Bars","l":"immisa shumac kadib ayaa baxsashada la qiyaasayo","g":29,"k":0,"t":"i","x":342,"r":0,"m":0},{"n":"Inp_SD_Extreme_Only","l":"zone waa inuu CIDHIFKA ku yaallaa - dhexda lama qaadanayo","g":29,"k":0,"t":"b","x":343,"r":0,"m":8},{"n":"Inp_SD_Extreme_Window","l":"cidhif dhab ah - dhexda ma jirto","g":29,"k":0,"t":"i","x":344,"r":0,"m":8},{"n":"Inp_SD_Extreme_Tol_ATR","l":"SD Extreme Tol ATR","g":29,"k":0,"t":"d","x":345,"r":0,"m":8},{"n":"SD_Big_TF","l":"TF-ka lagu qiyaaso WEYNIDA baxsashada","g":29,"k":0,"t":"e","x":346,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"SD_Big_Weight","l":"dhibcaha weynida (0 = damman)","g":29,"k":0,"t":"d","x":347,"r":0,"m":0},{"n":"SD_Recency_Weight","l":"dhibcaha CUSUBNIMADA (hore 5.0 - zone duug oo weyn wuu guuli waayay)","g":29,"k":0,"t":"d","x":348,"r":0,"m":0},{"n":"SD_Debug","l":"SD: qor sabab kasta oo diidmo ah","g":29,"k":0,"t":"b","x":349,"r":0,"m":0},{"n":"Panel_Show_Selected_Only","l":"Panel: kaliya tus xeeladda la doortay (on/off)","g":29,"k":0,"t":"b","x":350,"r":0,"m":0},{"n":"Show_CurrencyMeter","l":"Tus cabbirka xoogga lacagaha (on/off)","g":29,"k":0,"t":"b","x":351,"r":0,"m":0},{"n":"Show_EMA_Lines","l":"Show EMA Lines","g":29,"k":0,"t":"b","x":352,"r":0,"m":0},{"n":"Viz_EMA_Fast","l":"Muuqaal: EMA degdeg","g":29,"k":0,"t":"i","x":353,"r":0,"m":0},{"n":"Viz_EMA_Slow","l":"Muuqaal: EMA gaabis","g":29,"k":0,"t":"i","x":354,"r":0,"m":0},{"n":"Viz_EMA_Fast_Clr","l":"Muuqaal: midabka EMA degdeg","g":29,"k":0,"t":"c","x":355,"r":0,"m":0},{"n":"Viz_EMA_Slow_Clr","l":"Muuqaal: midabka EMA gaabis","g":29,"k":0,"t":"c","x":356,"r":0,"m":0},{"n":"Viz_EMA_Width","l":"Muuqaal: dhumucda xariiqda EMA","g":29,"k":0,"t":"i","x":357,"r":0,"m":0},{"n":"Viz_EMA_Bars","l":"Muuqaal: immisa shumac EMA la sawirayo","g":29,"k":0,"t":"i","x":358,"r":0,"m":0},{"n":"Enable_Chart_Screenshot","l":"Qaado sawirka chart-ka (on/off)","g":29,"k":0,"t":"b","x":359,"r":0,"m":0},{"n":"Screenshot_Width","l":"Ballaca sawirka","g":29,"k":0,"t":"i","x":360,"r":0,"m":0},{"n":"Screenshot_Height","l":"Dhererka sawirka","g":29,"k":0,"t":"i","x":361,"r":0,"m":0},{"n":"Screenshot_To_App","l":"sawirka trade-ka (furan + xidhan) app-ka u dir (Trade tab)","g":29,"k":0,"t":"b","x":362,"r":0,"m":0},{"n":"Screenshot_Show_Panels","l":"false = panel-yada MOHA PRO waa la qariyaa inta sawirka la qaadayo (chart nadiif ah)","g":29,"k":0,"t":"b","x":363,"r":0,"m":0},{"n":"EnableJournal","l":"Diiwaanka trade-yada CSV (on/off)","g":30,"k":0,"t":"b","x":364,"r":1,"m":0},{"n":"Journal_Filename","l":"Magaca faylka diiwaanka","g":30,"k":0,"t":"s","x":365,"r":1,"m":0},{"n":"Enable_Debug_Log","l":"Diiwaanka debug-ga (on/off)","g":30,"k":0,"t":"b","x":366,"r":0,"m":0},{"n":"Inp_PR_On","l":"💱 LAMAANAHA - app-ka ka dooro · bot-ka 👑 (dahabka) ayaa chart-ka u furaya","g":31,"k":1,"t":"b"},{"n":"Inp_PR_Tpl","l":"template-ka (Charts -> Template -> Save) ee bot-ku ku jiro","g":31,"k":2,"t":"s"},{"n":"Inp_PR_Max","l":"lamaanaha ugu badan · 👑 ku jiro (1-8)","g":31,"k":1,"t":"i"},{"n":"Inp_CB_On","l":"📏 CABBIR LAMAANE - sitinka $ ee TICK / BASKET si toos ah lamaane kasta (ATR) · false = $ dahab","g":32,"k":1,"t":"b"},{"n":"Inp_CB_TF","l":"ATR timeframe-ka (M5 · M15 · H1)","g":32,"k":1,"t":"e","o":[[0,"M5"],[1,"M15"],[2,"H1"]]},{"n":"Inp_CB_Bars","l":"ATR muddo (bar) · M15 384 = 4 maalmood (20-2000)","g":32,"k":1,"t":"i"},{"n":"Inp_CB_Spread_Pct","l":"spread > X% SL-ka (VSL) -> TICK ma galo (0 = off · lamaanaha aan dahabka ahayn)","g":32,"k":1,"t":"i"},{"n":"Inp_CB_Ref","l":"tixraaca dahabka (AUTO = XAUUSD terminal-ka)","g":32,"k":2,"t":"s"},{"n":"Inp_CB_Syms","l":"lamaanayaal kale oo TICK/BASKET (tijaabo · chart gacan) \"XAG,BTC\" · madhan = 💱 LAMAANAHA app-ka oo keliya","g":32,"k":2,"t":"s"},{"n":"Inp_Core1_On","l":"⚡ CORE 1 · SCALP (TICK + GOLD BASKET + GRID) shidan","g":33,"k":1,"t":"b"},{"n":"Inp_Core1_DayLoss","l":"⚡ CORE 1: khasaaraha maalinlaha % balance -> maanta trade cusub ma jiro (0 = off)","g":33,"k":1,"t":"d"},{"n":"Inp_Core2_On","l":"🎯 CORE 2 · SR/SMC (SR/SD + SMC + LABADA) shidan","g":33,"k":1,"t":"b"},{"n":"Inp_Core2_DayLoss","l":"🎯 CORE 2: khasaaraha maalinlaha % balance -> maanta trade cusub ma jiro (0 = off)","g":33,"k":1,"t":"d"},{"n":"Inp_GR_On","l":"🪜 GRID STOP - amarro stop (virtual) jihada trend-ka oo keliya · SL guud · quful · TP guud","g":34,"k":1,"t":"b"},{"n":"Inp_GR_Only","l":"GRID OO KELIYA: shidan -> xeeladaha kale (TICK · BASKET · ASIA · SR/SMC) lammaanahan ma furaan","g":34,"k":1,"t":"b"},{"n":"Inp_GR_Dir","l":"🧭 TREND EMA (default)","g":34,"k":0,"t":"e","x":367,"r":0,"m":0,"o":[[0,"TREND"],[1,"BUY"],[2,"SELL"],[3,"BOTH"],[4,"EMA"]]},{"n":"Inp_GR_EMA_TF","l":"🧭 TREND EMA: timeframe (daqiiqo: 5 · 15 · 30 · 60 · 240)","g":34,"k":1,"t":"i"},{"n":"Inp_GR_EMA_Fast","l":"🧭 TREND EMA: EMA degdeg (2-200)","g":34,"k":1,"t":"i"},{"n":"Inp_GR_EMA_Slow","l":"🧭 TREND EMA: EMA gaabis (3-400)","g":34,"k":1,"t":"i"},{"n":"Inp_GR_Step_Pct","l":"GR Step Pct","g":34,"k":1,"t":"d"},{"n":"Inp_GR_TPSL_Mode","l":"GR TPSL Mode","g":34,"k":1,"t":"e","o":[[0,"STEP"],[1,"USD"]]},{"n":"Inp_GR_TP_X","l":"🎯 TP guud = X × masaafo (STEP)","g":34,"k":1,"t":"d"},{"n":"Inp_GR_Lock_X","l":"🔒 2 × masaafo → BREAK-EVEN (Lock_Pct 10)","g":34,"k":1,"t":"d"},{"n":"Inp_GR_SL_X","l":"🛑 SL guud = X × masaafo (STEP)","g":34,"k":1,"t":"d"},{"n":"Inp_GR_LB_Mode","l":"⇅ LABADA hab: AUTO (account hedging -> HEDGE · netting -> 🔁 FLIP) · HEDGE · 🔁 FLIP (kor BUY · hoos BUY xidh + ","g":34,"k":1,"t":"e","o":[[0,"AUTO"],[1,"HEDGE"],[2,"FLIP"]]},{"n":"Inp_GR_Flip_Max","l":"🔁 FLIP ugu badan grid kasta -> kadib grid xidh (suuq isku dhex jira) (1-10)","g":34,"k":1,"t":"i"},{"n":"Inp_GR_LB_Real","l":"⇅ LABADA: amarro DHAB ah (BUY STOP / SELL STOP broker-ka) + TP / SL $ wadar · false = virtual (v71.3)","g":34,"k":1,"t":"b"},{"n":"Inp_GR_Both","l":"⇅ LABADA: HEDGE = labada dhinac way furmaan (kor -> BUY · hoos -> SELL) · OCO = kan jebiya (kan kale waa la ti","g":34,"k":1,"t":"e","o":[[0,"OCO"],[1,"HEDGE"]]},{"n":"Inp_GR_Str","l":"🧭 xoogga jihada ugu yar % (ka yar = RANGE -> grid ma jiro)","g":34,"k":1,"t":"d"},{"n":"Inp_GR_Step","l":"masaafada lakabyada ($ qiime dahab · 📏 x cabbir) · 0 = AUTO (ATR)","g":34,"k":1,"t":"d"},{"n":"Inp_GR_Step_ATR","l":"AUTO: masaafo = X × ATR M5(14) (0.05-1.0)","g":34,"k":1,"t":"d"},{"n":"Inp_GR_Spr_X","l":"masaafo ugu yaraan X × spread (si toos ah ayay u ballaadhataa) (1-10)","g":34,"k":1,"t":"d"},{"n":"Inp_GR_Levels","l":"GR Levels","g":34,"k":1,"t":"i"},{"n":"Inp_GR_Lot","l":"lot lakab kasta - marka Lot AUTO = 0 (isku mid · martingale ma jiro)","g":34,"k":1,"t":"d"},{"n":"Inp_GR_Lot_Per","l":"Lot AUTO: 0.01 lot $X balance kasta (0 = lot go'an)","g":34,"k":1,"t":"d"},{"n":"Inp_GR_TP_USD","l":"🎯 TP guud $: wadarta trade-yada (BUY + SELL) +$X -> dhammaan xidh -> grid cusub isla markiiba (xeelad kasta)","g":34,"k":1,"t":"d"},{"n":"Inp_GR_SL_USD","l":"🛑 SL guud $: wadartu −$X -> dhammaan xidh (khasaare go'an · balance kuma xidhna)","g":34,"k":1,"t":"d"},{"n":"Inp_GR_Lock_USD","l":"🔒 QUFUL $: wadartu +$X gaadho kadib ... (0 = off)","g":34,"k":1,"t":"d"},{"n":"Inp_GR_Lock_Pct","l":"10% = break-even (+ faa'iido yar)","g":34,"k":1,"t":"d"},{"n":"Inp_GR_Hard_Lv","l":"GR Hard Lv","g":34,"k":1,"t":"i"},{"n":"Inp_GR_Cool","l":"SL guud kadib -> sug X daqiiqo (0 = off)","g":34,"k":1,"t":"i"},{"n":"Inp_GR_Max_Day","l":"grid maalintii ugu badan (0 = xad la'aan)","g":34,"k":1,"t":"i"},{"n":"Inp_GR_Day_Loss","l":"khasaaraha maalinlaha GRID % balance -> maanta jooji (0 = off)","g":34,"k":1,"t":"d"},{"n":"Inp_GR_News","l":"war xoog leh (news filter-ka) -> grid cusub / lakab cusub ma jiro","g":34,"k":1,"t":"b"},{"n":"Inp_GR_Hour_GMT","l":"GR Hour GMT","g":34,"k":1,"t":"b"},{"n":"Inp_GR_Hour_Start","l":"v72.1 (GMT)","g":34,"k":1,"t":"i"},{"n":"Inp_GR_Hour_End","l":"v72.1 (GMT)","g":34,"k":1,"t":"i"},{"n":"Inp_GR_Max_Orders","l":"amarrada GRID ugu badan (position + pending · 2-60)","g":34,"k":0,"t":"i","x":368,"r":0,"m":0},{"n":"Inp_GR_Max_Min","l":"grid ugu dheer (daqiiqo) -> xidh (0 = off)","g":34,"k":1,"t":"i"},{"n":"Inp_SP_Range_Pct","l":"⇅ LABADA SPOT: range auto ±X% (bartamaha = qiimaha) (0.2-10) · tijaabada: ±2%","g":35,"k":0,"t":"d","x":369,"r":0,"m":0},{"n":"Inp_SP_Hi","l":"xad sare (Üst sınır) gacan · 0 = auto","g":35,"k":0,"t":"d","x":370,"r":0,"m":0},{"n":"Inp_SP_Lo","l":"xad hoose (Alt sınır) gacan · 0 = auto","g":35,"k":0,"t":"d","x":371,"r":0,"m":0},{"n":"Inp_SP_Levels","l":"lakabyo range-ka (2-30) · tijaabada: 5","g":35,"k":0,"t":"i","x":372,"r":0,"m":0},{"n":"Inp_SP_Lot","l":"lot lakab kasta","g":35,"k":0,"t":"d","x":373,"r":0,"m":0},{"n":"Inp_SP_Restart","l":"kor laga baxo (KAR AL): true = range cusub · false = joogso (GRID dami / shid = bilow)","g":35,"k":0,"t":"b","x":374,"r":0,"m":0},{"n":"Inp_SP_SL_Lv","l":"🛑 SL = xadka hoose − X lakab (0.5-10)","g":35,"k":0,"t":"d","x":375,"r":0,"m":0},{"n":"Inp_SP_Weekend","l":"Jimce (dhammaadka usbuuca) dhammaan xidh","g":35,"k":0,"t":"b","x":376,"r":0,"m":0}]}'''
+INP_SCHEMA_JSON = r'''{"h":"1d9fb518","ver":"72.3","n":384,"groups":[{"name":"0 · TIJAABO (v65.3)","cat":"SYS"},{"name":"0c · ATR ADAPTIVE (v66.5 - SL/TP suuqa ayuu la socdaa)","cat":"MAIN"},{"name":"0a · STEP-LOCK (v66.2 - faa'iido xidhid tallaabo tallaabo)","cat":"MAIN"},{"name":"0b · SNIPER MODE (v66)","cat":"MAIN"},{"name":"🥇 GOLD BASKET (v69.0 · XAUUSD oo keliya)","cat":"GOLD"},{"name":"⚡ TICK SCALPER · XAUUSD (v70.0)","cat":"TICK"},{"name":"1 · SHATI & AMMAAN","cat":"SYS"},{"name":"2 · XEELAD - DOORASHO","cat":"MAIN"},{"name":"3 · XADKA TIRADA TRADE-KA (is-dul-saarid)","cat":"PROT"},{"name":"4 · KHATAR & LOT","cat":"PROT"},{"name":"5 · XADKA AMMAANKA (khasaare / faa'iido)","cat":"PROT"},{"name":"6 · SL / TP (aasaaska)","cat":"MAIN"},{"name":"7 · BREAK-EVEN & TRAILING","cat":"MAIN"},{"name":"8 · QAYB-XIRID (Partial / ScaleOut / TP-Ladder)","cat":"MAIN"},{"name":"9 · XIRITAAN HORE","cat":"MAIN"},{"name":"10 · FILTER - XAALADDA SUUQA","cat":"FILT"},{"name":"11 · FILTER - EMA (JIHADA · H1 + H4)","cat":"FILT"},{"name":"12 · FILTER - TREND FOLLOW","cat":"FILT"},{"name":"13 · FILTER - KALE","cat":"FILT"},{"name":"14 · WAQTI & SESSION","cat":"FILT"},{"name":"15 · WARARKA (NEWS)","cat":"PROT"},{"name":"16 · XEELAD: SR (Support / Resistance)","cat":"SRSD"},{"name":"19 · XEELAD: SMC (Smart Money)","cat":"SMC"},{"name":"19b · ★ SCORING & LOT (v68.1)","cat":"MAIN"},{"name":"22 · HABKA FULINTA","cat":"SYS"},{"name":"23 · PROP FIRM","cat":"PROT"},{"name":"24 · TELEGRAM","cat":"SYS"},{"name":"25 · CLOUD DASHBOARD","cat":"SYS"},{"name":"26 · MUUQAALKA CHART-KA","cat":"SYS"},{"name":"21b · SUPPLY & DEMAND (v61 - mishiin cusub)","cat":"SRSD"},{"name":"27 · DIIWAAN & DEBUG","cat":"SYS"},{"name":"28 · 💱 LAMAANAHA (v70.8)","cat":"SYS"},{"name":"29 · 📏 CABBIR LAMAANE · TICK + BASKET (v70.9)","cat":"TICK"},{"name":"🧩 CORE (v72.0)","cat":"SYS"},{"name":"🔍 0b · SCAN ALBAAB + 📌 QORSHE TOOS (v72.3)","cat":"MAIN"},{"name":"30 · 🪜 GRID STOP · keli (v71.0)","cat":"GRID"},{"name":"30b · ⇅ LABADA SPOT · GRID STOP (v72.2)","cat":"GRID"}],"items":[{"n":"Disable_All_Management","l":"Disable All Management","g":0,"k":1,"t":"b"},{"n":"Test_Loose_Filters","l":"TRUE = fitarada AAN zone-ka ahayn waa la dabciyay (News/Session/Cooldown/Regime-ADX/MTF/EMA200/Correlation/H1-","g":0,"k":0,"t":"b","x":0,"r":0,"m":0},{"n":"Adaptive_SLTP","l":"TRUE = SL/TP shumac kasta dib ayaa loo xisaabiyaa ATR-ka HADDA (marxaladda suuqa). Hore: hal mar oo keliya fur","g":1,"k":1,"t":"b"},{"n":"Adaptive_TF","l":"TF-ka ATR-ka","g":1,"k":0,"t":"e","x":1,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"Adaptive_SL_Mult","l":"SL = ATR x tan","g":1,"k":0,"t":"d","x":2,"r":0,"m":0},{"n":"Adaptive_TP_Mult","l":"TP = ATR x tan","g":1,"k":0,"t":"d","x":3,"r":0,"m":0},{"n":"Adaptive_Max_R","l":"xadka sare - SL/TP ha ka ballaadhan tan x kii asalka ahaa (0 = xad ma jiro)","g":1,"k":0,"t":"d","x":4,"r":0,"m":0},{"n":"Adaptive_Min_R","l":"xadka hoose - ha ka yaraan tan x kii asalka ahaa (0 = xad ma jiro)","g":1,"k":0,"t":"d","x":5,"r":0,"m":0},{"n":"Adaptive_Log","l":"qor beddel kasta","g":1,"k":0,"t":"b","x":6,"r":0,"m":0},{"n":"Lock_Mode","l":"BE_ONLY = SL wuxuu ku sii jiraa BREAK-EVEN (trade-ku meel bannaan buu helayaa) | STEP = SL tallaabo tallaabo k","g":2,"k":1,"t":"e","o":[[0,"STEP"],[1,"BE_ONLY"]]},{"n":"Lock_BE_Buffer_Pips","l":"BE_ONLY - SL = entry + intan pip (0 = entry sax ah)","g":2,"k":0,"t":"d","x":7,"r":0,"m":0},{"n":"Step_Lock_Enable","l":"TRUE = SL tallaabo tallaabo kor buu u socdaa (faa'iidada waa la xidhaa). Trade WELIGIIS lama xidho - kaliya SL","g":2,"k":1,"t":"b"},{"n":"Step_Lock_Pips","l":"tallaabo kasta (pip). SL-ku wuxuu ka dambeeyaa sicirka intaas","g":2,"k":1,"t":"d"},{"n":"Step_Lock_Start_Pips","l":"faa'iidada ugu horraysa ee SL-ku dhaqaaqo (pip). 15 -> +15 = SL break-even","g":2,"k":1,"t":"d"},{"n":"Step_Lock_Log","l":"qor tallaabo kasta (Experts log)","g":2,"k":0,"t":"b","x":8,"r":0,"m":0},{"n":"Inp_Sniper_Mode","l":"SNIPER - zone WEYN (M30) + xaqiijin yar (CHoCH M5) gudaha zone-ka -> SL cidhiidhi, RR sare. false = mishiinkii","g":3,"k":1,"t":"b"},{"n":"Sniper_LTF","l":"timeframe-ka yar ee xaqiijinta (CHoCH)","g":3,"k":0,"t":"e","x":9,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"Inp_Sniper_Touch_Bars","l":"6 saac - taabashadu waa inay dhowdahay","g":3,"k":0,"t":"i","x":10,"r":0,"m":8},{"n":"Sniper_Swing_Len","l":"xoogga swing-ka LTF (shumac dhinac kasta)","g":3,"k":0,"t":"i","x":11,"r":0,"m":0},{"n":"Sniper_SL_Buffer_Pips","l":"SL = hooseynta/sarreynta sweep-ka + inta pip","g":3,"k":0,"t":"d","x":12,"r":0,"m":0},{"n":"Sniper_SL_Min_Pips","l":"SL ugu yar (pip) - ka yar -> waa la ballaadhinayaa ilaa tan","g":3,"k":0,"t":"d","x":13,"r":0,"m":0},{"n":"Sniper_SL_ATR_TF","l":"ATR-ka SL-ka sniper-ka (JPY/GBP ayuu la qabsadaa)","g":3,"k":0,"t":"e","x":14,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"Sniper_SL_Min_ATR","l":"SL ugu yar = N x ATR (0 = off, pip-ka oo keliya)","g":3,"k":0,"t":"d","x":15,"r":0,"m":0},{"n":"Sniper_SL_Buf_ATR","l":"buffer-ka gadaasha sweep-ka = max(pip, N x ATR)","g":3,"k":0,"t":"d","x":16,"r":0,"m":0},{"n":"Sniper_SL_Spread_Mult","l":"SL ugu yar = N x spread","g":3,"k":0,"t":"d","x":17,"r":0,"m":0},{"n":"Sniper_SL_Max_ATR","l":"SL ugu weyn = max(SNSLMAX, N x ATR) (0 = SNSLMAX oo keliya)","g":3,"k":0,"t":"d","x":18,"r":0,"m":0},{"n":"Inp_Sniper_SL_Max_Pips","l":"Sniper SL Max Pips","g":3,"k":1,"t":"d"},{"n":"Inp_Sniper_RR","l":"TP = SL x tan","g":3,"k":1,"t":"d"},{"n":"Inp_Sniper_Max_Trades_Day","l":"trade ugu badan MAALINTII - DHAMMAAN lammaanayaasha/chart-yada (magic-ga MOHA). 0 = xad ma jiro","g":3,"k":1,"t":"i"},{"n":"Sniper_Symbols","l":"v66 · v72.3: + XAUUSD (gelitaanka = ATR) · madhan = dhammaan","g":3,"k":0,"t":"s","x":19,"r":0,"m":0},{"n":"Sniper_Session_Only","l":"kaliya London + New York","g":3,"k":0,"t":"b","x":20,"r":0,"m":0},{"n":"Sniper_GMT_Start","l":"London ka hor","g":3,"k":0,"t":"i","x":21,"r":0,"m":0},{"n":"Sniper_GMT_End","l":"NY dhammaadka","g":3,"k":0,"t":"i","x":22,"r":0,"m":0},{"n":"Inp_BSK_On","l":"default ON (DOUBLE) · v69.7: OFF (ASIA ayaa beddelay) · v69.0 GOLD BASKET: XAUUSD signal kasta -> basket (lamm","g":4,"k":1,"t":"b"},{"n":"Inp_BSK_Signal","l":"signal-ka dahabka: ZONE (demand/supply) · EMA pullback · LABADA · DOUBLE (v69.9: top/bottom salka + EMA)","g":4,"k":1,"t":"e","o":[[0,"ZONE"],[1,"EMA"],[2,"BOTH"],[3,"DBL"]]},{"n":"Inp_BSK_Trades","l":"trade-yada basket-ka (2-5)","g":4,"k":1,"t":"i"},{"n":"Inp_BSK_Entry","l":"LAKAB: #1 hadda, inta kale zone-ka gudihiisa · ISKU MAR: dhammaan hadda","g":4,"k":1,"t":"e","o":[[0,"LAKAB"],[1,"ISKUMAR"]]},{"n":"Inp_BSK_Risk_Pct","l":"risk basket-ka OO DHAN (% balance) - trade-yada ayaa loo qaybiyaa, ma labanlaabmo (v69.5: 0.5-1%)","g":4,"k":1,"t":"d"},{"n":"Inp_BSK_MaxLoss_USD","l":"xad adag ($) SAQAF: xadka dhabta ah = MIN(kan, 1.2 x risk $) · 0 = auto (1.2 x risk) oo keliya","g":4,"k":1,"t":"d"},{"n":"Inp_BSK_Max_Day","l":"basket maalintii (ugu badnaan) · v69.5: 2 (3 hore)","g":4,"k":1,"t":"i"},{"n":"Inp_BSK_Max_Spread","l":"spread ugu badan (sent: 35 = $0.35)","g":4,"k":1,"t":"i"},{"n":"Inp_BSK_TP_Mode","l":"TP: JARANJAR (1R · 2R · 3R) · WADAJIR ($ bartilmaameed -> xidh dhammaan)","g":4,"k":1,"t":"e","o":[[0,"JARANJAR"],[1,"WADAJIR"]]},{"n":"Inp_BSK_Target_USD","l":"WADAJIR: bartilmaameedka faa'iidada ($)","g":4,"k":1,"t":"d"},{"n":"Inp_BSK_BE_TP1","l":"TP1 kadib -> inta kale SL = break-even (basket-ku ma khasaari karo)","g":4,"k":1,"t":"b"},{"n":"Inp_BSK_Lock","l":"qufulka faa'iidada: faa'iidada ugu sarreysa 50% ha lumin","g":4,"k":1,"t":"b"},{"n":"Inp_BSK_Session","l":"waqtiga dahabka oo keliya (London + NY, GMT hoose)","g":4,"k":1,"t":"b"},{"n":"Inp_BSK_Dir_Block","l":"2 basket oo isku jiho ah oo khasaara -> jihadaas maanta waa la joojiyaa","g":4,"k":1,"t":"b"},{"n":"BSK_GMT_Start","l":"waqtiga dahabka: bilow (GMT)","g":4,"k":0,"t":"i","x":23,"r":0,"m":0},{"n":"BSK_GMT_End","l":"waqtiga dahabka: dhammaad (GMT)","g":4,"k":0,"t":"i","x":24,"r":0,"m":0},{"n":"BSK_Layer_Expire_Min","l":"LAKAB: lakabyada aan buuxsamin X daqiiqo kadib waa la tirtiraa","g":4,"k":0,"t":"i","x":25,"r":0,"m":0},{"n":"BSK_Cooldown_Min","l":"basket xidhmay kadib - sug (daqiiqo)","g":4,"k":0,"t":"i","x":26,"r":0,"m":0},{"n":"BSK_Lock_Start_Pct","l":"qufulku wuxuu bilaabmaa marka faa'iidadu = X% risk-ka ($)","g":4,"k":0,"t":"d","x":27,"r":0,"m":0},{"n":"BSK_Lock_Keep_Pct","l":"... kadib X% faa'iidada ugu sarreysa waa la ilaaliyaa","g":4,"k":0,"t":"d","x":28,"r":0,"m":0},{"n":"BSK_MaxLoss_Mult","l":"v69.5 · xadka khasaaraha = N x risk-ga $ ee basket-ka (1.05-3)","g":4,"k":0,"t":"d","x":29,"r":0,"m":0},{"n":"BSK_Step_Lock","l":"v69.5 · TP2 kadib -> trade-yada hadhay SL = TP1 (ugu yaraan +2R)","g":4,"k":0,"t":"b","x":30,"r":0,"m":0},{"n":"BSK_EMA_Fast","l":"EMA pullback: EMA degdeg (M5)","g":4,"k":0,"t":"i","x":31,"r":1,"m":0},{"n":"BSK_EMA_Mid","l":"EMA pullback: EMA dhexe (M5 + trend TF)","g":4,"k":0,"t":"i","x":32,"r":1,"m":0},{"n":"BSK_EMA_Slow","l":"EMA pullback: EMA gaabis (trend TF)","g":4,"k":0,"t":"i","x":33,"r":1,"m":0},{"n":"BSK_Trend_TF","l":"EMA pullback: timeframe-ka trend-ka","g":4,"k":0,"t":"e","x":34,"r":1,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"BSK_Entry_TF","l":"EMA pullback: timeframe-ka gelitaanka","g":4,"k":0,"t":"e","x":35,"r":1,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"BSK_Pull_Tol_ATR","l":"EMA pullback: dulqaadka band-ka EMA (x ATR)","g":4,"k":0,"t":"d","x":36,"r":0,"m":0},{"n":"BSK_Symbols","l":"lammaanayaasha basket-ka (magaca ku jira)","g":4,"k":0,"t":"s","x":37,"r":0,"m":0},{"n":"BSK_Trend_Sep_ATR","l":"v69.4 · trend: EMA50/EMA200 (M15) kala fogaan >= N x ATR (range -> ma ganacsado)","g":4,"k":0,"t":"d","x":38,"r":0,"m":0},{"n":"BSK_Trend_Slope_ATR","l":"v69.4 · trend: EMA50 M15 janjeer (8 shumac) >= N x ATR","g":4,"k":0,"t":"d","x":39,"r":0,"m":0},{"n":"BSK_Chop_Bars","l":"v69.4 · chop: shumacyada M5 ee la eegayo","g":4,"k":0,"t":"i","x":40,"r":0,"m":0},{"n":"BSK_Chop_Max","l":"v69.4 · chop: gudbidda EMA50 ugu badan (ka badan -> ma ganacsado)","g":4,"k":0,"t":"i","x":41,"r":0,"m":0},{"n":"BSK_Need_Structure","l":"v69.4 · qaab-dhismeed M15: BUY = HH/HL · SELL = LH/LL","g":4,"k":0,"t":"b","x":42,"r":0,"m":0},{"n":"BSK_Flip_Hours","l":"v69.4 · basket kadib jihada lidka ah lama furo X saac","g":4,"k":0,"t":"i","x":43,"r":0,"m":0},{"n":"BSK_Dbl_TF","l":"timeframe-ka (M15 ayaa la tijaabiyay · M5 ma shaqeyn)","g":4,"k":0,"t":"e","x":44,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"Inp_BSK_Dbl_Tol","l":"labada sal / top kala fogaanshaha ugu badan (x ATR)","g":4,"k":1,"t":"d"},{"n":"Inp_BSK_Dbl_Neck","l":"neckline ugu yar (x ATR) salka ka sarreeya","g":4,"k":1,"t":"d"},{"n":"Inp_BSK_Dbl_TP_R","l":"TP lakab kasta (x R)","g":4,"k":1,"t":"d"},{"n":"BSK_Dbl_GapMin","l":"shumacyada u dhexeeya labada sal (ugu yar)","g":4,"k":0,"t":"i","x":45,"r":0,"m":0},{"n":"BSK_Dbl_GapMax","l":"... (ugu badan)","g":4,"k":0,"t":"i","x":46,"r":0,"m":0},{"n":"Inp_TK_On","l":"Momentum tick scalper (tijaabo: \"Every tick based on real ticks\")","g":5,"k":1,"t":"b"},{"n":"Inp_TK_Only","l":"TICK OO KELIYA: marka TICK shidan yahay, main / basket / asia lammaanahan ma furaan","g":5,"k":1,"t":"b"},{"n":"Inp_TK_Window","l":"TICK TRACKER: W = isbeddelada qiimaha ee la eegayo (3-50)","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Need","l":"TICK TRACKER: K = inta jiho isku mid ah loo baahan yahay (W ka mid)","g":5,"k":1,"t":"i"},{"n":"Inp_TK_MinMove","l":"dhaqdhaqaaqa ugu yar ee window-ka ($ qiime)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_MaxSec","l":"xawaare: window-ku ha ku dhammaado X ilbiriqsi (0 = off)","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Lot","l":"lot go'an (marka Risk = 0)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_Risk_Pct","l":"> 0: lot = risk % / Virtual SL (0 = lot go'an)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_VSL","l":"VIRTUAL SL ($ qiime · broker-ka lama tuso)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_VTP","l":"VIRTUAL TP ($ qiime · 0 = trailing oo keliya)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_BE_Trig","l":"BREAK-EVEN: faa'iido $X -> SL = entry + lock (0 = off)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_BE_Lock","l":"BREAK-EVEN: lock ($ qiime)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_Trail_Start","l":"TRAILING virtual: bilow ($ faa'iido · 0 = off)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_Trail_Dist","l":"TRAILING virtual: masaafada heerka ugu sarreeya ($)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_Hard_SL","l":"SL ADAG broker-ka ($ · ilaalin internet go'a · ugu yaraan VSL + $1)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_Max_Hold","l":"trade ugu dheer (ilbiriqsi) -> xidh (0 = off)","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Hour_Start","l":"saacadaha (waqtiga SERVER-ka): bilow","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Hour_End","l":"saacadaha (waqtiga SERVER-ka): dhammaad","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Max_Spread","l":"spread ugu badan (sent: 35 = $0.35)","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Cooldown","l":"sug X ilbiriqsi kadib trade kasta","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Max_Day","l":"trade maalintii ugu badan","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Max_Losses","l":"khasaare isku xiga -> hakad (0 = off)","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Pause_Min","l":"hakadka (daqiiqo)","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Day_Loss_Pct","l":"khasaaraha maalinlaha TICK (% balance) -> maanta jooji (0 = off)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_Day_Target_Pct","l":"faa'iidada maalinlaha (% balance) -> maanta jooji (0 = off)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_Basket","l":"BASKET (trade-yo badan) · false = HAL TRADE","g":5,"k":1,"t":"b"},{"n":"Inp_TK_Bsk_Trades","l":"trade-yada (2-5)","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Bsk_Entry","l":"lakabyada: ISKU MAR · SIGNAL KASTA","g":5,"k":1,"t":"e","o":[[0,"ALL"],[1,"SIG"]]},{"n":"Inp_TK_Bsk_Exit","l":"xidhitaan: TP KASTA · WADAJIR ($)","g":5,"k":1,"t":"e","o":[[0,"EACH"],[1,"SUM"]]},{"n":"Inp_TK_Bsk_Target","l":"bartilmaameed WADAJIR ($ faa'iidada guud)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_Bsk_BE","l":"faa'iido guud $X -> SL wadaag = celceliska entry (0 = off)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_Bsk_LotPer","l":"0.01 lot $X balance kasta (compounding · 0 = off)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_TPR_On","l":"TP RAAC - qiimuhu TP-ga marka uu u dhawaado -> TP-ga fogee + SL quful","g":5,"k":1,"t":"b"},{"n":"Inp_TK_TPR_Start","l":"bilow marka faa'iidadu gaadho X% masaafada TP-ga (50-95)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_TPR_Lock","l":"SL-ka ku quful X% masaafada TP-ga (10-90 · < Bilow)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_TPR_Step","l":"TP-ga u dheeree $X (qiime) raac kasta","g":5,"k":1,"t":"d"},{"n":"Inp_TK_TPR_Max","l":"raac ugu badan trade kasta (1-10)","g":5,"k":1,"t":"i"},{"n":"Inp_TK_TP_Mode","l":"TAKE PROFIT: VIRTUAL (bot-ka ayaa xidha) · BROKER (T/P-ga MT5)","g":5,"k":1,"t":"e","o":[[0,"VIRTUAL"],[1,"BROKER"]]},{"n":"Inp_TK_SL_Mode","l":"STOP LOSS: VIRTUAL (bot-ka ayaa xidha) · BROKER (server-ka · slippage yar)","g":5,"k":1,"t":"e","o":[[0,"VIRTUAL"],[1,"BROKER"]]},{"n":"Inp_TK_Spread_Mult","l":"filter spread: dhaqdhaqaaq >= X x spread (0 = off)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_Dir_On","l":"🧭 JIHADA SUUQA - tick-yada jihada guud oo keliya (shumacyada M1 · EMA20/50 · 5 daq · EMA50 M5)","g":5,"k":1,"t":"b"},{"n":"Inp_TK_Dir_Mode","l":"JILICSAN 2/4 · DHEXE 3/4 · ADAG 4/4 calaamadood","g":5,"k":1,"t":"e","o":[[0,"SOFT"],[1,"MID"],[2,"HARD"]]},{"n":"Inp_TK_Dir_Bars","l":"shumacyada M1 ee la eegayo (3-20)","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Dir_Need","l":"inta shumac ee jiho isku mid ah (Bars ka mid)","g":5,"k":1,"t":"i"},{"n":"Inp_TK_Dir_Str","l":"xoogga ugu yar % (ka yar = RANGE -> ha galin)","g":5,"k":1,"t":"d"},{"n":"Inp_TK_Dir_Wait","l":"khasaare kadib -> jihadaas sug X daqiiqo (0 = off)","g":5,"k":1,"t":"i"},{"n":"Inp_ZN_On","l":"🎯 ZONE YAR - TICK wuxuu ka galaa zone-yada yaryar oo keliya (SELL saqaf · BUY dabaq)","g":5,"k":1,"t":"b"},{"n":"Inp_ZN_TF","l":"timeframe-ka zone-yada · M1 · M5 · LABADA (M5 zone + M1 xaqiijin)","g":5,"k":1,"t":"e","o":[[0,"M1"],[1,"M5"],[2,"BOTH"]]},{"n":"Inp_ZN_Show","l":"chart-ka ku sawir (false = qari · ganacsigu wuu socdaa)","g":5,"k":1,"t":"b"},{"n":"Inp_ZN_Touch","l":"taabasho ugu yar (2-6) · ka yar = lama sawiro","g":5,"k":1,"t":"i"},{"n":"Inp_ZN_W","l":"ballaca ugu badan × ATR timeframe-ka (0.05-1.0)","g":5,"k":1,"t":"d"},{"n":"Inp_ZN_Max","l":"zone-yada la hayo · kuwa qiimaha ugu dhow (1-10)","g":5,"k":1,"t":"i"},{"n":"Inp_ZN_SL","l":"SL = zone-ka geeskiisa ± $X","g":5,"k":1,"t":"d"},{"n":"Inp_ZN_TP","l":"TP = zone-ka xiga · ama TICK caadi","g":5,"k":1,"t":"e","o":[[0,"ZONE"],[1,"TICK"]]},{"n":"Inp_TK_Trend","l":"filter trend EMA50 M5 (BUY kor oo keliya · SELL hoos oo keliya)","g":5,"k":1,"t":"b"},{"n":"Inp_TK_Panel","l":"panel qoraal ah chart-ka (default OFF - xogtu app-ka ayey ku jirtaa · tester-ka mar walba waa la tusaa)","g":5,"k":0,"t":"b","x":47,"r":0,"m":0},{"n":"License_Key","l":"Furaha shatiga (license key)","g":6,"k":2,"t":"s"},{"n":"Enable_AccountLock","l":"Ku xir account gaar ah (on/off)","g":6,"k":2,"t":"b"},{"n":"Licensed_Account","l":"Lambarka account-ka la ogolaaday (0 = mid kasta)","g":6,"k":2,"t":"i"},{"n":"Expiry_Date","l":"Taariikhda uu shatigu dhacayo","g":6,"k":2,"t":"s"},{"n":"Cloud_Auth_Token","l":"Furaha ammaanka - waa la dejiyay (v59.8). HA LA WADAAGIN FAYLKA.","g":6,"k":2,"t":"s"},{"n":"MohaPro_Key","l":"FURAHAAGA BOT-KA (app-ka ka koobi garee: Maamul/Guud). Account-kan OO KELIYA ayuu u shaqeeyaa. Madhan = furihi","g":6,"k":2,"t":"s"},{"n":"Require_Signed_Commands","l":"Require Signed Commands","g":6,"k":2,"t":"b"},{"n":"Panel_Stats_Period","l":"Panel WinRate/PF - muddo (TODAY/WEEK/MONTH/ALL)","g":6,"k":0,"t":"e","x":48,"r":0,"m":0,"o":[[0,"TODAY"],[1,"WEEK"],[2,"MONTH"],[3,"ALL"]]},{"n":"Panel_Stats_This_Symbol_Only","l":"tirakoobku lammaanahan oo keliya (false = account oo dhan)","g":6,"k":0,"t":"b","x":49,"r":0,"m":0},{"n":"Strategy_Mode","l":"Xeeladda: SR/SD · SMC · LABADA (EMA = filter kaliya)","g":7,"k":0,"t":"e","x":50,"r":1,"m":0,"o":[[0,"SRSD"],[1,"SMC"],[2,"BOTH"]]},{"n":"Trade_Timeframe","l":"Timeframe-ka ganacsiga (M1 ama M5)","g":7,"k":0,"t":"e","x":51,"r":0,"m":0,"o":[[1,"M1"],[5,"M5"]]},{"n":"One_Trade_Per_Symbol","l":"Hal trade lammaanahiiba (xeeladuhu ha isku raran)","g":8,"k":0,"t":"b","x":52,"r":0,"m":0},{"n":"Enable_Conflict_Guard","l":"Ka hortag BUY & SELL isku mar","g":8,"k":0,"t":"b","x":53,"r":0,"m":0},{"n":"Max_Open_Trades","l":"One_Trade_Per_Symbol horeba 1 buu ogolaa - hadda waa run","g":8,"k":0,"t":"i","x":54,"r":0,"m":0},{"n":"Inp_Max_Trades_Per_Day","l":"Max Trades Per Day","g":8,"k":1,"t":"i"},{"n":"MinMinutesBetweenTrades","l":"MinMinutesBetweenTrades","g":8,"k":0,"t":"i","x":55,"r":0,"m":0},{"n":"One_Trade_Per_Zone","l":"1 ZONE = 1 TRADE kaliya weligiis (SR/S&D) - marka zone la ganacsado, mar dambe lama isticmaali doono","g":8,"k":0,"t":"b","x":56,"r":0,"m":0},{"n":"Avoid_Reentry_Near_Loss","l":"ka fogow dib-u-gelid meesha khasaaraha ugu dambeeyay (zone-chop/whipsaw ka hortag)","g":8,"k":0,"t":"b","x":57,"r":0,"m":0},{"n":"Reentry_Avoid_ATR","l":"fogaanta (ATR x) khasaaraha ugu dambeeyay ee la ilaalinayo","g":8,"k":0,"t":"d","x":58,"r":0,"m":0},{"n":"Reentry_Avoid_Minutes","l":"Reentry Avoid Minutes","g":8,"k":0,"t":"i","x":59,"r":0,"m":0},{"n":"AllowMultiplePerBar","l":"Ogolow trade badan shumac kasta (false = hal trade shumacii)","g":8,"k":0,"t":"b","x":60,"r":0,"m":0},{"n":"One_Trade_Per_H1_Bar","l":"Hal trade saacaddii (H1)","g":8,"k":0,"t":"b","x":61,"r":0,"m":0},{"n":"Enable_NewBar_Only","l":"Signal kaliya marka shumac cusub furmo","g":8,"k":0,"t":"b","x":62,"r":0,"m":0},{"n":"Inp_Risk_Percent","l":"Khatarta trade kasta (% haraaga)","g":9,"k":1,"t":"d"},{"n":"Auto_Lot","l":"Lot toos ah oo ka yimaada khatarta % (on/off)","g":9,"k":0,"t":"b","x":63,"r":0,"m":0},{"n":"InitialLot","l":"Lot-ka bilowga (marka Auto Lot damman yahay)","g":9,"k":0,"t":"d","x":64,"r":0,"m":0},{"n":"Enable_Dynamic_Risk","l":"Enable Dynamic Risk","g":9,"k":0,"t":"b","x":65,"r":0,"m":0},{"n":"DynRisk_Loss_Trigger","l":"Immisa khasaare kadib ayaa khatarta la yareeyaa","g":9,"k":0,"t":"i","x":66,"r":0,"m":0},{"n":"DynRisk_Reduced_Pct","l":"Khatarta la yareeyay (%)","g":9,"k":0,"t":"d","x":67,"r":0,"m":0},{"n":"MagicNumber","l":"Magic number - aqoonsiga bot-ka","g":9,"k":2,"t":"i"},{"n":"Inp_Daily_Loss_Limit_Percent","l":"Xadka khasaaraha maalinlaha (%)","g":10,"k":1,"t":"d"},{"n":"Max_Losses_Per_Day","l":"Khasaare ugu badan maalintii","g":10,"k":0,"t":"i","x":68,"r":0,"m":0},{"n":"Max_Consecutive_Losses","l":"Khasaare isku xigta oo ugu badan","g":10,"k":0,"t":"i","x":69,"r":0,"m":0},{"n":"Max_True_Consecutive_Losses","l":"shabaqa ammaanka DHABTA ah","g":10,"k":0,"t":"i","x":70,"r":0,"m":0},{"n":"Inp_Max_Total_Drawdown_Pct","l":"Drawdown-ka guud ee ugu badan (%)","g":10,"k":1,"t":"d"},{"n":"Enable_ExtraSafety","l":"Ammaan dheeraad ah (on/off)","g":10,"k":0,"t":"b","x":71,"r":1,"m":0},{"n":"Daily_Profit_Target_Pct","l":"Bartilmaameedka faa'iidada maalinlaha (%)","g":10,"k":0,"t":"d","x":72,"r":0,"m":0},{"n":"Weekly_Profit_Target_Pct","l":"Bartilmaameedka faa'iidada usbuucle (%)","g":10,"k":0,"t":"d","x":73,"r":0,"m":0},{"n":"Enable_Daily_Profit_Lock","l":"Enable Daily Profit Lock","g":10,"k":0,"t":"b","x":74,"r":0,"m":0},{"n":"Enable_Weekly_Profit_Lock","l":"Enable Weekly Profit Lock","g":10,"k":0,"t":"b","x":75,"r":0,"m":0},{"n":"Enable_PortfolioMgmt","l":"Maareynta portfolio (on/off)","g":10,"k":0,"t":"b","x":76,"r":0,"m":0},{"n":"Max_Portfolio_Risk","l":"Khatarta guud ee ugu badan (%)","g":10,"k":0,"t":"d","x":77,"r":0,"m":0},{"n":"Equity_Protection_Pct","l":"Ilaalinta equity-ga (%)","g":10,"k":0,"t":"d","x":78,"r":0,"m":0},{"n":"SLTP_Mode","l":"Halka SL/TP laga qaato: FIXED (pips go'an) / ATR / SMC_PRO","g":11,"k":0,"t":"e","x":79,"r":0,"m":0,"o":[[0,"FIXED"],[1,"ATR"],[2,"SMC_PRO"]]},{"n":"StopLoss_Pips_Fixed","l":"SL: fogaanta (pips) - habka FIXED","g":11,"k":0,"t":"i","x":80,"r":0,"m":0},{"n":"TakeProfit_Pips_Fixed","l":"TP: fogaanta (pips) - habka FIXED","g":11,"k":0,"t":"i","x":81,"r":0,"m":0},{"n":"ATR_Period_Core","l":"Muddada ATR-ka aasaasiga ah","g":11,"k":0,"t":"i","x":82,"r":0,"m":0},{"n":"Safety_Buffer_Pips","l":"Buffer-ka ammaanka (pips)","g":11,"k":0,"t":"i","x":83,"r":0,"m":0},{"n":"Enforce_Min_RR","l":"Khasab ka dhig RR-ga ugu yar (on/off)","g":11,"k":0,"t":"b","x":84,"r":0,"m":0},{"n":"Min_SL_ATR_Floor","l":"SL-ka UGU YAR (x ATR)","g":11,"k":0,"t":"d","x":85,"r":0,"m":0},{"n":"Min_SL_Spread_Mult","l":"SL-ku waa inuu >= N x spread noqdaa","g":11,"k":0,"t":"d","x":86,"r":0,"m":0},{"n":"Debug_SLTP_Log","l":"qor RAAC-RAACA SL/TP talaabo kasta (Experts log)","g":11,"k":0,"t":"b","x":87,"r":0,"m":0},{"n":"Skip_If_SL_Clamped","l":"haddii SL la ballaadhiyo -> KA TAG (halkii la sii wado)","g":11,"k":0,"t":"b","x":88,"r":0,"m":0},{"n":"Zone_SL_Min_ATR","l":"SD-gu SL-kiisa DISTAL+0.35ATR buu leeyahay","g":11,"k":0,"t":"d","x":89,"r":0,"m":0},{"n":"RR_Skip_If_Short","l":"Haddii bartilmaameedku ku filneyn -> KA TAG (halkii TP la riixi lahaa)","g":11,"k":0,"t":"b","x":90,"r":0,"m":0},{"n":"Force_RR_From_SL","l":"TP = SL x Min_RR_Ratio (RR 1.3 KHASAB - xeelad kastaa)","g":11,"k":0,"t":"b","x":91,"r":0,"m":0},{"n":"Min_RR_Ratio","l":"Min RR Ratio","g":11,"k":0,"t":"d","x":92,"r":0,"m":0},{"n":"TargetProfitUSD","l":"Bartilmaameedka faa'iidada ($) - 0 = damman","g":11,"k":0,"t":"d","x":93,"r":0,"m":0},{"n":"Rev_Structural_SL","l":"Rogmasho: SL ku saleysan qaab-dhismeedka (on/off)","g":11,"k":0,"t":"b","x":94,"r":0,"m":0},{"n":"Rev_SL_Lookback","l":"Rogmasho SL: immisa shumac dib loo eegayo","g":11,"k":0,"t":"i","x":95,"r":0,"m":0},{"n":"Rev_SL_Max_ATR","l":"Rogmasho SL: fogaanta ugu badan (x ATR)","g":11,"k":0,"t":"d","x":96,"r":0,"m":0},{"n":"SMC_SL_Max_ATR","l":"SMC: SL-ga ugu fog (x ATR)","g":11,"k":0,"t":"d","x":97,"r":0,"m":0},{"n":"Liquidity_TP_Min_R","l":"Liquidity TP: R-ga ugu yar","g":11,"k":0,"t":"d","x":98,"r":0,"m":0},{"n":"EnableBreakEven","l":"BE - TP-ga ha jarin","g":12,"k":1,"t":"b"},{"n":"BE_Trigger_R","l":"TP=3R. 2.0R = 2/3 jidka. Haddii BE la shido, ka hor ma jarayo.","g":12,"k":0,"t":"d","x":99,"r":0,"m":0},{"n":"BE_Lock_R","l":"BE Lock R","g":12,"k":0,"t":"d","x":100,"r":0,"m":0},{"n":"Enable_FastBE","l":"FAST BE - kaliya TP Ladder la isticmaalo - HA SHIDIN","g":12,"k":0,"t":"b","x":101,"r":0,"m":0},{"n":"FastBE_Trigger_R","l":"Fast BE: immisa R faa'iido kadib","g":12,"k":0,"t":"d","x":102,"r":0,"m":0},{"n":"FastBE_Lock_R","l":"Fast BE: faa'iidada la xidhayo (R)","g":12,"k":0,"t":"d","x":103,"r":0,"m":0},{"n":"Enable_ATR_Trailing","l":"Enable ATR Trailing","g":12,"k":0,"t":"b","x":104,"r":1,"m":0},{"n":"ATR_Trail_Start_Mult","l":"ATR: multiplier-ka bilowga trail-ka","g":12,"k":0,"t":"d","x":105,"r":0,"m":0},{"n":"ATR_Trail_Step_Mult","l":"ATR: multiplier-ka tallaabada trail-ka","g":12,"k":0,"t":"d","x":106,"r":0,"m":0},{"n":"EnableTrailingStop","l":"Trailing stop - SL sicirka raaca (on/off)","g":12,"k":0,"t":"b","x":107,"r":1,"m":0},{"n":"Trail_Start_R","l":"Trail: R-ga bilowga","g":12,"k":0,"t":"d","x":108,"r":0,"m":0},{"n":"Trail_Step_R","l":"Trail: R-ga tallaabada","g":12,"k":0,"t":"d","x":109,"r":0,"m":0},{"n":"TrailingStartPips","l":"Trailing: pips-ka bilowga","g":12,"k":0,"t":"i","x":110,"r":0,"m":0},{"n":"TrailingStepPips","l":"Trailing: pips-ka tallaabada","g":12,"k":0,"t":"i","x":111,"r":0,"m":0},{"n":"EnablePartialClose","l":"Xidh qayb ka mid ah trade-ka (on/off)","g":13,"k":0,"t":"b","x":112,"r":1,"m":0},{"n":"PartialClosePips","l":"Qayb-xidhid: pips","g":13,"k":0,"t":"i","x":113,"r":0,"m":0},{"n":"PartialClosePercent","l":"Qayb-xidhid: boqolkiiba","g":13,"k":0,"t":"i","x":114,"r":0,"m":0},{"n":"Enable_ScaleOut","l":"Enable ScaleOut","g":13,"k":0,"t":"b","x":115,"r":1,"m":0},{"n":"ScaleOut_R1_Pct","l":"Scale out +1R: boqolkiiba la xidhayo","g":13,"k":0,"t":"i","x":116,"r":0,"m":0},{"n":"ScaleOut_R2_Pct","l":"Scale out +2R: boqolkiiba la xidhayo","g":13,"k":0,"t":"i","x":117,"r":0,"m":0},{"n":"Prop_Scale_Out","l":"Prop Scale Out","g":13,"k":0,"t":"b","x":118,"r":0,"m":0},{"n":"Enable_TP_Ladder","l":"TP Ladder - TP qaybsan + SL tallaabo (on/off) - HA SHIDIN","g":13,"k":0,"t":"b","x":119,"r":1,"m":0},{"n":"TPL_TP1_R","l":"TP Ladder: TP1 immisa R (xidh 50%, SL breakeven)","g":13,"k":0,"t":"d","x":120,"r":1,"m":0},{"n":"TPL_TP2_R","l":"TP Ladder: TP2 immisa R (xidh 25%)","g":13,"k":0,"t":"d","x":121,"r":1,"m":0},{"n":"TPL_TP3_R","l":"TP Ladder: TP3 immisa R (xidh inta hadhay)","g":13,"k":0,"t":"d","x":122,"r":1,"m":0},{"n":"TPL_TP4_R","l":"TP Ladder: TP4 immisa R","g":13,"k":0,"t":"d","x":123,"r":1,"m":0},{"n":"TPL_TP1_Pct","l":"TP Ladder: TP1 boqolkiiba","g":13,"k":0,"t":"i","x":124,"r":1,"m":0},{"n":"TPL_TP2_Pct","l":"TP Ladder: TP2 boqolkiiba","g":13,"k":0,"t":"i","x":125,"r":1,"m":0},{"n":"TPL_TP3_Pct","l":"TP Ladder: TP3 boqolkiiba","g":13,"k":0,"t":"i","x":126,"r":1,"m":0},{"n":"TPL_TP4_Pct","l":"TP Ladder: TP4 boqolkiiba","g":13,"k":0,"t":"i","x":127,"r":1,"m":0},{"n":"TPL_Trail_Final","l":"TP Ladder: trail qaybta u dambaysa (on/off)","g":13,"k":0,"t":"b","x":128,"r":0,"m":0},{"n":"TPL_Trail_Step_R","l":"TP Ladder: tallaabada trail-ka (R)","g":13,"k":0,"t":"d","x":129,"r":0,"m":0},{"n":"Enable_USD_ProfitLock","l":"Enable USD ProfitLock","g":13,"k":0,"t":"b","x":130,"r":1,"m":0},{"n":"LockProfit_USD","l":"Faa'iidada ($) ee la xidhayo","g":13,"k":0,"t":"d","x":131,"r":0,"m":0},{"n":"LockProfit_KeepPct","l":"Faa'iidada: boqolkiiba la haynayo","g":13,"k":0,"t":"d","x":132,"r":0,"m":0},{"n":"LockProfit_Trigger_R","l":"Faa'iidada: R-ga shaqaynaya","g":13,"k":0,"t":"d","x":133,"r":0,"m":0},{"n":"Enable_Stagnant_Exit","l":"Xidh trade aan waxba qabanayn N shumac kadib (on/off)","g":14,"k":0,"t":"b","x":134,"r":1,"m":0},{"n":"Stagnant_Bars","l":"Immisa shumac trade-ku furan yahay ka hor hubinta","g":14,"k":0,"t":"i","x":135,"r":0,"m":0},{"n":"Stagnant_Max_R","l":"Xidh haddii faa'iidadu u dhaxayso -R iyo +R (trade taagan)","g":14,"k":0,"t":"d","x":136,"r":0,"m":0},{"n":"Close_Profit_Before_News","l":"Xidh trade faa'iido leh warka ka hor (on/off)","g":14,"k":0,"t":"b","x":137,"r":0,"m":0},{"n":"News_Exit_Minutes","l":"Daqiiqado warka ka hor oo la xidhayo","g":14,"k":0,"t":"i","x":138,"r":0,"m":0},{"n":"News_Exit_Min_Profit_USD","l":"Kaliya xidh haddii faa'iidadu ka badan tahay ($) - 0 = mid kasta","g":14,"k":0,"t":"d","x":139,"r":0,"m":0},{"n":"News_Exit_High_Only","l":"Kaliya wararka WEYN (false = Weyn + Dhexe)","g":14,"k":0,"t":"b","x":140,"r":0,"m":0},{"n":"News_Exit_Close_Losers","l":"Sidoo kale xidh trade khasaare leh (on/off)","g":14,"k":0,"t":"b","x":141,"r":0,"m":0},{"n":"CloseWeekend","l":"Xidh trade-yada dhammaadka usbuuca (on/off)","g":14,"k":0,"t":"b","x":142,"r":0,"m":0},{"n":"Enable_Market_Regime","l":"Kaliya ganacso xaaladda suuqa ee saxda ah (on/off)","g":15,"k":0,"t":"b","x":143,"r":0,"m":0},{"n":"Regime_Lookback","l":"Xaaladda suuqa: immisa shumac dib loo eegayo","g":15,"k":0,"t":"i","x":144,"r":0,"m":0},{"n":"Filter2_ADX_Strong","l":"ADX filter","g":15,"k":0,"t":"b","x":145,"r":0,"m":0},{"n":"Filter2_ADX_MinLevel","l":"ADX ugu yar (20 = trend caadi, sare = adag)","g":15,"k":0,"t":"d","x":146,"r":0,"m":0},{"n":"Filter2_ADX_Period","l":"Muddada ADX-ga filter-ka","g":15,"k":0,"t":"i","x":147,"r":0,"m":0},{"n":"Filter_Low_Volatility","l":"ha ganacsan suuq aan dhaqaaqayn","g":15,"k":0,"t":"b","x":148,"r":0,"m":0},{"n":"Min_ATR_Pips","l":"ATR ugu yar (pips)","g":15,"k":0,"t":"d","x":149,"r":0,"m":0},{"n":"MaxSpread","l":"Spread ugu badan (points)","g":15,"k":0,"t":"i","x":150,"r":0,"m":0},{"n":"Enable_Dynamic_Spread","l":"xadka spread-ka oo ATR raaca","g":15,"k":0,"t":"b","x":151,"r":0,"m":0},{"n":"DynSpread_ATR_Mult","l":"Spread firfircoon: multiplier ATR","g":15,"k":0,"t":"d","x":152,"r":0,"m":0},{"n":"DynSpread_Min_Cap","l":"Spread firfircoon: xadka ugu hooseeya","g":15,"k":0,"t":"i","x":153,"r":0,"m":0},{"n":"DynSpread_Max_Cap","l":"Spread firfircoon: xadka ugu sarreeya","g":15,"k":0,"t":"i","x":154,"r":0,"m":0},{"n":"Enable_Extension_Guard","l":"ha eryin spike (sicirka aad uga fog EMA50)","g":15,"k":0,"t":"b","x":155,"r":0,"m":0},{"n":"Max_Extension_ATR","l":"Fogaanta ugu badan EMA50 (x ATR) - hoos = adag","g":15,"k":0,"t":"d","x":156,"r":0,"m":0},{"n":"EMA_Filter_On","l":"EMA = FILTER jihada (trade ma furo) · on/off","g":16,"k":1,"t":"b"},{"n":"EMA_F_H1_Period","l":"EMA-ga H1 (dahab)","g":16,"k":0,"t":"i","x":157,"r":1,"m":0},{"n":"EMA_F_H4_Period","l":"EMA-ga H4 (buluug)","g":16,"k":0,"t":"i","x":158,"r":1,"m":0},{"n":"EMA_F_Strict","l":"true = EMA50 H1 + EMA200 H4 isku hagaagsan · false = H4 kaliya","g":16,"k":0,"t":"b","x":159,"r":0,"m":0},{"n":"EMA_Range_Guard","l":"RANGE (suuqu isku fadhiyo) -> ha ganacsan","g":16,"k":0,"t":"b","x":160,"r":1,"m":0},{"n":"EMA_Range_Bars","l":"RANGE - H1 shumacyada la eegayo (24 = 1 maalin)","g":16,"k":0,"t":"i","x":161,"r":0,"m":0},{"n":"EMA_Range_Crosses","l":"range adag oo keliya","g":16,"k":0,"t":"i","x":162,"r":0,"m":0},{"n":"EMA_Range_Slope_ATR","l":"EMA50 H1 isbeddelka 6 saac < x ATR H1 -> siman","g":16,"k":0,"t":"d","x":163,"r":0,"m":0},{"n":"Enable_TrendFollow","l":"Raac trendka - albaabka xeeladaha trend (on/off)","g":17,"k":0,"t":"b","x":164,"r":0,"m":0},{"n":"TF_Require_Volume","l":"TF Require Volume","g":17,"k":0,"t":"b","x":165,"r":0,"m":0},{"n":"TF_Volume_Ratio","l":"Trend: saamiga volume-ka loo baahan yahay","g":17,"k":0,"t":"d","x":166,"r":0,"m":0},{"n":"TF_Require_MACD","l":"TF Require MACD","g":17,"k":0,"t":"b","x":167,"r":0,"m":0},{"n":"MACD_Fast","l":"MACD degdeg (fast)","g":17,"k":0,"t":"i","x":168,"r":0,"m":0},{"n":"MACD_Slow","l":"MACD gaabis (slow)","g":17,"k":0,"t":"i","x":169,"r":0,"m":0},{"n":"MACD_Signal","l":"MACD signal","g":17,"k":0,"t":"i","x":170,"r":0,"m":0},{"n":"Max_Same_Currency_Exposure","l":"Trade ugu badan oo isku lacag ku sharad ah (0 = damman)","g":18,"k":0,"t":"i","x":171,"r":0,"m":0},{"n":"Enable_Correlation_Filter","l":"Filter lammaanayaal isku xidhan (on/off)","g":18,"k":0,"t":"b","x":172,"r":0,"m":0},{"n":"Correlation_Groups","l":"Kooxaha lammaanayaasha isku xidhan ( | kala saar kooxaha )","g":18,"k":0,"t":"s","x":173,"r":0,"m":0},{"n":"Max_Correlated_Same_Dir","l":"Trade isku jiho ah oo ugu badan lammaanayaal isku xidhan","g":18,"k":0,"t":"i","x":174,"r":0,"m":0},{"n":"Require_Pattern_Confirm","l":"Kaliya ganacso marka qaab chart uu xaqiijiyo (on/off)","g":18,"k":0,"t":"b","x":175,"r":0,"m":0},{"n":"Pattern_Tol_ATR","l":"Qaab: dulqaadka Double Top / Bottom (x ATR)","g":18,"k":0,"t":"d","x":176,"r":0,"m":0},{"n":"Pattern_Lookback","l":"Qaab: immisa shumac la baadhayo","g":18,"k":0,"t":"i","x":177,"r":0,"m":0},{"n":"Use_Zone_Filter_For_Entry","l":"FILTER MEEL: kaliya gal zone SR (BUY support / SELL resistance) (on/off)","g":18,"k":0,"t":"b","x":178,"r":0,"m":0},{"n":"Enable_Session_Filter","l":"Filter-ka session-ka suuqa (on/off)","g":19,"k":0,"t":"b","x":179,"r":0,"m":0},{"n":"Trade_Asian","l":"Ganacso session-ka Aasiya","g":19,"k":0,"t":"b","x":180,"r":0,"m":0},{"n":"Trade_London","l":"Ganacso session-ka London (on/off)","g":19,"k":0,"t":"b","x":181,"r":0,"m":0},{"n":"Trade_NewYork","l":"Ganacso session-ka New York (on/off)","g":19,"k":0,"t":"b","x":182,"r":0,"m":0},{"n":"Trade_Overlap_Only","l":"Kaliya waqtiga London & New York isku dhacaan (on/off)","g":19,"k":0,"t":"b","x":183,"r":0,"m":0},{"n":"Use_Time_Filter","l":"Kaliya ganacso saacadaha aad dooratay (on/off)","g":19,"k":0,"t":"b","x":184,"r":0,"m":0},{"n":"Start_Hour","l":"Saacadda bilowga (waqtiga broker-ka)","g":19,"k":0,"t":"i","x":185,"r":0,"m":0},{"n":"End_Hour","l":"Saacadda dhammaadka (waqtiga broker-ka)","g":19,"k":0,"t":"i","x":186,"r":0,"m":0},{"n":"Session_Broker_GMT_Offset","l":"GMT+3 (DST) - broker-kaagu GMT+3 ayuu yahay","g":19,"k":0,"t":"i","x":187,"r":0,"m":0},{"n":"Auto_GMT_Offset","l":"farqiga GMT tooska u hel (DST) - la talo siiyay true","g":19,"k":0,"t":"b","x":188,"r":0,"m":0},{"n":"Enable_Candle_Sync","l":"Ku xir shaqada bilowga shumaca cusub (on/off)","g":19,"k":0,"t":"b","x":189,"r":0,"m":0},{"n":"Sync_TF","l":"Timeframe-ka sync-ga shumaca","g":19,"k":0,"t":"e","x":190,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"Inp_EnableNewsFilter","l":"jooji ganacsiga waqtiga wararka (tester kuma shaqeeyo)","g":20,"k":1,"t":"b"},{"n":"News_Calendar_URL","l":"URL-ka kalandarka wararka","g":20,"k":2,"t":"s"},{"n":"News_Broker_GMT_Offset","l":"GMT+3 (DST) - waqtiga wararka","g":20,"k":0,"t":"i","x":191,"r":0,"m":0},{"n":"News_Refresh_Minutes","l":"Daqiiqado la cusboonaysiiyo wararka","g":20,"k":0,"t":"i","x":192,"r":0,"m":0},{"n":"News_Filter_High","l":"Xannib wararka saameyn WEYN leh (on/off)","g":20,"k":0,"t":"b","x":193,"r":0,"m":0},{"n":"News_Filter_Medium","l":"Xannib wararka saameyn DHEXE leh (on/off)","g":20,"k":0,"t":"b","x":194,"r":0,"m":0},{"n":"News_Filter_Low","l":"Xannib wararka saameyn YAR leh (on/off)","g":20,"k":0,"t":"b","x":195,"r":0,"m":0},{"n":"MinutesBeforeNews","l":"Daqiiqado warka ka hor oo la joojinayo","g":20,"k":0,"t":"i","x":196,"r":0,"m":0},{"n":"MinutesAfterNews","l":"Daqiiqado warka ka dib oo la joojinayo","g":20,"k":0,"t":"i","x":197,"r":0,"m":0},{"n":"News_Block_If_Fetch_Fails","l":"Xannib haddii wararka la soo dejin waayo (on/off)","g":20,"k":0,"t":"b","x":198,"r":0,"m":0},{"n":"SR_Zone_TF","l":"SR: timeframe-ka zone-yada","g":21,"k":0,"t":"e","x":199,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"SR_Lookback","l":"SR: immisa shumac dib loo eegayo (HTF)","g":21,"k":0,"t":"i","x":200,"r":0,"m":0},{"n":"SR_Swing_Len","l":"SR: dhererka fractal-ka zone-yada","g":21,"k":0,"t":"i","x":201,"r":0,"m":0},{"n":"SR_Zone_ATR_Mult","l":"SR: ballaca zone-ka (x ATR HTF)","g":21,"k":0,"t":"d","x":202,"r":0,"m":0},{"n":"SR_StrengthBuffer","l":"SR: ballaca ugu yar (pips) - ATR ayaa badiyaa","g":21,"k":0,"t":"d","x":203,"r":0,"m":0},{"n":"SR_MinTouches","l":"SR: taabasho DHAB ah ugu yar","g":21,"k":0,"t":"i","x":204,"r":0,"m":0},{"n":"SR_Min_Zone_Age","l":"SR Min Zone Age","g":21,"k":0,"t":"i","x":205,"r":0,"m":0},{"n":"SR_Mode","l":"SR: habka (BOUNCE / BREAK-RETEST / LABADABA)","g":21,"k":0,"t":"e","x":206,"r":0,"m":0,"o":[[0,"BOUNCE"],[1,"BREAK_RETEST"],[2,"BOTH"]]},{"n":"SR_Use_Flip","l":"SR: zone jabay -> door beddel (R<->S) (on/off)","g":21,"k":0,"t":"b","x":207,"r":0,"m":0},{"n":"SR_Break_Buf_ATR","l":"SR: jabku waa inuu ka fog yahay (x ATR HTF)","g":21,"k":0,"t":"d","x":208,"r":0,"m":0},{"n":"SR_Max_Dist_ATR","l":"SR: fogaanta ugu badan sicir->zone (x ATR)","g":21,"k":0,"t":"d","x":209,"r":0,"m":0},{"n":"SR_Max_Penetration_ATR","l":"SR: intee shumacu zone-ka ka dhex geli karo (x ATR)","g":21,"k":0,"t":"d","x":210,"r":0,"m":0},{"n":"SR_Require_Rejection","l":"SR: u baahan diidmo shumac (rejection) (on/off)","g":21,"k":0,"t":"b","x":211,"r":0,"m":0},{"n":"SR_Rej_Wick_Pct","l":"SR: dabada shumaca / range (0.40 = 40%)","g":21,"k":0,"t":"d","x":212,"r":0,"m":0},{"n":"SR_Rej_Wick_Body","l":"SR: dabada / jidhka shumaca","g":21,"k":0,"t":"d","x":213,"r":0,"m":0},{"n":"SR_Rej_ClosePos","l":"SR: meesha close-ku ku yaal shumaca (0..1)","g":21,"k":0,"t":"d","x":214,"r":0,"m":0},{"n":"SR_Require_Volume","l":"SR: u baahan volume (on/off)","g":21,"k":0,"t":"b","x":215,"r":0,"m":0},{"n":"SR_Vol_Ratio","l":"SR: saamiga volume (marka kor la shido)","g":21,"k":0,"t":"d","x":216,"r":0,"m":0},{"n":"SR_Cooldown_Bars","l":"SR: shumac u dhexeeya laba trade oo isku zone ah","g":21,"k":0,"t":"i","x":217,"r":0,"m":0},{"n":"SR_SL_Buffer_ATR","l":"SL-ku intee buu darafka zone-ka ka baxsanaadaa (x ATR). Hore: 0.25 go'an","g":21,"k":0,"t":"d","x":218,"r":0,"m":0},{"n":"SR_SL_Multiplier","l":"SR: SL (x ATR) - marka zone la waayo","g":21,"k":0,"t":"d","x":219,"r":0,"m":0},{"n":"SR_TP_Multiplier","l":"SR: TP (x ATR) - marka zone la waayo","g":21,"k":0,"t":"d","x":220,"r":0,"m":0},{"n":"SR_Zone_TP","l":"SR: TP = zone-ka ka soo horjeeda (on/off)","g":21,"k":0,"t":"b","x":221,"r":0,"m":0},{"n":"SR_Debug","l":"SR: qor sabab kasta oo diidmo ah","g":21,"k":0,"t":"b","x":222,"r":0,"m":0},{"n":"SMC_Require_CHoCH","l":"CHoCH iyo EMA trend way is diidayeen - BOS OB (trend) ayaa ugu fiican","g":22,"k":0,"t":"b","x":223,"r":0,"m":0},{"n":"SMC_Require_FVG","l":"SMC Require FVG","g":22,"k":0,"t":"b","x":224,"r":0,"m":0},{"n":"SMC_Require_Sweep","l":"SMC Require Sweep","g":22,"k":0,"t":"b","x":225,"r":0,"m":0},{"n":"SMC_Require_PremDisc","l":"BUY discount / SELL premium kaliya - dhexda ma jirto","g":22,"k":0,"t":"b","x":226,"r":0,"m":0},{"n":"SMC_Require_LTF_CHoCH","l":"SMC Require LTF CHoCH","g":22,"k":0,"t":"b","x":227,"r":0,"m":0},{"n":"SMC_Use_HTF_Bias","l":"EMA filter-ka ayaa jihada qabta","g":22,"k":0,"t":"b","x":228,"r":0,"m":0},{"n":"SMC_MinTouches","l":"SMC: immisa jeer heerka la taabtay","g":22,"k":0,"t":"i","x":229,"r":0,"m":0},{"n":"OB_Mitigation_Perc","l":"Order Block: boqolkiiba la buuxiyay (%)","g":22,"k":0,"t":"d","x":230,"r":0,"m":0},{"n":"SMC_Lookback","l":"SMC: immisa shumac dib loo eegayo","g":22,"k":0,"t":"i","x":231,"r":0,"m":0},{"n":"SMC_StrengthBuffer","l":"SMC: xoogga ugu yar (buffer)","g":22,"k":0,"t":"d","x":232,"r":0,"m":0},{"n":"SMC_SL_Multiplier","l":"SMC: SL (x ATR)","g":22,"k":0,"t":"d","x":233,"r":0,"m":0},{"n":"SMC_TP_Multiplier","l":"SMC: TP (x ATR)","g":22,"k":0,"t":"d","x":234,"r":0,"m":0},{"n":"SMC_SwingLen","l":"SMC: dhererka swing-ga","g":22,"k":0,"t":"i","x":235,"r":0,"m":0},{"n":"SMC_Equilibrium_Pct","l":"SMC: dhexda (equilibrium) %","g":22,"k":0,"t":"d","x":236,"r":0,"m":0},{"n":"SMC_Impulse_ATR","l":"SMC Impulse ATR","g":22,"k":0,"t":"d","x":237,"r":0,"m":0},{"n":"SMC_Impulse_MaxBars","l":"SMC: shumac ugu badan OB -> jab","g":22,"k":0,"t":"i","x":238,"r":0,"m":0},{"n":"SMC_BOS_MaxAge","l":"30 shumac M5 = 2.5 saac kaliya -> 8 saac","g":22,"k":0,"t":"i","x":239,"r":0,"m":0},{"n":"SMC_OB_BodyOnly","l":"SMC: zone-ka OB = jidhka kaliya (false = shumaca oo dhan)","g":22,"k":0,"t":"b","x":240,"r":0,"m":0},{"n":"SMC_Sweep_Lookback","l":"SMC: sweep - shumac dib loo eegayo","g":22,"k":0,"t":"i","x":241,"r":0,"m":0},{"n":"SMC_Max_Dist_ATR","l":"SMC Max Dist ATR","g":22,"k":0,"t":"d","x":242,"r":0,"m":0},{"n":"SMC_Entry_Buf_ATR","l":"SMC: dulqaadka gelitaanka (x ATR)","g":22,"k":0,"t":"d","x":243,"r":0,"m":0},{"n":"SMC_Require_Rejection","l":"SMC: u baahan diidmo shumac (on/off)","g":22,"k":0,"t":"b","x":244,"r":0,"m":0},{"n":"SMC_Rej_Wick_Pct","l":"SMC: dabada shumaca / range","g":22,"k":0,"t":"d","x":245,"r":0,"m":0},{"n":"SMC_Cooldown_Bars","l":"SMC: shumac u dhexeeya laba trade oo isku OB ah","g":22,"k":0,"t":"i","x":246,"r":0,"m":0},{"n":"SMC_Zone_TP","l":"SMC: TP = liquidity-ga xiga (on/off)","g":22,"k":0,"t":"b","x":247,"r":0,"m":0},{"n":"SMC_Debug","l":"SMC: qor sabab kasta oo diidmo ah","g":22,"k":0,"t":"b","x":248,"r":0,"m":0},{"n":"SMC_HTF_TF","l":"SMC: timeframe-ka sare","g":22,"k":0,"t":"e","x":249,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"SMC_HTF_EMA","l":"SMC: EMA-ga timeframe-ka sare","g":22,"k":0,"t":"i","x":250,"r":0,"m":0},{"n":"SMC_Structural_SL","l":"SMC: SL ku saleysan qaab-dhismeedka (on/off)","g":22,"k":0,"t":"b","x":251,"r":0,"m":0},{"n":"SMC_LTF","l":"SMC: timeframe-ka hoose","g":22,"k":0,"t":"e","x":252,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"SMC_Sniper_CHoCH","l":"Sniper -> sug CHoCH M5 ka hor gelitaanka (on/off)","g":22,"k":0,"t":"b","x":253,"r":0,"m":0},{"n":"SMC_Touch_Bars","l":"Sniper - OB-ga waa inuu la taabtay shumacyadan gudahood (12 x M5 = 1 saac)","g":22,"k":0,"t":"i","x":254,"r":0,"m":0},{"n":"Inp_Entry_Max_Dist_Pips","l":"Entry Max Dist Pips","g":22,"k":0,"t":"d","x":255,"r":0,"m":8},{"n":"SMC_Extreme_Bars","l":"OB-gu waa inuu yahay salka/dusha shumacyadan (48 x M5 = 4 saac) - 0 = damman","g":22,"k":0,"t":"i","x":256,"r":0,"m":0},{"n":"SMC_Extreme_Tol_ATR","l":"dulqaadka cidhifka OB-ga (x ATR)","g":22,"k":0,"t":"d","x":257,"r":0,"m":0},{"n":"Stars_Enable","l":"★ scoring (on/off)","g":23,"k":0,"t":"b","x":258,"r":0,"m":0},{"n":"Stars_Min","l":"★ ugu yar: 2 = ★ ka tag · 1 = dhammaan","g":23,"k":1,"t":"i"},{"n":"Lot_Pct_2Star","l":"★★ = lot-ka boqolkiisa (★★★ = 100%)","g":23,"k":1,"t":"d"},{"n":"ExecMode","l":"Habka fulinta MARKET order-ka (SMART / MARKET). v66.1: pending order (LIMIT) gebi ahaanba waa la saaray - EXEC","g":24,"k":0,"t":"e","x":259,"r":0,"m":0,"o":[[0,"INSTANT"],[1,"SMART"],[2,"LIMIT"]]},{"n":"Enable_ECN_StopFallback","l":"ECN: SL/TP kadib dir haddii la diido (on/off)","g":24,"k":0,"t":"b","x":260,"r":0,"m":0},{"n":"MaxRetries","l":"Isku day mar kale oo ugu badan","g":24,"k":0,"t":"i","x":261,"r":0,"m":0},{"n":"RetryDelayMs","l":"Daahitaanka isku dayga (ms)","g":24,"k":0,"t":"i","x":262,"r":0,"m":0},{"n":"MaxSlippagePips","l":"Slippage ugu badan (pips)","g":24,"k":0,"t":"i","x":263,"r":0,"m":0},{"n":"UseVirtualOrders","l":"Amaro virtual ah - SL/TP xasuusta ku hay (on/off)","g":24,"k":0,"t":"b","x":264,"r":0,"m":0},{"n":"Enable_Stealth_Mode","l":"Hab qarsoodi - broker-ku SL/TP ha arkin (on/off)","g":24,"k":0,"t":"b","x":265,"r":0,"m":0},{"n":"Loose_Entry_Mode","l":"HAB DEBECSAN: trade badan, filter yar (on/off)","g":24,"k":0,"t":"b","x":266,"r":0,"m":0},{"n":"Simple_Mode","l":"HAB FUDUD: SL/TP go'an, maamul automatic ah ma jiro (on/off)","g":24,"k":0,"t":"b","x":267,"r":0,"m":0},{"n":"PropMode","l":"Habka Prop Firm (NONE = damman)","g":25,"k":0,"t":"e","x":268,"r":0,"m":0,"o":[[0,"NONE"],[1,"FTMO"],[2,"MFF"],[3,"CUSTOM"]]},{"n":"Prop_Max_Daily_DD","l":"Prop: drawdown maalinle ugu badan (%)","g":25,"k":0,"t":"d","x":269,"r":0,"m":0},{"n":"Prop_Max_Total_DD","l":"Prop: drawdown guud ugu badan (%)","g":25,"k":0,"t":"d","x":270,"r":0,"m":0},{"n":"Prop_Min_Trading_Days","l":"Prop: maalmo ganacsi ugu yar","g":25,"k":0,"t":"d","x":271,"r":0,"m":0},{"n":"Prop_No_Weekend","l":"Prop: ha ganacsan dhammaadka usbuuca (on/off)","g":25,"k":0,"t":"b","x":272,"r":0,"m":0},{"n":"Prop_No_News","l":"Prop: ha ganacsan waqtiga wararka (on/off)","g":25,"k":0,"t":"b","x":273,"r":0,"m":0},{"n":"Prop_Consistency_Max","l":"Prop: xeerka is-waafaqidda ugu badan (%)","g":25,"k":0,"t":"d","x":274,"r":0,"m":0},{"n":"EnableTelegram","l":"Dir digniinaha Telegram (on/off)","g":26,"k":0,"t":"b","x":275,"r":0,"m":0},{"n":"TG_BotToken","l":"Telegram: token-ka bot-ka (GELI halkan)","g":26,"k":2,"t":"s"},{"n":"TG_ChatID","l":"Telegram: Chat ID (GELI halkan)","g":26,"k":2,"t":"s"},{"n":"TG_DailySummary","l":"Telegram: soo koobid maalinle (on/off)","g":26,"k":0,"t":"b","x":276,"r":0,"m":0},{"n":"TG_WeeklySummary","l":"Telegram: soo koobid usbuucle (on/off)","g":26,"k":0,"t":"b","x":277,"r":0,"m":0},{"n":"TG_DrawdownAlert","l":"Telegram: digniin drawdown (on/off)","g":26,"k":0,"t":"b","x":278,"r":0,"m":0},{"n":"TG_DrawdownAlertPct","l":"Telegram: boqolkiiba drawdown-ka digniinta","g":26,"k":0,"t":"d","x":279,"r":0,"m":0},{"n":"TG_TradeDetails","l":"Telegram: faahfaahinta trade-ka (on/off)","g":26,"k":0,"t":"b","x":280,"r":0,"m":0},{"n":"TG_ErrorAlerts","l":"Telegram: digniin qalad (on/off)","g":26,"k":0,"t":"b","x":281,"r":0,"m":0},{"n":"TG_TradeCloseAlert","l":"Telegram: digniin xidhitaanka trade (on/off)","g":26,"k":0,"t":"b","x":282,"r":0,"m":0},{"n":"TG_NewsAlert","l":"Telegram: digniin warar (on/off)","g":26,"k":0,"t":"b","x":283,"r":0,"m":0},{"n":"TG_RejectedAlerts","l":"Telegram: digniin trade la diiday (on/off)","g":26,"k":0,"t":"b","x":284,"r":0,"m":0},{"n":"TG_Reject_Cooldown_Min","l":"Telegram: daqiiqado u dhexeeya digniinaha diidmada","g":26,"k":0,"t":"i","x":285,"r":0,"m":0},{"n":"TG_Error_Cooldown_Sec","l":"Telegram: ilbiriqsiyo u dhexeeya digniinaha qaladka","g":26,"k":0,"t":"i","x":286,"r":0,"m":0},{"n":"EnableCloudDashboard","l":"Dashboard-ka cloud-ka (on/off)","g":27,"k":2,"t":"b"},{"n":"CloudDashboardURL","l":"URL-ka dashboard-ka","g":27,"k":2,"t":"s"},{"n":"CloudCommandURL","l":"URL-ka amarada","g":27,"k":2,"t":"s"},{"n":"Cloud_Bot_Name","l":"Magaca bootka ee dashboard-ka (gaar u ah EA kasta)","g":27,"k":2,"t":"s"},{"n":"Enable_Connection_Guard","l":"Ilaali xiriirka internet-ka (on/off)","g":27,"k":2,"t":"b"},{"n":"Enable_Reconnect_Alert","l":"Digniin marka xiriirku dib u soo noqdo (on/off)","g":27,"k":2,"t":"b"},{"n":"Cloud_Push_Seconds","l":"intee ilbiriqsi kasta ayaa xogta la dirayaa (hore 15). Kordhi = bandwidth yar","g":27,"k":2,"t":"i"},{"n":"Cloud_Cmd_Seconds","l":"amarrada intee ilbiriqsi kasta (hore 10)","g":27,"k":2,"t":"i"},{"n":"Cloud_Journal_Max","l":"immisa trade oo xidhan ayaa push kasta la dirayaa (hore 120)","g":27,"k":2,"t":"i"},{"n":"Cloud_Timeout_Ms","l":"Sug xogta guud (ms) - internet gaabis 8000-12000","g":27,"k":2,"t":"i"},{"n":"Journal_Timeout_Ms","l":"Sug jornalka (ms) - Render hurda 20000","g":27,"k":2,"t":"i"},{"n":"Journal_Batch_Max","l":"Trade tiro badan oo hal mar la diro (yaree = dhakhso)","g":27,"k":2,"t":"i"},{"n":"Journal_Only_New","l":"Kaliya kuwa cusub dir (ha dirin mar walba isku mid)","g":27,"k":2,"t":"b"},{"n":"UI_Premium","l":"chart-ka cusub (panel glass + xuduud dahab ah) - false = panel-kii hore","g":28,"k":0,"t":"b","x":287,"r":0,"m":0},{"n":"UI_Scale","l":"cabbirka panel-ka (0 = toos, DPI-ga shaashadda) · 1.0 / 1.25 / 1.5","g":28,"k":0,"t":"d","x":288,"r":0,"m":0},{"n":"UI_Show_EMA","l":"EMA qurxin chart-ka (daruur · glow · cross · qiimaha)","g":28,"k":0,"t":"b","x":289,"r":0,"m":0},{"n":"UI_Show_Zones","l":"zone-yada SD (★) + dhaqaaqa la filayo (ATR D1) chart-ka ku sawir","g":28,"k":0,"t":"b","x":290,"r":0,"m":0},{"n":"BrandName","l":"Magaca panel-ka","g":28,"k":0,"t":"s","x":291,"r":0,"m":0},{"n":"Watermark_Text","l":"Qoraalka watermark-ka","g":28,"k":0,"t":"s","x":292,"r":0,"m":0},{"n":"Watermark_Size","l":"Cabbirka watermark-ka","g":28,"k":0,"t":"i","x":293,"r":0,"m":0},{"n":"Watermark_Color","l":"Midabka watermark-ka","g":28,"k":0,"t":"c","x":294,"r":0,"m":0},{"n":"Show_Trade_Signals","l":"Tus calaamadaha signal-ka (on/off)","g":28,"k":0,"t":"b","x":295,"r":0,"m":0},{"n":"Show_Trade_Markers","l":"Tus calaamadaha trade-ka (on/off)","g":28,"k":0,"t":"b","x":296,"r":0,"m":0},{"n":"Marker_Size","l":"Cabbirka calaamadda","g":28,"k":0,"t":"i","x":297,"r":0,"m":0},{"n":"Buy_Marker_Color","l":"Midabka calaamadda BUY","g":28,"k":0,"t":"c","x":298,"r":0,"m":0},{"n":"Sell_Marker_Color","l":"Midabka calaamadda SELL","g":28,"k":0,"t":"c","x":299,"r":0,"m":0},{"n":"Show_Dynamic_Zones","l":"Tus zone-yada firfircoon (on/off)","g":28,"k":0,"t":"b","x":300,"r":0,"m":0},{"n":"Show_Trade_Panel","l":"panel-ka trade-yada furan (hoose-bidix) SL/TP pip","g":28,"k":0,"t":"b","x":301,"r":0,"m":0},{"n":"Show_Control_Panel","l":"CONTROL PANEL-ka hore (badhamo xeelad/LOT/SL/TP) - shid/dami adigoo doorta, uma baahnid F7 recompile","g":28,"k":0,"t":"b","x":302,"r":1,"m":0},{"n":"CPanel_X","l":"CONTROL PANEL - X (marka Use_New_Left_Panel=true) - waad bedeli kartaa","g":28,"k":0,"t":"i","x":303,"r":0,"m":0},{"n":"CPanel_Y","l":"kor, la simay dashboard-ka bidix: CONTROL PANEL - Y (marka Use_New_Left_Panel=true) - waad bedeli kartaa","g":28,"k":0,"t":"i","x":304,"r":0,"m":0},{"n":"CPanel_Gap_Below_Strat","l":"CILAD-XALI - marka Use_New_Left_Panel=FALSE (STRATEGY PERFORMANCE panel-ku muuqdo), CONTROL PANEL-ku meel bann","g":28,"k":0,"t":"i","x":305,"r":0,"m":0},{"n":"Panel_Always_Show","l":"tus xitaa marka trade furan aan jirin (si aad u hubiso)","g":28,"k":0,"t":"b","x":306,"r":0,"m":0},{"n":"Panel_X","l":"dashboard-ka bidix kuma dul fadhiisto: fogaanta bidixda (panel-kii hore 280 buu ballaadhan yahay)","g":28,"k":0,"t":"i","x":307,"r":0,"m":0},{"n":"Panel_Y_Margin","l":"fogaanta hoose","g":28,"k":0,"t":"i","x":308,"r":0,"m":0},{"n":"Panel_Font_Scale","l":"cabbirka qoraalka (1.0 = caadi, 0.9 = yar)","g":28,"k":0,"t":"d","x":309,"r":0,"m":0},{"n":"Use_New_Left_Panel","l":"panel-ka bidixda ee CUSUB (qiimayaashu MIDIG bay ku toosan yihiin)","g":28,"k":0,"t":"b","x":310,"r":0,"m":0},{"n":"LPanel_X","l":"panel-ka bidixda - X","g":28,"k":0,"t":"i","x":311,"r":0,"m":0},{"n":"LPanel_Y","l":"panel-ka bidixda - Y","g":28,"k":0,"t":"i","x":312,"r":0,"m":0},{"n":"Show_Trend_Lines","l":"Tus xariiqaha trendka (on/off)","g":28,"k":0,"t":"b","x":313,"r":0,"m":0},{"n":"SR_Draw_Zones","l":"SR Draw Zones","g":28,"k":0,"t":"b","x":314,"r":0,"m":0},{"n":"SD_Profile","l":"heerka zone-ka · TAYO = inputs-ka hoose (adag) · DHEXE = isku dheelli · BADAN = trade badan","g":29,"k":1,"t":"e","o":[[0,"TAYO"],[1,"DHEXE"],[2,"BADAN"]]},{"n":"Enable_SD_Engine","l":"isticmaal SUPPLY&DEMAND halkii SR-kii hore (on/off)","g":29,"k":0,"t":"b","x":315,"r":0,"m":0},{"n":"SD_Zone_TF","l":"timeframe-ka zone-yada","g":29,"k":0,"t":"e","x":316,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"SD_Lookback","l":"immisa shumac dib loo eegayo","g":29,"k":0,"t":"i","x":317,"r":0,"m":0},{"n":"SD_Base_Max_Bars","l":"shumac ugu badan oo base ah (1-5)","g":29,"k":0,"t":"i","x":318,"r":0,"m":0},{"n":"SD_Base_Max_Range_ATR","l":"base shumac kasta range-kiisu ka yar (x ATR)","g":29,"k":0,"t":"d","x":319,"r":0,"m":0},{"n":"SD_Base_Max_Body_Pct","l":"base jidhku ka yar","g":29,"k":0,"t":"d","x":320,"r":0,"m":0},{"n":"Inp_SD_Impulse_Min_ATR","l":"SD Impulse Min ATR","g":29,"k":0,"t":"d","x":321,"r":0,"m":8},{"n":"Inp_SD_Impulse_Min_Pips","l":"zone xoog leh","g":29,"k":0,"t":"d","x":322,"r":0,"m":8},{"n":"Inp_SD_Touch_React_Min_Pips","l":"SD Touch React Min Pips","g":29,"k":0,"t":"d","x":323,"r":0,"m":8},{"n":"SD_Swing_Extreme","l":"swing-na sidoo kale","g":29,"k":0,"t":"b","x":324,"r":0,"m":0},{"n":"SD_Impulse_Max_Bars","l":"SD: shumac ugu badan oo baxsasho ah","g":29,"k":0,"t":"i","x":325,"r":0,"m":0},{"n":"SD_Impulse_Body_Pct","l":"shumaca 1aad ee baxsashada jidhkiisu ka badan","g":29,"k":0,"t":"d","x":326,"r":0,"m":0},{"n":"Inp_SD_Max_Touches","l":"zone cusub/nadiif ah","g":29,"k":0,"t":"i","x":327,"r":0,"m":8},{"n":"SD_Min_Zone_Age","l":"SD: shumac ugu yar oo zone-ku jiray","g":29,"k":0,"t":"i","x":328,"r":0,"m":0},{"n":"SD_Max_Zone_Age","l":"zone WEYN wuu duugoobaa - 31 maalmood kuma filna","g":29,"k":0,"t":"i","x":329,"r":0,"m":0},{"n":"SD_Max_Dist_ATR","l":"fogaanta 8 -> 15 ATR","g":29,"k":0,"t":"d","x":330,"r":0,"m":0},{"n":"SD_SL_Buffer_ATR","l":"SD: SL-ku intee buu DISTAL-ka ka baxsanaadaa (x ATR)","g":29,"k":0,"t":"d","x":331,"r":0,"m":0},{"n":"SD_SL_Max_ATR","l":"SD: SL ugu ballaadhan (x ATR) - ka tag haddii ka weyn","g":29,"k":0,"t":"d","x":332,"r":0,"m":0},{"n":"SD_RR","l":"TP = SL x tan","g":29,"k":0,"t":"d","x":333,"r":0,"m":0},{"n":"SD_Require_Confirm","l":"SD: u baahan shumac diidmo (rejection) (on/off)","g":29,"k":0,"t":"b","x":334,"r":0,"m":0},{"n":"SD_Confirm_Wick_Pct","l":"dabada shumaca / range","g":29,"k":0,"t":"d","x":335,"r":0,"m":0},{"n":"SD_Kill_On_Break","l":"SD: close ka baxsan distal -> zone WAA LA TUURAA (on/off)","g":29,"k":0,"t":"b","x":336,"r":0,"m":0},{"n":"SD_Break_Buf_ATR","l":"SD: buffer-ka jabinta (x ATR)","g":29,"k":0,"t":"d","x":337,"r":0,"m":0},{"n":"Inp_SD_Require_BOS","l":"baxsashadu waa inay JABISAA qaab-dhismeedkii hore (BOS)","g":29,"k":0,"t":"b","x":338,"r":0,"m":8},{"n":"SD_BOS_Lookback","l":"SD BOS Lookback","g":29,"k":0,"t":"i","x":339,"r":0,"m":0},{"n":"SD_Swing_Zones","l":"zone ka dhis SWING HIGH/LOW (base looma baahna)","g":29,"k":0,"t":"b","x":340,"r":0,"m":0},{"n":"SD_Swing_Len","l":"shumac dhinac kasta oo swing-ka qeexaya","g":29,"k":0,"t":"i","x":341,"r":0,"m":0},{"n":"SD_Swing_Imp_Bars","l":"immisa shumac kadib ayaa baxsashada la qiyaasayo","g":29,"k":0,"t":"i","x":342,"r":0,"m":0},{"n":"Inp_SD_Extreme_Only","l":"zone waa inuu CIDHIFKA ku yaallaa - dhexda lama qaadanayo","g":29,"k":0,"t":"b","x":343,"r":0,"m":8},{"n":"Inp_SD_Extreme_Window","l":"cidhif dhab ah - dhexda ma jirto","g":29,"k":0,"t":"i","x":344,"r":0,"m":8},{"n":"Inp_SD_Extreme_Tol_ATR","l":"SD Extreme Tol ATR","g":29,"k":0,"t":"d","x":345,"r":0,"m":8},{"n":"SD_Big_TF","l":"TF-ka lagu qiyaaso WEYNIDA baxsashada","g":29,"k":0,"t":"e","x":346,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"SD_Big_Weight","l":"dhibcaha weynida (0 = damman)","g":29,"k":0,"t":"d","x":347,"r":0,"m":0},{"n":"SD_Recency_Weight","l":"dhibcaha CUSUBNIMADA (hore 5.0 - zone duug oo weyn wuu guuli waayay)","g":29,"k":0,"t":"d","x":348,"r":0,"m":0},{"n":"SD_Debug","l":"SD: qor sabab kasta oo diidmo ah","g":29,"k":0,"t":"b","x":349,"r":0,"m":0},{"n":"Panel_Show_Selected_Only","l":"Panel: kaliya tus xeeladda la doortay (on/off)","g":29,"k":0,"t":"b","x":350,"r":0,"m":0},{"n":"Show_CurrencyMeter","l":"Tus cabbirka xoogga lacagaha (on/off)","g":29,"k":0,"t":"b","x":351,"r":0,"m":0},{"n":"Show_EMA_Lines","l":"Show EMA Lines","g":29,"k":0,"t":"b","x":352,"r":0,"m":0},{"n":"Viz_EMA_Fast","l":"Muuqaal: EMA degdeg","g":29,"k":0,"t":"i","x":353,"r":0,"m":0},{"n":"Viz_EMA_Slow","l":"Muuqaal: EMA gaabis","g":29,"k":0,"t":"i","x":354,"r":0,"m":0},{"n":"Viz_EMA_Fast_Clr","l":"Muuqaal: midabka EMA degdeg","g":29,"k":0,"t":"c","x":355,"r":0,"m":0},{"n":"Viz_EMA_Slow_Clr","l":"Muuqaal: midabka EMA gaabis","g":29,"k":0,"t":"c","x":356,"r":0,"m":0},{"n":"Viz_EMA_Width","l":"Muuqaal: dhumucda xariiqda EMA","g":29,"k":0,"t":"i","x":357,"r":0,"m":0},{"n":"Viz_EMA_Bars","l":"Muuqaal: immisa shumac EMA la sawirayo","g":29,"k":0,"t":"i","x":358,"r":0,"m":0},{"n":"Enable_Chart_Screenshot","l":"Qaado sawirka chart-ka (on/off)","g":29,"k":0,"t":"b","x":359,"r":0,"m":0},{"n":"Screenshot_Width","l":"Ballaca sawirka","g":29,"k":0,"t":"i","x":360,"r":0,"m":0},{"n":"Screenshot_Height","l":"Dhererka sawirka","g":29,"k":0,"t":"i","x":361,"r":0,"m":0},{"n":"Screenshot_To_App","l":"sawirka trade-ka (furan + xidhan) app-ka u dir (Trade tab)","g":29,"k":0,"t":"b","x":362,"r":0,"m":0},{"n":"Screenshot_Show_Panels","l":"false = panel-yada MOHA PRO waa la qariyaa inta sawirka la qaadayo (chart nadiif ah)","g":29,"k":0,"t":"b","x":363,"r":0,"m":0},{"n":"EnableJournal","l":"Diiwaanka trade-yada CSV (on/off)","g":30,"k":0,"t":"b","x":364,"r":1,"m":0},{"n":"Journal_Filename","l":"Magaca faylka diiwaanka","g":30,"k":0,"t":"s","x":365,"r":1,"m":0},{"n":"Enable_Debug_Log","l":"Diiwaanka debug-ga (on/off)","g":30,"k":0,"t":"b","x":366,"r":0,"m":0},{"n":"Inp_PR_On","l":"💱 LAMAANAHA - app-ka ka dooro · bot-ka 👑 (dahabka) ayaa chart-ka u furaya","g":31,"k":1,"t":"b"},{"n":"Inp_PR_Tpl","l":"template-ka (Charts -> Template -> Save) ee bot-ku ku jiro","g":31,"k":2,"t":"s"},{"n":"Inp_PR_Max","l":"lamaanaha ugu badan · 👑 ku jiro (1-8)","g":31,"k":1,"t":"i"},{"n":"Inp_CB_On","l":"📏 CABBIR LAMAANE - sitinka $ ee TICK / BASKET si toos ah lamaane kasta (ATR) · false = $ dahab","g":32,"k":1,"t":"b"},{"n":"Inp_CB_TF","l":"ATR timeframe-ka (M5 · M15 · H1)","g":32,"k":1,"t":"e","o":[[0,"M5"],[1,"M15"],[2,"H1"]]},{"n":"Inp_CB_Bars","l":"ATR muddo (bar) · M15 384 = 4 maalmood (20-2000)","g":32,"k":1,"t":"i"},{"n":"Inp_CB_Spread_Pct","l":"spread > X% SL-ka (VSL) -> TICK ma galo (0 = off · lamaanaha aan dahabka ahayn)","g":32,"k":1,"t":"i"},{"n":"Inp_CB_Ref","l":"tixraaca dahabka (AUTO = XAUUSD terminal-ka)","g":32,"k":2,"t":"s"},{"n":"Inp_CB_Syms","l":"lamaanayaal kale oo TICK/BASKET (tijaabo · chart gacan) \"XAG,BTC\" · madhan = 💱 LAMAANAHA app-ka oo keliya","g":32,"k":2,"t":"s"},{"n":"Inp_Core1_On","l":"⚡ CORE 1 · SCALP (TICK + GOLD BASKET + GRID) shidan","g":33,"k":1,"t":"b"},{"n":"Inp_Core1_DayLoss","l":"⚡ CORE 1: khasaaraha maalinlaha % balance -> maanta trade cusub ma jiro (0 = off)","g":33,"k":1,"t":"d"},{"n":"Inp_Core2_On","l":"🎯 CORE 2 · SR/SMC (SR/SD + SMC + LABADA) shidan","g":33,"k":1,"t":"b"},{"n":"Inp_Core2_DayLoss","l":"🎯 CORE 2: khasaaraha maalinlaha % balance -> maanta trade cusub ma jiro (0 = off)","g":33,"k":1,"t":"d"},{"n":"Inp_Core_Coexist","l":"⚡ CORE 1 + 🎯 CORE 2 isla lammaanaha way wada furan karaan (go'aan A) · false = hal core mar","g":33,"k":0,"t":"b","x":367,"r":0,"m":0},{"n":"Inp_ScanGate","l":"🔍 SCAN ALBAAB (GRID TREND EMA · grid cusub): 0 OFF · 1 DHEXE (M15+H1) · 2 ADAG (M15+H1+H4)","g":34,"k":1,"t":"i"},{"n":"Inp_QT_On","l":"📌 QORSHE TOOS (SR/SMC · 🎯 CORE 2): scan → qorshe (zone · SL · TP) → gelitaan marka qiimuhu yimaado","g":34,"k":1,"t":"b"},{"n":"Inp_QT_Mode","l":"gelitaan: 0 TOOS (zone taabasho · tijaabo PF 0.92) · 1 XAQIIJIN (CHoCH M5 · tijaabo PF 1.15)","g":34,"k":1,"t":"i"},{"n":"Inp_QT_Max","l":"qorshayaal firfircoon ugu badan (1-20)","g":34,"k":1,"t":"i"},{"n":"Inp_QT_Hours","l":"qorshe kasta wuxuu dhacaa X saac kadib (1-48)","g":34,"k":1,"t":"i"},{"n":"Inp_QT_Risk","l":"khatar % balance trade kasta (0.1-5)","g":34,"k":1,"t":"d"},{"n":"Inp_QT_Day","l":"trade QORSHE maalintii ugu badan (0 = xad la'aan)","g":34,"k":1,"t":"i"},{"n":"Inp_QT_Draw","l":"chart-ka ku sawir (MOHA_P<id>_ZONE · SL · TP · BUY / SELL · INFO)","g":34,"k":1,"t":"b"},{"n":"Inp_QT_Symbols","l":"scan: liiskan + charts-ka furan","g":34,"k":0,"t":"s","x":368,"r":0,"m":0},{"n":"Inp_QT_Trade","l":"trade: lammaanayaashan oo keliya (kuwa kale = scan + qorshe · muuji)","g":34,"k":0,"t":"s","x":369,"r":0,"m":0},{"n":"Inp_QT_Sess_From","l":"qorshe cusub: saacadda SERVER-ka bilow (London)","g":34,"k":0,"t":"i","x":370,"r":0,"m":0},{"n":"Inp_QT_Sess_To","l":"qorshe cusub: saacadda SERVER-ka dhammaad (New York)","g":34,"k":0,"t":"i","x":371,"r":0,"m":0},{"n":"Inp_Entry_Dist_ATR","l":"SR/SMC sniper - gelitaanka ugu fog = max(Entry_Max_Dist_Pips, X × ATR M15) · dahab (0 = pip oo keliya)","g":34,"k":0,"t":"d","x":372,"r":0,"m":0},{"n":"SMC_Zone_TF","l":"SMC wuxuu OB-yada ka dhisaa TF-gan (chart M1 / M5 isma beddelo) · PERIOD_CURRENT = chart","g":34,"k":0,"t":"e","x":373,"r":0,"m":0,"o":[[0,"CURRENT"],[1,"M1"],[2,"M2"],[3,"M3"],[4,"M4"],[5,"M5"],[6,"M6"],[10,"M10"],[12,"M12"],[15,"M15"],[20,"M20"],[30,"M30"],[16385,"H1"],[16386,"H2"],[16387,"H3"],[16388,"H4"],[16390,"H6"],[16392,"H8"],[16396,"H12"],[16408,"D1"],[32769,"W1"],[49153,"MN1"]]},{"n":"Inp_GR_On","l":"🪜 GRID STOP - amarro stop (virtual) jihada trend-ka oo keliya · SL guud · quful · TP guud","g":35,"k":1,"t":"b"},{"n":"Inp_GR_Only","l":"GRID OO KELIYA: shidan -> xeeladaha kale (TICK · BASKET · ASIA · SR/SMC) lammaanahan ma furaan","g":35,"k":1,"t":"b"},{"n":"Inp_GR_Dir","l":"🧭 TREND EMA (default)","g":35,"k":0,"t":"e","x":374,"r":0,"m":0,"o":[[0,"TREND"],[1,"BUY"],[2,"SELL"],[3,"BOTH"],[4,"EMA"]]},{"n":"Inp_GR_EMA_TF","l":"🧭 TREND EMA: timeframe (daqiiqo: 5 · 15 · 30 · 60 · 240)","g":35,"k":1,"t":"i"},{"n":"Inp_GR_EMA_Fast","l":"🧭 TREND EMA: EMA degdeg (2-200)","g":35,"k":1,"t":"i"},{"n":"Inp_GR_EMA_Slow","l":"🧭 TREND EMA: EMA gaabis (3-400)","g":35,"k":1,"t":"i"},{"n":"Inp_GR_Step_Pct","l":"GR Step Pct","g":35,"k":1,"t":"d"},{"n":"Inp_GR_TPSL_Mode","l":"GR TPSL Mode","g":35,"k":1,"t":"e","o":[[0,"STEP"],[1,"USD"]]},{"n":"Inp_GR_TP_X","l":"🎯 TP guud = X × masaafo (STEP)","g":35,"k":1,"t":"d"},{"n":"Inp_GR_Lock_X","l":"🔒 2 × masaafo → BREAK-EVEN (Lock_Pct 10)","g":35,"k":1,"t":"d"},{"n":"Inp_GR_SL_X","l":"🛑 SL guud = X × masaafo (STEP)","g":35,"k":1,"t":"d"},{"n":"Inp_GR_LB_Mode","l":"⇅ LABADA hab: AUTO (account hedging -> HEDGE · netting -> 🔁 FLIP) · HEDGE · 🔁 FLIP (kor BUY · hoos BUY xidh + ","g":35,"k":1,"t":"e","o":[[0,"AUTO"],[1,"HEDGE"],[2,"FLIP"]]},{"n":"Inp_GR_Flip_Max","l":"🔁 FLIP ugu badan grid kasta -> kadib grid xidh (suuq isku dhex jira) (1-10)","g":35,"k":1,"t":"i"},{"n":"Inp_GR_LB_Real","l":"⇅ LABADA: amarro DHAB ah (BUY STOP / SELL STOP broker-ka) + TP / SL $ wadar · false = virtual (v71.3)","g":35,"k":1,"t":"b"},{"n":"Inp_GR_Both","l":"⇅ LABADA: HEDGE = labada dhinac way furmaan (kor -> BUY · hoos -> SELL) · OCO = kan jebiya (kan kale waa la ti","g":35,"k":1,"t":"e","o":[[0,"OCO"],[1,"HEDGE"]]},{"n":"Inp_GR_Str","l":"🧭 xoogga jihada ugu yar % (ka yar = RANGE -> grid ma jiro)","g":35,"k":1,"t":"d"},{"n":"Inp_GR_Step","l":"masaafada lakabyada ($ qiime dahab · 📏 x cabbir) · 0 = AUTO (ATR)","g":35,"k":1,"t":"d"},{"n":"Inp_GR_Step_ATR","l":"AUTO: masaafo = X × ATR M5(14) (0.05-1.0)","g":35,"k":1,"t":"d"},{"n":"Inp_GR_Spr_X","l":"masaafo ugu yaraan X × spread (si toos ah ayay u ballaadhataa) (1-10)","g":35,"k":1,"t":"d"},{"n":"Inp_GR_Levels","l":"GR Levels","g":35,"k":1,"t":"i"},{"n":"Inp_GR_Lot","l":"lot lakab kasta - marka Lot AUTO = 0 (isku mid · martingale ma jiro)","g":35,"k":1,"t":"d"},{"n":"Inp_GR_Lot_Per","l":"Lot AUTO: 0.01 lot $X balance kasta (0 = lot go'an)","g":35,"k":1,"t":"d"},{"n":"Inp_GR_TP_USD","l":"🎯 TP guud $: wadarta trade-yada (BUY + SELL) +$X -> dhammaan xidh -> grid cusub isla markiiba (xeelad kasta)","g":35,"k":1,"t":"d"},{"n":"Inp_GR_SL_USD","l":"🛑 SL guud $: wadartu −$X -> dhammaan xidh (khasaare go'an · balance kuma xidhna)","g":35,"k":1,"t":"d"},{"n":"Inp_GR_Lock_USD","l":"🔒 QUFUL $: wadartu +$X gaadho kadib ... (0 = off)","g":35,"k":1,"t":"d"},{"n":"Inp_GR_Lock_Pct","l":"10% = break-even (+ faa'iido yar)","g":35,"k":1,"t":"d"},{"n":"Inp_GR_Hard_Lv","l":"GR Hard Lv","g":35,"k":1,"t":"i"},{"n":"Inp_GR_Cool","l":"SL guud kadib -> sug X daqiiqo (0 = off)","g":35,"k":1,"t":"i"},{"n":"Inp_GR_Max_Day","l":"grid maalintii ugu badan (0 = xad la'aan)","g":35,"k":1,"t":"i"},{"n":"Inp_GR_Day_Loss","l":"khasaaraha maalinlaha GRID % balance -> maanta jooji (0 = off)","g":35,"k":1,"t":"d"},{"n":"Inp_GR_News","l":"war xoog leh (news filter-ka) -> grid cusub / lakab cusub ma jiro","g":35,"k":1,"t":"b"},{"n":"Inp_GR_Hour_GMT","l":"GR Hour GMT","g":35,"k":1,"t":"b"},{"n":"Inp_GR_Hour_Start","l":"v72.1 (GMT)","g":35,"k":1,"t":"i"},{"n":"Inp_GR_Hour_End","l":"v72.1 (GMT)","g":35,"k":1,"t":"i"},{"n":"Inp_GR_Max_Orders","l":"amarrada GRID ugu badan (position + pending · 2-60)","g":35,"k":0,"t":"i","x":375,"r":0,"m":0},{"n":"Inp_GR_Max_Min","l":"grid ugu dheer (daqiiqo) -> xidh (0 = off)","g":35,"k":1,"t":"i"},{"n":"Inp_SP_Range_Pct","l":"⇅ LABADA SPOT: range auto ±X% (bartamaha = qiimaha) (0.2-10) · tijaabada: ±2%","g":36,"k":0,"t":"d","x":376,"r":0,"m":0},{"n":"Inp_SP_Hi","l":"xad sare (Üst sınır) gacan · 0 = auto","g":36,"k":0,"t":"d","x":377,"r":0,"m":0},{"n":"Inp_SP_Lo","l":"xad hoose (Alt sınır) gacan · 0 = auto","g":36,"k":0,"t":"d","x":378,"r":0,"m":0},{"n":"Inp_SP_Levels","l":"lakabyo range-ka (2-30) · tijaabada: 5","g":36,"k":0,"t":"i","x":379,"r":0,"m":0},{"n":"Inp_SP_Lot","l":"lot lakab kasta","g":36,"k":0,"t":"d","x":380,"r":0,"m":0},{"n":"Inp_SP_Restart","l":"kor laga baxo (KAR AL): true = range cusub · false = joogso (GRID dami / shid = bilow)","g":36,"k":0,"t":"b","x":381,"r":0,"m":0},{"n":"Inp_SP_SL_Lv","l":"🛑 SL = xadka hoose − X lakab (0.5-10)","g":36,"k":0,"t":"d","x":382,"r":0,"m":0},{"n":"Inp_SP_Weekend","l":"Jimce (dhammaadka usbuuca) dhammaan xidh","g":36,"k":0,"t":"b","x":383,"r":0,"m":0}]}'''
 INP_SCHEMA = json.loads(INP_SCHEMA_JSON)
 INP_GEN = {it["n"]: it for it in INP_SCHEMA["items"] if it.get("k") == 0}
 
@@ -418,6 +430,8 @@ def valid_command(cmd):
     if cmd in VALID_COMMANDS:
         return True, cmd
     if cmd in ("TRD:BEALL", "GRID:CLOSE", "GRID:DELP"):  # v12.31 (EA v71.6): 🔴 LIVE TRADES
+        return True, cmd
+    if cmd == "QT:SCAN" or re.match(r"^QT:CANCEL:[0-9]{1,9}$", cmd):   # v13.15 (EA v72.3): 🔍 · 📌
         return True, cmd
     if re.match(r"^TRD:(CLOSE|BE):[0-9]{1,20}$", cmd):
         return True, cmd
@@ -575,6 +589,23 @@ CREATE TABLE IF NOT EXISTS bin_lease(
   id     INTEGER PRIMARY KEY,
   holder TEXT NOT NULL DEFAULT '',
   till   REAL NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS qt_plans(
+  account TEXT NOT NULL,
+  pid     INTEGER NOT NULL,
+  data    TEXT NOT NULL,
+  st      INTEGER NOT NULL DEFAULT 0,
+  t       REAL NOT NULL DEFAULT 0,
+  ts      REAL NOT NULL,
+  UNIQUE(account, pid)
+);
+CREATE TABLE IF NOT EXISTS qt_snaps(
+  account TEXT NOT NULL,
+  pid     INTEGER NOT NULL,
+  kind    TEXT NOT NULL,
+  data    TEXT NOT NULL,
+  ts      REAL NOT NULL,
+  UNIQUE(account, pid, kind)
 );
 CREATE TABLE IF NOT EXISTS kv(
   k TEXT PRIMARY KEY,
@@ -3331,7 +3362,7 @@ def _collapse_cmds(cmds):
 # --------------------------------------------------------------------------
 CFG_KEYS = ("RISK", "DLOSS", "MAXDD", "SNIPER", "SNDAY", "SNRR", "SNSLMAX", "NEWS",
             "SLTP", "SL", "TP", "LOT", "STEPON", "STEP", "STEPSTART", "BE", "LOCKMODE", "ADAPT", "MGMT",
-            "STRAT", "EMAF", "STARS", "LOT2", "PROT", "SDPROF") + BSK_KEYS + ASIA_KEYS + TK_KEYS + ZN_KEYS + CB_KEYS + GR_KEYS + PR_KEYS + CORE_KEYS   # v12.6 · v12.7 GOLD BASKET · v12.8 SDPROF · v12.9 ASIA · v12.12 TICK
+            "STRAT", "EMAF", "STARS", "LOT2", "PROT", "SDPROF") + BSK_KEYS + ASIA_KEYS + TK_KEYS + ZN_KEYS + CB_KEYS + GR_KEYS + PR_KEYS + CORE_KEYS + QT_KEYS   # v13.15 · v12.6 · v12.7 GOLD BASKET · v12.8 SDPROF · v12.9 ASIA · v12.12 TICK
 
 
 def _cfg_cmds(vals, rev):
@@ -5209,6 +5240,449 @@ def api_bin_run():
     out["can"] = True
     return jsonify(out)
 
+
+
+# ======================================================================
+# v13.15 (EA v72.3): 🔍 CHART SCANNER · 🔍 SCAN ALBAAB · 📌 QORSHE TOOS (SR/SMC) · 🤖 AI
+#   EA -> POST /qt : qorshayaasha (zone · SL · TP · xaalad) · scan lammaane kasta · 3 sawir (shumacyo M5) · LIVE (M15)
+#   App: /api/qt/state · /api/qt/live · /api/qt/plan/<id> · /api/qt/scan · /api/qt/cancel · /api/qt/ai · /api/qt/photo
+#   AI (ikhtiyaari): ANTHROPIC_API_KEY (Railway) · AI_MODEL · AI_DAY_MAX. Furaha la'aantiis: sharax qaab (xisaab dhab ah).
+# ======================================================================
+import urllib.request as _qt_ur
+
+QT_AI_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+QT_AI_MODEL = os.environ.get("AI_MODEL", "claude-sonnet-4-5").strip() or "claude-sonnet-4-5"
+try:
+    QT_AI_DAY = max(1, min(500, int(os.environ.get("AI_DAY_MAX", "50") or 50)))
+except ValueError:
+    QT_AI_DAY = 50
+QT_ST = ["SUGAYA", "TAABTAY", "LA GALAY", "TP", "SL", "DHACAY", "KA CARAY", "LA JOOJIYAY", "XIDHAN"]
+QT_KEEP = 40 * 86400          # qorshayaasha + sawirrada: 40 maalmood
+
+
+def _qt_f(v, lo=-1e12, hi=1e12, nd=None):
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return 0.0
+    if x != x or x < lo or x > hi:
+        return 0.0
+    return round(x, nd) if nd is not None else x
+
+
+def _qt_i(v, lo=-2 ** 62, hi=2 ** 62):
+    try:
+        x = int(float(v))
+    except (TypeError, ValueError):
+        return 0
+    return max(lo, min(hi, x))
+
+
+def _qt_sym(v):
+    return re.sub(r"[^A-Za-z0-9._#-]", "", str(v or ""))[:20]
+
+
+def _qt_txt(v, n=160):
+    return re.sub(r"[\x00-\x1f]", " ", str(v or ""))[:n]
+
+
+def _qt_plan(p):
+    if not isinstance(p, dict):
+        return None
+    pid = _qt_i(p.get("id"), 0, 10 ** 9)
+    if pid <= 0:
+        return None
+    o = {"id": pid, "sym": _qt_sym(p.get("sym")), "s": 1 if _qt_i(p.get("s")) > 0 else -1, "dg": _qt_i(p.get("dg"), 0, 8)}
+    for k in ("lo", "hi", "ent", "sl", "tp", "a", "ext", "eP", "eSL", "eTP", "xP", "lot"):
+        o[k] = _qt_f(p.get(k), -1e9, 1e9)
+    o["r"] = _qt_f(p.get("r"), -100, 100, 2)
+    for k in ("t", "exp", "tT", "tE", "tX"):
+        o[k] = _qt_i(p.get(k), 0, 4102444800)
+    o["st"] = _qt_i(p.get("st"), 0, 8)
+    o["pos"] = _qt_i(p.get("pos"), 0, 2 ** 62)
+    tr = p.get("tr") if isinstance(p.get("tr"), list) else []
+    o["tr"] = [max(-1, min(1, _qt_i(x))) for x in (tr + [0, 0, 0])[:3]]
+    o["md"] = _qt_i(p.get("md"), 0, 1)
+    o["tr8"] = 1 if _qt_i(p.get("tr8")) else 0
+    o["why"] = _qt_txt(p.get("why"), 140)
+    return o
+
+
+def _qt_bars(b, n=220):
+    out = []
+    if not isinstance(b, list):
+        return out
+    for x in b[-n:]:
+        if isinstance(x, list) and len(x) >= 5:
+            t = _qt_i(x[0], 0, 4102444800)
+            if t:
+                out.append([t] + [_qt_f(v, -1e9, 1e9) for v in x[1:5]])
+    return out
+
+
+@app.post("/qt")
+def ea_qt():
+    """EA v72.3: 📌 QORSHE TOOS · 🔍 scan · 3 sawir · LIVE."""
+    if not token_ok():
+        return jsonify(ok=False, error="bad token"), 401
+    d = _ea_body()
+    if getattr(g, "_ebad", False):
+        return _ea_bad_body()
+    acc = clean_account(d.get("account"))
+    if not acc:
+        acc = "bot-" + re.sub(r"[^A-Za-z0-9]", "", str(d.get("bot", "")))[:16] or "bot-unknown"
+    if not ea_bind(acc):
+        return _bad_key()
+    now = time.time()
+    plans = [x for x in (_qt_plan(p) for p in (d.get("plans") or [])[:60]) if x]
+    scans = []
+    for x in (d.get("scans") or [])[:16]:
+        if not isinstance(x, dict):
+            continue
+        tr = x.get("tr") if isinstance(x.get("tr"), list) else []
+        scans.append({"sym": _qt_sym(x.get("sym")), "t": _qt_i(x.get("t"), 0, 4102444800),
+                      "tr": [max(-1, min(1, _qt_i(v))) for v in (tr + [0, 0, 0])[:3]],
+                      "px": _qt_f(x.get("px"), 0, 1e9), "a": _qt_f(x.get("a"), 0, 1e9), "zs": _qt_f(x.get("zs"), 0, 1e9),
+                      "zr": _qt_f(x.get("zr"), 0, 1e9), "res": _qt_i(x.get("res"), 0, 9), "pid": _qt_i(x.get("pid"), 0, 10 ** 9),
+                      "txt": _qt_txt(x.get("txt"), 80), "t8": 1 if _qt_i(x.get("t8")) else 0})
+    c = d.get("cfg") if isinstance(d.get("cfg"), dict) else {}
+    cfg = {"on": _qt_i(c.get("on"), 0, 1), "md": _qt_i(c.get("md"), 0, 1), "max": _qt_i(c.get("max"), 1, 20), "h": _qt_i(c.get("h"), 1, 48),
+           "risk": _qt_f(c.get("risk"), 0, 5, 2), "day": _qt_i(c.get("day"), 0, 20), "draw": _qt_i(c.get("draw"), 0, 1), "scg": _qt_i(c.get("scg"), 0, 2),
+           "trade": _qt_txt(c.get("trade"), 60), "s0": _qt_i(c.get("s0"), 0, 24), "s1": _qt_i(c.get("s1"), 0, 24),
+           "srv": _qt_i(d.get("srv"), 0, 4102444800), "ver": _qt_txt(d.get("ver"), 12), "ts": now}
+    with db() as con:
+        _kv_put(con, "qtcfg:" + acc, cfg)
+        _kv_put(con, "qtscan:" + acc, {"ts": now, "srv": cfg["srv"], "list": scans})
+        for p in plans:
+            con.execute("INSERT INTO qt_plans(account,pid,data,st,t,ts) VALUES(?,?,?,?,?,?)"
+                        " ON CONFLICT(account, pid) DO UPDATE SET data=excluded.data, st=excluded.st, t=excluded.t, ts=excluded.ts",
+                        (acc, p["id"], json.dumps(p, separators=(",", ":")), p["st"], p["t"], now))
+        for sn in (d.get("snaps") or [])[:5]:
+            if not isinstance(sn, dict):
+                continue
+            k = str(sn.get("k") or "")
+            pid = _qt_i(sn.get("pid"), 0, 10 ** 9)
+            pp = _qt_plan(sn.get("p"))
+            if k not in ("scan", "entry", "exit") or pid <= 0 or not pp:
+                continue
+            row = {"k": k, "t": _qt_i(sn.get("t"), 0, 4102444800), "sym": _qt_sym(sn.get("sym")), "dg": _qt_i(sn.get("dg"), 0, 8),
+                   "p": pp, "b": _qt_bars(sn.get("b"), 150)}
+            con.execute("INSERT INTO qt_snaps(account,pid,kind,data,ts) VALUES(?,?,?,?,?)"
+                        " ON CONFLICT(account, pid, kind) DO UPDATE SET data=excluded.data, ts=excluded.ts",
+                        (acc, pid, k, json.dumps(row, separators=(",", ":")), now))
+        lv = d.get("live")
+        if isinstance(lv, list):
+            items = []
+            for x in lv[:12]:
+                if not isinstance(x, dict):
+                    continue
+                tr = x.get("tr") if isinstance(x.get("tr"), list) else []
+                items.append({"sym": _qt_sym(x.get("sym")), "dg": _qt_i(x.get("dg"), 0, 8),
+                              "tr": [max(-1, min(1, _qt_i(v))) for v in (tr + [0, 0, 0])[:3]],
+                              "a": _qt_f(x.get("a"), 0, 1e9), "sp": _qt_f(x.get("sp"), 0, 1e9), "zs": _qt_f(x.get("zs"), 0, 1e9),
+                              "zr": _qt_f(x.get("zr"), 0, 1e9), "res": _qt_i(x.get("res"), 0, 9), "txt": _qt_txt(x.get("txt"), 80),
+                              "t8": 1 if _qt_i(x.get("t8")) else 0, "srv": _qt_i(x.get("srv"), 0, 4102444800), "b": _qt_bars(x.get("b"), 220)})
+            _kv_put(con, "qtlive:" + acc, {"ts": now, "list": items})
+        if _should_prune("qt:" + acc):
+            con.execute("DELETE FROM qt_plans WHERE account=? AND ts<?", (acc, now - QT_KEEP))
+            con.execute("DELETE FROM qt_snaps WHERE account=? AND ts<?", (acc, now - QT_KEEP))
+    return jsonify(ok=True, n=len(plans))
+
+
+def _qt_can(u, acc):
+    lic = _user_lic(u, acc)
+    if lic is not None:
+        return lic["state"] == "OK"
+    return bool(u["can_control"]) or u["role"] == "admin"
+
+
+def _qt_stats(rows):
+    done = [p for p in rows if p.get("st") in (3, 4, 8) and p.get("tE")]
+    w = sum(1 for p in done if p.get("r", 0) > 0)
+    return {"n": len(rows), "wait": sum(1 for p in rows if p.get("st") in (0, 1)), "open": sum(1 for p in rows if p.get("st") == 2),
+            "tr": len(done), "win": w, "wr": round(100.0 * w / len(done), 1) if done else 0, "R": round(sum(float(p.get("r") or 0) for p in done), 2)}
+
+
+@app.get("/api/qt/state")
+@login_required
+def api_qt_state():
+    u = request.user
+    acc = _visible_account(u)
+    with db() as con:
+        cfg = _kv_get(con, "qtcfg:" + acc) or {}
+        sc = _kv_get(con, "qtscan:" + acc) or {}
+        lv = _kv_get(con, "qtlive:" + acc) or {}
+        rows = con.execute("SELECT data FROM qt_plans WHERE account=? ORDER BY pid DESC LIMIT 60", (acc,)).fetchall()
+        snap = con.execute("SELECT data FROM snapshots WHERE account=?", (acc,)).fetchone()
+    plans = [_jload(r["data"], {}) for r in rows]
+    qs = (_jload(snap["data"], {}) or {}).get("qt") if snap else None
+    return jsonify(ok=True, account=acc, cfg=cfg, scans=sc.get("list") or [], scan_ts=sc.get("ts") or 0, plans=plans,
+                   stats=_qt_stats(plans), sum=qs if isinstance(qs, dict) else {}, live_ts=lv.get("ts") or 0,
+                   ai=bool(QT_AI_KEY), can=_qt_can(u, acc), st=QT_ST, now=time.time())
+
+
+def _qt_ema(c, n):
+    a = 2.0 / (n + 1)
+    out, v = [], (c[0] if c else 0)
+    for x in c:
+        v = a * x + (1 - a) * v
+        out.append(v)
+    return out
+
+
+def _qt_feat(it):
+    """xisaab dhab ah (sharaxa / AI): sessions · PDH/PDL · EMA · zones · go'aan."""
+    b = it.get("b") or []
+    if len(b) < 30:
+        return {}
+    c = [x[4] for x in b]
+    e20, e50 = _qt_ema(c, 20), _qt_ema(c, 50)
+    px, a = c[-1], it.get("a") or 0
+    if a <= 0:
+        trs = [max(b[i][2] - b[i][3], abs(b[i][2] - b[i - 1][4]), abs(b[i][3] - b[i - 1][4])) for i in range(1, len(b))]
+        a = sum(trs[-14:]) / max(1, len(trs[-14:]))
+    last_day = b[-1][0] // 86400
+    def rng(day, h0, h1):
+        xs = [x for x in b if x[0] // 86400 == day and h0 <= (x[0] % 86400) // 3600 < h1]
+        return [max(x[2] for x in xs), min(x[3] for x in xs)] if xs else None
+    sess = {"asia": rng(last_day, 3, 10), "lon": rng(last_day, 10, 15), "ny": rng(last_day, 15, 23)}
+    pd_ = [x for x in b if x[0] // 86400 == last_day - 1] or [x for x in b if x[0] // 86400 < last_day][-96:]
+    pdh = max(x[2] for x in pd_) if pd_ else 0
+    pdl = min(x[3] for x in pd_) if pd_ else 0
+    hr = (b[-1][0] % 86400) // 3600
+    ses_now = "Asia" if 3 <= hr < 10 else ("London" if 10 <= hr < 15 else ("New York" if 15 <= hr < 23 else "xidhan / dhexe"))
+    tr = it.get("tr") or [0, 0, 0]
+    agree = tr[0] != 0 and tr[0] == tr[1] == tr[2]
+    s = tr[0] if agree else 0
+    zs, zr = it.get("zs") or 0, it.get("zr") or 0
+    zone = zs if s > 0 else (zr if s < 0 else 0)
+    dz = abs(px - zone) / a if (zone and a) else 99
+    chk = [["Trend M15 · H1 · H4", agree], ["Zone jihada (≤ 3 ATR)", bool(zone) and dz <= 3],
+           ["Session (London / NY)", ses_now in ("London", "New York")], ["Spread ≤ 10% ATR", (it.get("sp") or 0) <= 0.1 * a if a else False],
+           ["EMA20 / 50 isku jiho", (e20[-1] > e50[-1]) == (tr[0] > 0) if tr[0] else False]]
+    score = sum(1 for _, ok in chk if ok)
+    bias = ("BUY" if s > 0 else "SELL") if agree else "SUG"
+    plan = None
+    if agree and zone and dz <= 3:
+        A = a
+        lo, hi = zone - 0.25 * A, zone + 0.25 * A
+        ent = hi if s > 0 else lo
+        sl = lo - 0.3 * A if s > 0 else hi + 0.3 * A
+        R = abs(ent - sl)
+        opp = zr if s > 0 else zs
+        tp = opp if (opp and (opp - ent) * s >= 1.5 * R) else ent + s * 2 * R
+        if abs(tp - ent) > 5 * R:
+            tp = ent + s * 5 * R   # EA: ugu badnaan 5R
+        plan = {"lo": lo, "hi": hi, "ent": ent, "sl": sl, "tp": tp, "rr": round(abs(tp - ent) / R, 1) if R else 0}
+    return {"px": px, "a": a, "e20": e20[-120:], "e50": e50[-120:], "sess": sess, "pdh": pdh, "pdl": pdl, "ses_now": ses_now,
+            "bias": bias, "score": score, "chk": chk, "zone": zone, "dz": round(dz, 2) if dz < 99 else None, "plan": plan}
+
+
+def _qt_fmt(v, dg):
+    try:
+        return ("%." + str(int(dg)) + "f") % float(v)
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _qt_text(it, f):
+    """sharax Soomaali (furaha AI la'aan) - tirooyinka xisaabta oo keliya."""
+    dg = it.get("dg", 2)
+    ar = {1: "▲", -1: "▼", 0: "—"}
+    tr = it.get("tr") or [0, 0, 0]
+    t = "%s · M15 %s · H1 %s · H4 %s · qiimaha %s · ATR %s. " % (it.get("sym"), ar[tr[0]], ar[tr[1]], ar[tr[2]], _qt_fmt(f["px"], dg), _qt_fmt(f["a"], dg))
+    if f["bias"] == "SUG":
+        t += "Trend-yadu isma raacsana → SUG: halkan gelitaan ma jiro. "
+    else:
+        t += "Trend %s ayaa isku raacsan (%s kaliya). " % ("KOR" if f["bias"] == "BUY" else "HOOS", f["bias"])
+        if f.get("zone"):
+            t += "%s ugu dhow: %s (%s ATR). " % ("Support" if f["bias"] == "BUY" else "Resistance", _qt_fmt(f["zone"], dg), f.get("dz"))
+    ss = f.get("sess") or {}
+    if ss.get("asia"):
+        t += "Asia high/low %s / %s. " % (_qt_fmt(ss["asia"][0], dg), _qt_fmt(ss["asia"][1], dg))
+    if f.get("pdh"):
+        t += "Shalay %s / %s. " % (_qt_fmt(f["pdh"], dg), _qt_fmt(f["pdl"], dg))
+    if f.get("plan"):
+        p = f["plan"]
+        t += "Qorshe: zone %s–%s · SL %s · TP %s (RR 1:%s) · gelitaan marka qiimuhu zone-ka yimaado + CHoCH M5. " % (
+            _qt_fmt(p["lo"], dg), _qt_fmt(p["hi"], dg), _qt_fmt(p["sl"], dg), _qt_fmt(p["tp"], dg), p["rr"])
+    t += "Session hadda: %s. Falanqeyn ah — ma aha ballanqaad." % f.get("ses_now")
+    return t
+
+
+def _qt_ai_call(content, max_tokens=500):
+    if not QT_AI_KEY:
+        raise RuntimeError("AI furaha lama dhigin")
+    body = json.dumps({"model": QT_AI_MODEL, "max_tokens": max_tokens,
+                       "system": "Waxaad tahay kaaliyaha falanqeynta ee MOHA PRO (MT5 trading bot). Ku jawaab Af-Soomaali fudud, gaaban. "
+                                 "Ha ballanqaadin faa'iido. Ha sameyn tiro aan xogta ku jirin. Sheeg in ay tahay falanqeyn ee aanay ahayn talo maaliyadeed.",
+                       "messages": [{"role": "user", "content": content}]}).encode("utf-8")
+    req = _qt_ur.Request("https://api.anthropic.com/v1/messages", data=body, method="POST",
+                         headers={"x-api-key": QT_AI_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"})
+    with _qt_ur.urlopen(req, timeout=40) as r:
+        js = json.loads(r.read().decode("utf-8"))
+    parts = [x.get("text", "") for x in (js.get("content") or []) if isinstance(x, dict) and x.get("type") == "text"]
+    return "".join(parts).strip()
+
+
+def _qt_ai_quota(con, acc):
+    k = "qtai:%s:%s" % (acc, time.strftime("%Y%m%d", time.gmtime()))
+    n = int((_kv_get(con, k) or {}).get("n") or 0)
+    if n >= QT_AI_DAY:
+        return False
+    _kv_put(con, k, {"n": n + 1})
+    return True
+
+
+@app.get("/api/qt/live")
+@login_required
+def api_qt_live():
+    u = request.user
+    acc = _visible_account(u)
+    with db() as con:
+        lv = _kv_get(con, "qtlive:" + acc) or {}
+    out = []
+    for it in lv.get("list") or []:
+        f = _qt_feat(it)
+        out.append({"sym": it.get("sym"), "dg": it.get("dg"), "tr": it.get("tr"), "res": it.get("res"), "txt": it.get("txt"),
+                    "t8": it.get("t8"), "srv": it.get("srv"), "b": (it.get("b") or [])[-120:], "f": f, "expl": _qt_text(it, f) if f else ""})
+    return jsonify(ok=True, ts=lv.get("ts") or 0, list=out, ai=bool(QT_AI_KEY))
+
+
+@app.post("/api/qt/scan")
+@login_required
+def api_qt_scan():
+    u = request.user
+    body = request.get_json(silent=True) or {}
+    acc = (clean_account(body.get("account")) if u["role"] == "admin" else u["account"]) or u["account"]
+    if not _qt_can(u, acc):
+        return jsonify(ok=False, error="Ogolaansho ma lihid."), 403
+    now = time.time()
+    with db() as con:
+        con.execute("INSERT INTO commands(account,cmd,by_account,created_at) VALUES(?,?,?,?)", (acc, "QT:SCAN", u["account"], now))
+    return jsonify(ok=True, at=now)
+
+
+@app.post("/api/qt/cancel")
+@login_required
+def api_qt_cancel():
+    u = request.user
+    body = request.get_json(silent=True) or {}
+    acc = (clean_account(body.get("account")) if u["role"] == "admin" else u["account"]) or u["account"]
+    if not _qt_can(u, acc):
+        return jsonify(ok=False, error="Ogolaansho ma lihid."), 403
+    pid = _qt_i(body.get("pid"), 0, 10 ** 9)
+    if pid <= 0:
+        return jsonify(ok=False, error="qorshe"), 400
+    with db() as con:
+        con.execute("INSERT INTO commands(account,cmd,by_account,created_at) VALUES(?,?,?,?)", (acc, "QT:CANCEL:%d" % pid, u["account"], time.time()))
+    return jsonify(ok=True)
+
+
+@app.get("/api/qt/plan/<int:pid>")
+@login_required
+def api_qt_plan(pid):
+    u = request.user
+    acc = _visible_account(u)
+    with db() as con:
+        r = con.execute("SELECT data FROM qt_plans WHERE account=? AND pid=?", (acc, pid)).fetchone()
+        sn = con.execute("SELECT kind,data FROM qt_snaps WHERE account=? AND pid=?", (acc, pid)).fetchall()
+        p = _jload(r["data"], {}) if r else None
+        trade = None
+        if p and p.get("tE"):
+            rows = con.execute("SELECT data FROM closed_trades WHERE account=? AND ts>? ORDER BY ts DESC LIMIT 300",
+                               (acc, float(p["tE"]) - 86400 * 3)).fetchall()
+            for x in rows:
+                t = _jload(x["data"], {})
+                if str(t.get("strat", "")).upper() != "QORSHE":
+                    continue
+                if (p.get("pos") and str(t.get("tk")) == str(p["pos"])) or (t.get("sym") == p.get("sym") and abs(_qt_i(t.get("ot")) - p["tE"]) <= 180):
+                    trade = {k: t.get(k) for k in ("tk", "sym", "type", "lot", "entry", "exitp", "profit", "ot", "ct")}
+                    break
+    if not p:
+        return jsonify(ok=False, error="Qorshahan lama helin."), 404
+    snaps = {}
+    for x in sn:
+        snaps[x["kind"]] = _jload(x["data"], {})
+    return jsonify(ok=True, plan=p, snaps=snaps, trade=trade, st=QT_ST)
+
+
+@app.post("/api/qt/ai")
+@login_required
+def api_qt_ai():
+    u = request.user
+    body = request.get_json(silent=True) or {}
+    acc = (clean_account(body.get("account")) if u["role"] == "admin" else u["account"]) or u["account"]
+    sym = _qt_sym(body.get("sym"))
+    with db() as con:
+        lv = _kv_get(con, "qtlive:" + acc) or {}
+        it = next((x for x in (lv.get("list") or []) if x.get("sym") == sym), None)
+        if not it:
+            return jsonify(ok=False, error="Scan LIVE marka hore (🔍 SCAN HADDA)."), 400
+        f = _qt_feat(it)
+        base = _qt_text(it, f)
+        ck = "qtaic:%s:%s:%s" % (acc, sym, int(lv.get("ts") or 0))
+        cached = _kv_get(con, ck)
+        if cached and cached.get("t"):
+            return jsonify(ok=True, text=cached["t"], src="AI", cached=True)
+        if not QT_AI_KEY:
+            return jsonify(ok=True, text=base, src="qaab", note="Furaha AI lama dhigin (Railway → ANTHROPIC_API_KEY) · sharaxan waa xisaabta dhabta ah.")
+        if not _qt_ai_quota(con, acc):
+            return jsonify(ok=True, text=base, src="qaab", note="Xadka AI-ga maanta waa la gaadhay (%d)." % QT_AI_DAY)
+    feat = {"sym": sym, "trend_M15_H1_H4": it.get("tr"), "price": f.get("px"), "atr_M15": f.get("a"), "bias": f.get("bias"),
+            "support": it.get("zs"), "resistance": it.get("zr"), "session_now": f.get("ses_now"), "sessions": f.get("sess"),
+            "prev_day_high_low": [f.get("pdh"), f.get("pdl")], "checks": f.get("chk"), "plan": f.get("plan"),
+            "tested_note": "Habkan (trend + zone + CHoCH M5) dahab 31 bil: PF 1.15 · 288 trade (lama caddeyn). GRID TREND EMA: PF 1.24."}
+    prompt = ("Xogta scan-ka ee hoose (tirooyin dhab ah oo MT5 ah) ku sharax 5–7 sadar oo Soomaali ah: jihada, heerarka muhiimka ah, "
+              "meesha gelitaanka haddii ay jirto (zone · SL · TP), iyo goorta la sugo. Ha ku darin tiro aan halkan ku jirin.\n" + json.dumps(feat, ensure_ascii=False))
+    try:
+        txt = _qt_ai_call(prompt)
+    except Exception as e:
+        log.warning("qt ai: %s", e)
+        return jsonify(ok=True, text=base, src="qaab", note="AI lama gaadhin hadda · sharaxan waa xisaabta dhabta ah.")
+    with db() as con:
+        _kv_put(con, ck, {"t": txt})
+    return jsonify(ok=True, text=txt, src="AI")
+
+
+@app.post("/api/qt/photo")
+@login_required
+def api_qt_photo():
+    u = request.user
+    acc = u["account"]
+    if not QT_AI_KEY:
+        return jsonify(ok=False, error="Hab SAWIR wuxuu u baahan yahay furaha AI (Railway → ANTHROPIC_API_KEY). LIVE scan-ku la'aanteed wuu shaqeeyaa."), 400
+    body = request.get_json(silent=True) or {}
+    img = str(body.get("img") or "")
+    m = re.match(r"^data:(image/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$", img)
+    if not m or len(m.group(2)) > 1900000:
+        return jsonify(ok=False, error="Sawir JPEG / PNG (≤ 1.4 MB) soo geli."), 400
+    with db() as con:
+        if not _qt_ai_quota(con, acc):
+            return jsonify(ok=False, error="Xadka AI-ga maanta waa la gaadhay (%d)." % QT_AI_DAY), 429
+    prompt = ("Kani waa sawir chart trading (MT5). Ka akhri waxa muuqda oo keliya. Ku soo celi JSON keliya (qoraal kale ma jiro):\n"
+              '{"sym":"","tf":"","trend":"KOR|HOOS|RANGE","levels":[{"type":"support|resistance","price":0}],'
+              '"bias":"BUY|SELL|SUG","conf":"HOOSE|DHEXE|SARE","notes":"2-4 sadar Soomaali ah"}\n'
+              "Qiimaha aadan si cad u arkin ha qorin (0). Sawirku ma laha xog dhab ah - heerarku waa qiyaas.")
+    try:
+        txt = _qt_ai_call([{"type": "image", "source": {"type": "base64", "media_type": m.group(1), "data": m.group(2)}},
+                           {"type": "text", "text": prompt}], 700)
+    except Exception as e:
+        log.warning("qt photo: %s", e)
+        return jsonify(ok=False, error="AI lama gaadhin hadda — mar kale isku day."), 502
+    i, j = txt.find("{"), txt.rfind("}")
+    res = None
+    if i >= 0 and j > i:
+        try:
+            res = json.loads(txt[i:j + 1])
+        except ValueError:
+            res = None
+    if not isinstance(res, dict):
+        return jsonify(ok=True, raw=_qt_txt(txt, 1500))
+    clean = {"sym": _qt_txt(res.get("sym"), 20), "tf": _qt_txt(res.get("tf"), 8), "trend": _qt_txt(res.get("trend"), 12),
+             "bias": _qt_txt(res.get("bias"), 8), "conf": _qt_txt(res.get("conf"), 10), "notes": _qt_txt(res.get("notes"), 600),
+             "levels": [{"type": _qt_txt(x.get("type"), 12), "price": _qt_f(x.get("price"), 0, 1e9)} for x in (res.get("levels") or [])[:8] if isinstance(x, dict)]}
+    return jsonify(ok=True, res=clean)
 
 
 def _ev_merge(con, acc, items, now):
@@ -7727,6 +8201,108 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
 #binCard .tx{flex:1;min-width:0} #binCard .tx b{font-size:15px;letter-spacing:.03em} #binCard .tx small{display:block;color:var(--ink2);font-size:12px}
 #binCard .rt{text-align:right} #binCard .rt b{display:block;font-size:18px;font-weight:900}
 #binCard .rt small{font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:99px;border:1px solid var(--line)}
+
+/* ===== v13.15: 🔍 CHART SCANNER · 📌 QORSHE TOOS ===== */
+#qtCard{position:relative;margin:12px 0 10px;border-radius:22px;border:2.5px solid #1ea7ff;background:#050608;padding:20px 16px 28px;display:flex;align-items:center;gap:14px;cursor:pointer;
+  box-shadow:0 0 18px rgba(30,167,255,.55),inset 0 0 18px rgba(30,167,255,.18);animation:qtGlow 2.6s ease-in-out infinite}
+@keyframes qtGlow{50%{box-shadow:0 0 26px rgba(30,167,255,.8),inset 0 0 18px rgba(30,167,255,.22)}}
+#qtCard .ic{width:38px;height:38px;color:#1ea7ff;flex:none}
+#qtCard .ic svg{width:38px;height:38px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round}
+#qtCard .tx b{display:block;font-size:19px;letter-spacing:.06em;color:#fff}
+#qtCard .tx small{display:block;font-size:11.5px;letter-spacing:.12em;color:#6c7480;font-weight:700}
+#qtCard .go{position:absolute;right:-6px;top:50%;transform:translateY(-50%);width:12px;height:38px;border-radius:8px;background:#19c26b}
+#qtCard .dots{position:absolute;bottom:9px;left:50%;transform:translateX(-50%);display:flex;gap:7px}
+#qtCard .dots i{width:7px;height:7px;border-radius:50%;background:#555}#qtCard .dots i.on{background:#fff}
+.qtmini{display:flex;gap:8px;margin:0 0 14px}
+.qtmini div{flex:1;border:1px solid var(--line);border-radius:14px;padding:9px 11px;background:var(--surface)}
+.qtmini span{display:block;font-size:10px;font-weight:800;color:var(--ink3);letter-spacing:.08em}
+.qtmini b{font-size:14px}
+.qt{padding-bottom:20px}
+.qth{display:flex;align-items:center;gap:10px;margin:4px 0 10px}
+.qth svg{width:30px;height:30px;stroke:#1ea7ff;fill:none;stroke-width:2;stroke-linecap:round;flex:none}
+.qth h2{font-size:18px;font-weight:900;letter-spacing:.04em;margin:0}
+.qth small{display:block;font-size:11px;color:var(--ink3);margin-top:-2px}
+.qtpill{margin-left:auto;font-size:11px;font-weight:800;padding:5px 10px;border-radius:99px;border:1px solid var(--line);color:var(--ink3);white-space:nowrap}
+.qtpill.on{color:#8ff0b9;border-color:rgba(25,194,107,.5);background:rgba(25,194,107,.1)}
+.qtseg,.qtmode{display:flex;gap:6px;margin:0 0 10px}
+.qtseg button,.qtmode button{flex:1;border:1px solid var(--line);border-radius:12px;padding:9px 6px;background:var(--surface);color:var(--ink2);font-weight:800;font-size:12.5px;cursor:pointer}
+.qtseg button.on,.qtmode button.on{border-color:#1ea7ff;color:#fff;background:rgba(30,167,255,.14);box-shadow:0 0 10px rgba(30,167,255,.3)}
+.qtseg button b{font-size:10.5px;background:#1ea7ff;color:#001;border-radius:99px;padding:1px 6px;margin-left:4px}
+.qtmode button em{display:block;font-style:normal;font-size:9.5px;color:var(--ink3);font-weight:700}
+.qtk{font-size:10.5px;font-weight:800;color:var(--ink3);letter-spacing:.08em;margin:0 0 6px;display:flex;justify-content:space-between}
+.qtk em{font-style:normal;font-weight:700}
+.qtnote{font-size:11.5px;color:var(--ink3);margin:6px 0 0;line-height:1.4}
+.qtrow{display:grid;grid-template-columns:76px 1fr auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);cursor:pointer}
+.qtrow:last-child{border-bottom:0}
+.qtrow b{font-size:13.5px}
+.qtrow.sel b{color:#7cc8ff}
+.qtch{display:flex;gap:4px;flex-wrap:wrap}
+.qtch i{font-style:normal;font-size:9.5px;font-weight:900;border-radius:6px;padding:2px 5px;background:#1d242d;color:#7d8794}
+.qtch i.u{background:rgba(25,194,107,.18);color:#7ff0b0}.qtch i.d{background:rgba(229,72,77,.18);color:#ff9a9d}
+.qtres{font-size:10.5px;font-weight:900;border-radius:9px;padding:5px 7px;text-align:center;white-space:nowrap}
+.qtres.b{background:rgba(25,194,107,.16);color:#7ff0b0}.qtres.s{background:rgba(229,72,77,.16);color:#ff9a9d}.qtres.n{background:#1d242d;color:#9aa3ad}
+.qtgo{width:100%;height:52px;border:0;border-radius:16px;background:linear-gradient(135deg,#1ea7ff,#5b5cf6);color:#fff;font-weight:900;font-size:15px;letter-spacing:.08em;box-shadow:0 8px 24px rgba(30,167,255,.35);cursor:pointer;margin-top:4px}
+.qtgo:disabled{opacity:.55}
+.qtsm{border:1px solid #1ea7ff;background:rgba(30,167,255,.12);color:#cfe9ff;border-radius:10px;padding:7px 12px;font-weight:800;font-size:12px;cursor:pointer;margin-top:8px}
+.qtcv{padding:8px}
+.qtcvh{display:flex;justify-content:space-between;font-size:11px;color:var(--ink3);font-weight:800;padding:0 4px 6px}
+.qtcv canvas,.qtth canvas,#qtFC{display:block;width:100%;border-radius:10px;background:#0a0d11}
+.qtbias{display:flex;align-items:center;gap:12px}
+.qtbias .tag{font-size:21px;font-weight:900;padding:6px 14px;border-radius:12px;border:1px solid var(--line)}
+.qtbias .tag.b{background:rgba(25,194,107,.15);color:#7ff0b0;border-color:rgba(25,194,107,.5)}
+.qtbias .tag.s{background:rgba(229,72,77,.15);color:#ff9a9d;border-color:rgba(229,72,77,.5)}
+.qtbias .tag.n{background:#1d242d;color:#9aa3ad}
+.qtbias .bx{flex:1;min-width:0}
+.qtbar{height:8px;border-radius:99px;background:#222a33;overflow:hidden;margin-top:5px}.qtbar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#19c26b,#1ea7ff)}
+.qtchk div,.qttb div{display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:5px 0;border-bottom:1px dashed #222a33}
+.qtchk div:last-child,.qttb div:last-child{border:0}
+.qtchk .g,.qttb .g{color:#7ff0b0}.qtchk .r,.qttb .r{color:#ff9a9d}.qttb .a{color:#ffd27a}.qttb .b{color:#7cc8ff}
+.qtlv{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.qtlv div{border-radius:10px;padding:6px 8px;background:var(--surface);border:1px solid var(--line)}
+.qtlv span{display:block;font-size:9.5px;font-weight:800;color:var(--ink3)}
+.qtlv b{font-size:13.5px}
+.qtai{font-size:13px;line-height:1.5;color:var(--ink2);margin:0;white-space:pre-wrap}
+.qthon{border-color:rgba(250,178,25,.5)!important;background:rgba(250,178,25,.07)!important}
+.qthon p{font-size:12px;margin:0;line-height:1.45}
+.qtup{display:block;border:1px dashed #1ea7ff;border-radius:14px;padding:16px;text-align:center;color:var(--ink2);font-size:13px;cursor:pointer;margin-bottom:8px}
+.qtup input{display:none}
+#qtImg{display:block;width:100%;border-radius:12px;margin-bottom:8px}
+.qtstats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px}
+.qtstats div{border:1px solid var(--line);border-radius:12px;padding:8px;background:var(--surface);text-align:center}
+.qtstats span{display:block;font-size:9.5px;font-weight:800;color:var(--ink3)}.qtstats b{font-size:15px}
+.qtpl{border:1px solid var(--line);border-radius:14px;padding:10px;margin-bottom:8px;background:var(--surface);cursor:pointer}
+.qtpl .hd{display:flex;justify-content:space-between;align-items:center;gap:6px}
+.qtpl .hd b{font-size:13.5px}
+.qtpl .ln{display:flex;gap:10px;flex-wrap:wrap;font-size:11.5px;color:var(--ink2);margin-top:4px}
+.qtst{font-size:10px;font-weight:900;border-radius:8px;padding:3px 8px;white-space:nowrap}
+.qtst.s0{background:rgba(30,167,255,.15);color:#9fd6ff}.qtst.s1{background:rgba(250,178,25,.16);color:#ffd27a}.qtst.s2{background:rgba(167,139,250,.18);color:#d3c5ff}
+.qtst.s3{background:rgba(25,194,107,.18);color:#7ff0b0}.qtst.s4{background:rgba(229,72,77,.18);color:#ff9a9d}.qtst.s5,.qtst.s6,.qtst.s7,.qtst.s8{background:#1d242d;color:#8b949e}
+.qtsheet{position:fixed;inset:0;z-index:90;background:rgba(5,7,10,.94);overflow-y:auto;padding:14px 12px 90px}
+.qtsheet .hd{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+.qtsheet .hd h3{margin:0;font-size:17px}
+.qtx{border:1px solid var(--line);background:var(--surface);color:#fff;border-radius:10px;width:36px;height:36px;font-size:16px;cursor:pointer}
+.qtths{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.qtth{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#0a0d11;cursor:pointer}
+.qtth .tl{display:flex;justify-content:space-between;font-size:9.5px;font-weight:900;padding:4px 5px;color:var(--ink2)}
+.qtth.na{opacity:.4;cursor:default}
+.qtcmp div{display:grid;grid-template-columns:1fr 1.1fr 1.3fr 18px;gap:4px;font-size:11.5px;padding:6px 0;border-bottom:1px solid #1d242d;align-items:center}
+.qtcmp div:first-child{color:var(--ink3);font-size:9.5px;font-weight:800}
+.qtfull{position:fixed;inset:0;z-index:120;background:#05070a;padding:16px 12px;overflow-y:auto}
+.qtfull .hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.qtfull p{font-size:12.5px;color:var(--ink2);margin-top:8px}
+.qtopt{border:1px solid var(--line);border-radius:12px;padding:9px 10px;margin-top:7px;background:var(--surface);font-size:12px;cursor:pointer}
+.qtopt.on{border-color:#1ea7ff;background:rgba(30,167,255,.12);box-shadow:0 0 10px rgba(30,167,255,.3)}
+.qtopt b{font-size:13px}
+.qtfr{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px;gap:10px}
+.qtfr small{display:block;font-size:11px;color:var(--ink3)}
+.qtstp{display:flex;align-items:center;gap:8px}
+.qtstp button{width:34px;height:34px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:#fff;font-size:17px;cursor:pointer}
+.qtstp b{min-width:54px;text-align:center}
+.qtsw{width:50px;height:28px;border-radius:99px;border:1px solid var(--line);background:#2a2a2a;position:relative;cursor:pointer;flex:none}
+.qtsw i{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#888;transition:.15s}
+.qtsw.on{background:rgba(25,194,107,.35);border-color:#19c26b}.qtsw.on i{left:25px;background:#19c26b}
+.qtbl table{width:100%;border-collapse:collapse;font-size:11.5px}.qtbl td,.qtbl th{padding:5px 3px;border-bottom:1px solid #1d242d;text-align:right}
+.qtbl th{color:var(--ink3);font-size:9.5px}.qtbl td:first-child,.qtbl th:first-child{text-align:left}
 </style></head><body>
 
 <div class="offban" id="offBan" hidden><b id="offBanT">KHADKA WAA GO'AY · DAAWASHO OO KELIYA</b><small id="offBanS">—</small></div>   <!-- v13.5: 📴 -->
@@ -7793,6 +8369,13 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
       <div class="tile"><div class="k">Drawdown</div><div class="v" id="dd">—</div></div>
       <div class="tile"><div class="k">Trade furan</div><div class="v neu" id="ot">—</div></div>
     </div>
+
+    <!-- v13.15: 🔍 CHART SCANNER -->
+    <div id="qtCard" role="button" tabindex="0" aria-label="Chart Scanner">
+      <span class="ic"><svg viewBox="0 0 24 24"><path d="M4 4v16h16"/><path d="M8 16v-4M12 16V8M16 16v-6"/></svg></span>
+      <div class="tx"><b>CHART SCANNER</b><small>AI-POWERED TRADE ANALYSIS</small></div><div class="go"></div><div class="dots"><i class="on"></i><i></i><i></i></div>
+    </div>
+    <div class="qtmini" id="qtMini"></div>
 
     <!-- v13.14: ⚡ BINARY -->
     <div id="binCard" hidden role="button" tabindex="0" aria-label="Binary">
@@ -8719,15 +9302,81 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
     <div style="font-size:34px">⛔</div><h3>XAD MAALINLE LA GAADHAY</h3><p id="bnMWhy">—</p>
     <div class="sv"><div><span style="font-size:11px;color:var(--ink3)">MAANTA</span><b id="bnMPl" style="color:#ff8a8d">—</b></div><div><span style="font-size:11px;color:var(--ink3)">BERRI</span><b style="color:#8ff0b9">07:00 GMT</b></div></div>
     <button type="button" id="bnModX">Waa fahmay</button></div></div>
+
+  <!-- ============ v13.15: 🔍 CHART SCANNER · 📌 QORSHE TOOS ============ -->
+  <section class="pane" id="pScan"><div class="qt">
+    <div class="qth"><svg viewBox="0 0 24 24"><path d="M4 4v16h16"/><path d="M8 16v-4M12 16V8M16 16v-6"/></svg>
+      <div><h2>CHART SCANNER</h2><small>AI falanqeyn · xog dhab ah (MT5)</small></div><span class="qtpill" id="qtPill">—</span></div>
+    <div class="qtseg" id="qtSeg"><button type="button" data-v="scan" class="on">🔍 SCAN</button><button type="button" data-v="plan">📌 QORSHE<b id="qtPN" hidden></b></button><button type="button" data-v="set">⚙ SITIN</button></div>
+
+    <div id="qtVScan">
+      <div class="qtmode" id="qtMode"><button type="button" data-m="live" class="on">⚡ LIVE<em>MT5 xog dhab · sax ah</em></button><button type="button" data-m="shot">📷 SAWIR<em>screenshot · qiyaas</em></button></div>
+      <div id="qtLiveBox">
+        <div class="card" id="qtSG"></div>
+        <div class="card"><p class="qtk">LAMMAANAYAASHA <em id="qtScT">—</em></p><div id="qtRows"><p class="qtnote">Xog weli ma jirto · EA v72.3 ayaa 15 daqiiqo kasta soo diraya.</p></div></div>
+        <button class="qtgo" id="qtGo" type="button">🔍 SCAN HADDA</button>
+        <p class="qtnote" id="qtGoN">Bot-ka (VPS) ayaa xogta dhabta ah soo diraya · 10–40 ilbiriqsi</p>
+        <div id="qtRes" hidden>
+          <div class="card qtcv" style="margin-top:10px"><div class="qtcvh"><span id="qtRSym">—</span><span id="qtRT">—</span></div><canvas id="qtCv" width="760" height="480"></canvas></div>
+          <div class="card"><div class="qtbias"><div class="tag n" id="qtBias">—</div><div class="bx"><b id="qtBiasT">—</b><div class="qtnote" style="margin:0">Isku raac: <b id="qtScore">—</b></div><div class="qtbar"><i id="qtScoreB"></i></div></div></div></div>
+          <div class="card qtchk" id="qtChk"></div>
+          <div class="card" id="qtPlanC"><p class="qtk">FIKRAD TRADE <em>falanqeyn</em></p><div class="qtlv" id="qtLv"></div><p class="qtnote" id="qtRR"></p></div>
+          <div class="card"><p class="qtk">🤖 SHARAX <em id="qtAiSrc">—</em></p><p class="qtai" id="qtAi">—</p><button type="button" class="qtsm" id="qtAiB">🤖 AI sharax</button><p class="qtnote" id="qtAiN"></p></div>
+          <div class="card qthon"><p class="qtk" style="color:#ffd27a">DAACADNIMO</p><p>Setup trend + zone (dahab 31 bil): <b>1,211 jeer · guul 35% · PF 1.01</b>. Xaqiijin CHoCH M5 (QORSHE TOOS): <b>PF 1.15 · 288 trade</b> — lama caddeyn. Scanner-ku <b>indho</b> ayuu ku siiyaa; trade ma furo.</p></div>
+        </div>
+      </div>
+      <div id="qtShotBox" hidden>
+        <div class="card"><p class="qtk">📷 SAWIR CHART <em>screenshot</em></p>
+          <label class="qtup"><input type="file" id="qtFile" accept="image/*"><span id="qtFileT">Riix · sawir MT5 soo geli</span></label>
+          <img id="qtImg" alt="" hidden>
+          <button class="qtgo" id="qtShotGo" type="button" disabled>🤖 AKHRI SAWIRKA</button>
+          <p class="qtnote" id="qtShotN">AI vision ayaa akhriya · heerarku waa qiyaas · LIVE ayaa sax ah</p></div>
+        <div class="card qthon" id="qtShotRes" hidden></div>
+      </div>
+    </div>
+
+    <div id="qtVPlan" hidden>
+      <div class="qtstats" id="qtStats"></div>
+      <div id="qtPlans"></div>
+      <p class="qtnote">Qorshe kasta: xogta scan-ka + 3 sawir (SCAN · GELITAAN · XIDH) · riix si aad u furto.</p>
+    </div>
+
+    <div id="qtVSet" hidden>
+      <div class="card"><p class="qtk">🔍 SCAN ALBAAB <em>⚡ CORE 1 · GRID TREND EMA</em></p>
+        <div class="qtopt" data-g="0"><b>OFF</b> · sidii hore (faa'iido ugu badan · DD $601)</div>
+        <div class="qtopt" data-g="1"><b>DHEXE</b> · M15 + H1 (PF 1.22 · DD $759)</div>
+        <div class="qtopt" data-g="2"><b>ADAG</b> · M15 + H1 + H4 · <span style="color:#7ff0b0">PF 1.33 · DD $502</span> — account yar</div>
+        <div class="qtbl" style="margin-top:8px"><table><tr><th>Albaab</th><th>Trade</th><th>Faa'iido</th><th>PF</th><th>DD</th></tr>
+          <tr><td>OFF</td><td>1,220</td><td>$4,274</td><td>1.24</td><td>$601</td></tr><tr><td>DHEXE</td><td>905</td><td>$2,877</td><td>1.22</td><td>$759</td></tr>
+          <tr><td>ADAG</td><td>640</td><td>$2,855</td><td>1.33</td><td>$502</td></tr></table>
+          <p class="qtnote">tick dhab 31 bil · 0.01 lot · grid cusub oo keliya · trade-yada furan lama xidho</p></div></div>
+      <div class="card"><p class="qtk">📌 QORSHE TOOS <em>🎯 CORE 2 · SR / SMC</em></p>
+        <div class="qtfr"><div>Shidan<small>scan → qorshe → gelitaan toos</small></div><div class="qtsw" id="qtSwOn"><i></i></div></div>
+        <div class="qtfr"><div>Hab gelitaan<small>TOOS PF 0.92 · XAQIIJIN PF 1.15</small></div><div class="qtmode" id="qtMd" style="margin:0;min-width:170px"><button type="button" data-v="0">TOOS</button><button type="button" data-v="1">XAQIIJIN</button></div></div>
+        <div class="qtfr"><div>Qorshe ugu badan</div><div class="qtstp" data-k="max" data-lo="1" data-hi="20" data-st="1"><button type="button">−</button><b>—</b><button type="button">+</button></div></div>
+        <div class="qtfr"><div>Muddo qorshe<small>saacadood</small></div><div class="qtstp" data-k="h" data-lo="1" data-hi="48" data-st="1"><button type="button">−</button><b>—</b><button type="button">+</button></div></div>
+        <div class="qtfr"><div>Khatar trade<small>% balance</small></div><div class="qtstp" data-k="risk" data-lo="0.1" data-hi="5" data-st="0.1"><button type="button">−</button><b>—</b><button type="button">+</button></div></div>
+        <div class="qtfr"><div>Trade maalintii<small>0 = xad la'aan</small></div><div class="qtstp" data-k="day" data-lo="0" data-hi="20" data-st="1"><button type="button">−</button><b>—</b><button type="button">+</button></div></div>
+        <div class="qtfr"><div>Sawir chart (MT5)<small>MOHA_P&lt;id&gt;_ZONE · SL · TP</small></div><div class="qtsw" id="qtSwDr"><i></i></div></div>
+        <p class="qtnote" id="qtTrd">Trade: —</p>
+        <button class="qtgo" id="qtSave" type="button">KAYDI SITINKA</button><p class="qtnote" id="qtSaveN"></p></div>
+      <div class="card qthon"><p>Lammaanayaasha kale (EURUSD · GBPUSD · USDJPY …) = scan + qorshe oo keliya. Trade waxaa la furaa kaliya kadib tijaabo. Habka XAQIIJIN: DEMO marka hore.</p></div>
+    </div>
+  </div></section>
+
+  <div class="qtsheet" id="qtSheet" hidden></div>
+  <div class="qtfull" id="qtFull" hidden><div class="hd"><b id="qtFH">—</b><button type="button" class="qtx" id="qtFX">✕</button></div><canvas id="qtFC" width="760" height="640"></canvas><p id="qtFN"></p></div>
 </div>
 
 <nav class="appbar">
   <button class="on" data-tab="Guud">
     <svg viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1Z"/></svg>Guud</button>
+  <button data-tab="Scan">   <!-- v13.15 -->
+    <svg viewBox="0 0 24 24"><path d="M4 4v16h16"/><path d="M8 16v-4M12 16V8M16 16v-6"/></svg>Scan</button>
   <button data-tab="Trade">
     <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg>Trade</button>
   <button data-tab="Binary" class="bnnav">   <!-- v13.14 -->
-    <svg viewBox="0 0 24 24"><path d="M3 17l5-6 4 4 8-9"/><path d="M15 6h5v5"/></svg>Binary<span class="cs">CUSUB</span></button>
+    <svg viewBox="0 0 24 24"><path d="M3 17l5-6 4 4 8-9"/><path d="M15 6h5v5"/></svg>Binary</button>
   <button data-tab="Analiis">
     <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5M11 8v3l2 2"/></svg>Analiis</button>
   {% if can_control %}
@@ -11622,8 +12271,8 @@ try{ const s=JSON.parse(localStorage.getItem("mp_j2")||"null"); if(s){ if(["d","
 const J2_MON=["Janaayo","Febraayo","Maarso","Abriil","Maajo","Juun","Luulyo","Agoosto","Sebtembar","Oktoobar","Nofembar","Desembar"];
 const J2_MS=["Jan","Feb","Mar","Abr","May","Jun","Lul","Ago","Seb","Okt","Nof","Des"];
 const J2_DW=["IS","TA","AR","KH","JI","SA","AX"];
-const J2_IC={GRID:"🪜",TICK:"⚡",BASKET:"🥇",SR:"🎯",SMC:"🧠",LABADA:"⇄",ASIA:"🌅",EMA:"📈",BB:"📊",VSA:"📶",POC:"📍"};
-const J2_NM={SR:"SR/SD",ASIA:"ASIA (hore)"};
+const J2_IC={GRID:"🪜",TICK:"⚡",BASKET:"🥇",SR:"🎯",SMC:"🧠",LABADA:"⇄",ASIA:"🌅",EMA:"📈",BB:"📊",VSA:"📶",POC:"📍",QORSHE:"📌"};
+const J2_NM={SR:"SR/SD",ASIA:"ASIA (hore)",QORSHE:"QORSHE TOOS"};
 function j2A(s){ return esc(s).replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
 function j2Nm(s){ return (J2_IC[s]||"•")+" "+(J2_NM[s]||s||"?"); }
 function j2Save(){ try{ localStorage.setItem("mp_j2",JSON.stringify({p:J2.p,c:J2.c})); }catch(e){} }
@@ -11790,7 +12439,7 @@ function j2Trades(d,tz){
       const yk=new Date(Date.UTC(i.ty,i.tm-1,i.td-1)).toISOString().slice(0,10);
       h+='<div class="j2day"><span>'+(key===today?"MAANTA · ":(key===yk?"SHALAY · ":""))+dd+" "+dt.getUTCFullYear()+'</span>'+(x?'<span class="'+j2C(x.net)+'">'+j2M(x.net)+'</span>':'')+'</div>'; }
     const c=coreOf(t.s), p=Number(t.p)||0, buy=String(t.type).toUpperCase()==="BUY";
-    h+='<div class="j2tr'+(p<0?" n":"")+'"><div class="a"><b>'+esc(j2Nm(t.s))+' · '+(buy?"▲ BUY":"▼ SELL")+' '+Number(t.lot||0).toFixed(2)+'</b>'
+    h+='<div class="j2tr'+(p<0?" n":"")+'"'+(t.s==="QORSHE"?' data-qt="'+(Number(t.ot)||0)+'|'+esc(t.sym||"")+'" style="cursor:pointer"':'')+'><div class="a"><b>'+esc(j2Nm(t.s))+' · '+(buy?"▲ BUY":"▼ SELL")+' '+Number(t.lot||0).toFixed(2)+'</b>'
       +'<small>'+coreBdg(c)+' '+esc(t.sym||"")+' · '+(t.ot?(j2HM(t.ot,tz)+" → "):"")+j2HM(t.ct,tz)+(t.ot?(" · "+j2Dur(t.ct-t.ot)):"")+(t.pts?(" · "+Number(t.pts).toFixed(0)+" pt"):"")+'</small></div>'
       +'<div class="p '+j2C(p)+'">'+j2M(p)+'</div></div>';
   });
@@ -13364,6 +14013,7 @@ function tab(n){
   if(n==="Trade") loadShots();                        // v9.1
   if(n==="Analiis") loadLevels(true);                 // v12.3
   if(n==="Binary"){ try{ bnLoad(); }catch(e){} }      // v13.14
+  if(n==="Scan"){ try{ qtLoad(); }catch(e){} }         // v13.15
   try{ localStorage.setItem("mp_tab",n); }catch(e){}
   scrollTo({top:0,behavior:"instant"});
 }
@@ -13574,6 +14224,319 @@ function bnChart(){
   const card=bnE("binCard"); if(card) card.addEventListener("click",()=>tab("Binary"));
   setInterval(()=>{ const iv=bnOn()?2000:15000; if(Date.now()-BNlastF>=iv) bnLoad(); if(bnOn()) bnLive(); },1000);
   bnLoad();
+})();
+
+/* ======================== v13.15: 🔍 CHART SCANNER · 📌 QORSHE TOOS (EA v72.3) ======================== */
+const QT={st:null, live:null, sel:"", view:"scan", mode:"live", busy:false, reqAt:0, shot:"", ed:null, dirty:false, pl:null, t:0};
+function qtE(id){ return document.getElementById(id); }
+function qtQ(){ return accSel?("account="+encodeURIComponent(accSel.value)):""; }
+async function qtGet(u){
+  const q=qtQ(); const r=await fetch(u+(q?((u.indexOf("?")>=0?"&":"?")+q):""),{cache:"no-store",headers:{"Accept":"application/json"}});
+  if(r.status===401){ location.href="/login"; return null; }
+  try{ return await r.json(); }catch(e){ return null; }
+}
+async function qtPost(u,b){
+  b=b||{}; if(accSel) b.account=accSel.value;
+  try{ const r=await fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)}); return await r.json(); }
+  catch(e){ return {ok:false,error:"Internet ma jiro."}; }
+}
+function qtF(v,dg){ const n=Number(v); if(!isFinite(n)||n===0) return "—"; return n.toFixed(dg==null?2:dg); }
+function qtAr(v){ return v>0?"▲":(v<0?"▼":"—"); }
+function qtTm(t){ if(!t) return "—"; const d=new Date(t*1000); return String(d.getUTCDate()).padStart(2,"0")+" "+J2_MS[d.getUTCMonth()]+" "+String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0"); }
+function qtHM(t){ if(!t) return "—"; const d=new Date(t*1000); return String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0"); }
+function qtStC(st){ return "qtst s"+(st||0); }
+function qtStN(st){ const L=(QT.st&&QT.st.st)||["SUGAYA","TAABTAY","LA GALAY","TP","SL","DHACAY","KA CARAY","LA JOOJIYAY","XIDHAN"]; return L[st]||"—"; }
+
+/* ---------- Guud: kaarka neon ---------- */
+function qtCard(){
+  const c=qtE("qtCard"); if(!c) return;
+  const s=(LASTD&&LASTD.data&&LASTD.data.qt)||null;
+  const m=qtE("qtMini"); if(!m) return;
+  if(!s){ m.innerHTML='<div><span>SCAN ALBAAB</span><b>—</b></div><div><span>QORSHE</span><b>—</b></div>'; return; }
+  const g=["OFF","DHEXE","ADAG"][s.scg]||"—";
+  m.innerHTML='<div><span>SCAN ALBAAB</span><b style="color:'+(s.scg?(s.sgok?"#7ff0b0":"#ffd27a"):"#9aa3ad")+'">'+g+(s.scg?(s.sgok?" · ON":" · SUG"):"")+'</b></div>'
+    +'<div><span>QORSHE TOOS</span><b style="color:'+(s.on?"#7cc8ff":"#9aa3ad")+'">'+(s.on?(s.wait+" sugaya"+(s.open?" · "+s.open+" furan":"")):"OFF")+'</b></div>';
+  const d=c.querySelectorAll(".dots i"); d.forEach((x,i)=>x.classList.toggle("on",i===(Math.floor(Date.now()/4000)%3)));
+}
+
+/* ---------- state ---------- */
+async function qtLoad(){
+  const d=await qtGet("/api/qt/state"); if(!d||!d.ok) return;
+  QT.st=d; QT.t=Date.now();
+  if(!QT.ed || !QT.dirty) QT.ed={on:d.cfg.on==null?1:d.cfg.on, md:d.cfg.md==null?1:d.cfg.md, max:d.cfg.max||5, h:d.cfg.h||8, risk:d.cfg.risk||0.5, day:d.cfg.day==null?3:d.cfg.day, draw:d.cfg.draw==null?1:d.cfg.draw, scg:d.cfg.scg==null?2:d.cfg.scg};
+  qtPaint();
+}
+function qtPaint(){
+  const d=QT.st; if(!d) return;
+  const p=qtE("qtPill"), on=d.cfg && d.cfg.on;
+  p.className="qtpill"+(on?" on":""); p.textContent=on?("QORSHE ON · "+(d.stats.wait||0)+" sugaya"):"QORSHE OFF";
+  const pn=qtE("qtPN"); const w=(d.stats.wait||0)+(d.stats.open||0); pn.hidden=!w; pn.textContent=w;
+  qtE("qtScT").textContent=d.scan_ts?("scan "+qtHM(d.scan_ts+0)+" · "+(d.scans||[]).length+" lammaane"):"—";
+  qtRows(); qtSG(); qtPlans(); qtSetPaint();
+}
+function qtSG(){
+  const s=(QT.st&&QT.st.sum)||{}, el=qtE("qtSG"); if(!el) return;
+  const g=["OFF","DHEXE","ADAG"][s.scg]; const sg=s.sg||[0,0,0];
+  el.innerHTML='<p class="qtk">🔍 SCAN ALBAAB · GRID TREND EMA <em>'+(g||"—")+'</em></p>'
+    +(s.scg?('<div class="qtch" style="margin-bottom:6px"><i class="'+(sg[0]>0?"u":(sg[0]<0?"d":""))+'">M15 '+qtAr(sg[0])+'</i><i class="'+(sg[1]>0?"u":(sg[1]<0?"d":""))+'">H1 '+qtAr(sg[1])+'</i>'
+      +(s.scg>=2?'<i class="'+(sg[2]>0?"u":(sg[2]<0?"d":""))+'">H4 '+qtAr(sg[2])+'</i>':'')+'</div>'
+      +'<b style="color:'+(s.sgok?"#7ff0b0":"#ffd27a")+'">'+(s.sgok?"✓ isku raac → BOT ON (grid cusub waa la oggol yahay)":"‖ khilaaf → SUG (grid cusub ma bilaabmo)")+'</b>')
+     :'<p class="qtnote" style="margin:0">Albaabku waa damman · grid-ku M15 oo keliya ayuu eegaa.</p>');
+}
+function qtRows(){
+  const L=(QT.st&&QT.st.scans)||[], box=qtE("qtRows"); if(!L.length) return;
+  const lv=QT.live?QT.live.list:[];
+  box.innerHTML=L.map(r=>{
+    const tr=r.tr||[0,0,0], cl=r.res===1?((tr[0]>0)?"b":"s"):"n";
+    const has=lv.some(x=>x.sym===r.sym);
+    return '<div class="qtrow'+(QT.sel===r.sym?" sel":"")+'" data-s="'+esc(r.sym)+'"><b>'+esc(r.sym)+(r.t8?"":' <small style="color:var(--ink3)">ⓘ</small>')+'</b>'
+      +'<div class="qtch">'+["M15","H1","H4"].map((n,i)=>'<i class="'+(tr[i]>0?"u":(tr[i]<0?"d":""))+'">'+n+" "+qtAr(tr[i])+'</i>').join("")+(has?'<i>📸</i>':'')+'</div>'
+      +'<span class="qtres '+cl+'">'+esc(r.txt||"—")+'</span></div>';
+  }).join("");
+}
+/* ---------- LIVE ---------- */
+async function qtScanNow(){
+  if(QT.busy) return;
+  const b=qtE("qtGo"); QT.busy=true; b.disabled=true; b.textContent="🔍 SCAN-gareynaya…";
+  const t0=Date.now()/1000; const r=await qtPost("/api/qt/scan",{});
+  if(!r.ok){ QT.busy=false; b.disabled=false; b.textContent="🔍 SCAN HADDA"; qtE("qtGoN").textContent=r.error||"Lama dirin."; return; }
+  QT.reqAt=r.at||t0; qtE("qtGoN").textContent="Amarka waa la diray · bot-ka (VPS) ayaa xogta soo diraya…";
+  let n=0;
+  const poll=async()=>{
+    n++; const d=await qtGet("/api/qt/live");
+    if(d && d.ok && d.ts>=QT.reqAt-1 && d.list && d.list.length){
+      QT.live=d; QT.busy=false; b.disabled=false; b.textContent="🔍 SCAN HADDA";
+      qtE("qtGoN").textContent="✓ "+d.list.length+" lammaane · "+qtHM(Math.floor(d.ts));
+      if(!QT.sel || !d.list.some(x=>x.sym===QT.sel)){ const t=d.list.find(x=>x.t8)||d.list[0]; QT.sel=t.sym; }
+      qtRows(); qtShowRes(); return; }
+    if(n>=22){ QT.busy=false; b.disabled=false; b.textContent="🔍 SCAN HADDA"; qtE("qtGoN").textContent="Bot-ku weli ma jawaabin (VPS / EA v72.3 hubi) · xogtii u dambeysay ayaa muuqata.";
+      if(d && d.ok && d.list && d.list.length){ QT.live=d; qtShowRes(); } return; }
+    setTimeout(poll,3000);
+  };
+  setTimeout(poll,4000);
+}
+function qtShowRes(){
+  const L=QT.live?QT.live.list:[]; const it=L.find(x=>x.sym===QT.sel); const box=qtE("qtRes");
+  if(!it || !it.f || !it.f.px){ box.hidden=true; return; }
+  box.hidden=false; const f=it.f, dg=it.dg;
+  qtE("qtRSym").textContent=it.sym+" · M15 · LIVE"+(it.t8?"":" · muuji kaliya");
+  qtE("qtRT").textContent=qtTm(it.srv);
+  qtLiveDraw(qtE("qtCv"),it);
+  const bt=qtE("qtBias"); bt.textContent=f.bias; bt.className="tag "+(f.bias==="BUY"?"b":(f.bias==="SELL"?"s":"n"));
+  qtE("qtBiasT").textContent=f.bias==="SUG"?"Trend-yadu isma raacsana · sug":("Trend "+(f.bias==="BUY"?"KOR":"HOOS")+(f.zone?(" · "+(f.bias==="BUY"?"support":"resistance")+" "+qtF(f.zone,dg)):""));
+  qtE("qtScore").textContent=f.score+" / "+(f.chk||[]).length; qtE("qtScoreB").style.width=Math.round(100*f.score/Math.max(1,(f.chk||[]).length))+"%";
+  const ss=f.sess||{};
+  qtE("qtChk").innerHTML=(f.chk||[]).map(c=>'<div><span>'+esc(c[0])+'</span><b class="'+(c[1]?"g":"r")+'">'+(c[1]?"✓":"✕")+'</b></div>').join("")
+    +'<div><span>Session hadda</span><b>'+esc(f.ses_now||"—")+'</b></div>'
+    +(ss.asia?'<div><span>🌏 Asia high / low</span><b>'+qtF(ss.asia[0],dg)+' / '+qtF(ss.asia[1],dg)+'</b></div>':'')
+    +(ss.lon?'<div><span>🇬🇧 London high / low</span><b>'+qtF(ss.lon[0],dg)+' / '+qtF(ss.lon[1],dg)+'</b></div>':'')
+    +(ss.ny?'<div><span>🇺🇸 NY high / low</span><b>'+qtF(ss.ny[0],dg)+' / '+qtF(ss.ny[1],dg)+'</b></div>':'')
+    +'<div><span>📅 Shalay (PDH / PDL)</span><b>'+qtF(f.pdh,dg)+' / '+qtF(f.pdl,dg)+'</b></div>';
+  const pc=qtE("qtPlanC");
+  if(f.plan){ pc.hidden=false; const p=f.plan;
+    qtE("qtLv").innerHTML='<div><span>ZONE</span><b style="color:#7cc8ff">'+qtF(p.lo,dg)+'–'+qtF(p.hi,dg)+'</b></div><div><span>SL</span><b style="color:#ff9a9d">'+qtF(p.sl,dg)+'</b></div><div><span>TP</span><b style="color:#7ff0b0">'+qtF(p.tp,dg)+'</b></div>';
+    qtE("qtRR").textContent="RR 1 : "+p.rr+" · gelitaan marka qiimuhu zone-ka yimaado + CHoCH M5 (QORSHE TOOS ayaa si toos ah u sameeya)";
+  } else pc.hidden=true;
+  qtE("qtAi").textContent=it.expl||"—"; qtE("qtAiSrc").textContent="xisaab dhab ah"; qtE("qtAiN").textContent=QT.live.ai?"":"Furaha AI lama dhigin · sharaxan waa xisaabta dhabta ah (sax).";
+}
+function qtCandles(g,W,H,b,lo,hi,x0,x1,y0,y1){
+  const N=b.length, X=i=>x0+(x1-x0)*(i+0.5)/N, Y=p=>y0+(y1-y0)*(hi-p)/(hi-lo);
+  const w=Math.max(1.2,(x1-x0)/N*0.32);
+  for(let i=0;i<N;i++){ const o=b[i][1],h=b[i][2],l=b[i][3],c=b[i][4], up=c>=o; g.strokeStyle=g.fillStyle=up?"#19c26b":"#e5484d"; const x=X(i);
+    g.lineWidth=1; g.beginPath(); g.moveTo(x,Y(h)); g.lineTo(x,Y(l)); g.stroke(); g.fillRect(x-w,Y(Math.max(o,c)),2*w,Math.max(1,Y(Math.min(o,c))-Y(Math.max(o,c)))); }
+  return [X,Y];
+}
+function qtGrid(g,W,H,lo,hi,y0,y1,dg,ax){
+  g.strokeStyle="#161c24"; g.fillStyle="#5d6773"; g.font="15px sans-serif"; g.lineWidth=1;
+  for(let k=0;k<5;k++){ const y=y0+(y1-y0)*k/4; g.beginPath(); g.moveTo(0,y); g.lineTo(W-ax,y); g.stroke(); g.fillText((hi-(hi-lo)*k/4).toFixed(dg>3?4:1),W-ax+6,y+5); }
+}
+function qtHL(g,x0,x1,y,col,txt,dash,tx){
+  g.strokeStyle=col; g.lineWidth=2; g.setLineDash(dash?[9,6]:[]); g.beginPath(); g.moveTo(x0,y); g.lineTo(x1,y); g.stroke(); g.setLineDash([]);
+  if(txt){ g.font="bold 14px sans-serif"; const w=g.measureText(txt).width; const xx=(tx==null)?x1-w-6:tx; g.fillStyle="rgba(10,13,17,.85)"; g.fillRect(xx-3,y-17,w+6,17); g.fillStyle=col; g.fillText(txt,xx,y-4); }
+}
+function qtLiveDraw(cv,it){
+  const g=cv.getContext("2d"), W=cv.width, H=cv.height, b=it.b||[], f=it.f, dg=it.dg, ax=86;
+  g.clearRect(0,0,W,H); g.fillStyle="#0a0d11"; g.fillRect(0,0,W,H); if(b.length<10) return;
+  let lo=Infinity, hi=-Infinity; b.forEach(x=>{ lo=Math.min(lo,x[3]); hi=Math.max(hi,x[2]); });
+  if(f.plan){ lo=Math.min(lo,f.plan.sl); hi=Math.max(hi,f.plan.tp); }
+  const pad=(hi-lo)*0.04; lo-=pad; hi+=pad;
+  qtGrid(g,W,H,lo,hi,10,H-10,dg,ax);
+  const N=b.length, X=i=>8+(W-ax-16)*(i+0.5)/N, Y=p=>10+(H-20)*(hi-p)/(hi-lo);
+  const day=Math.floor(b[N-1][0]/86400);
+  [["ASIA",3,10,"#a78bfa"],["LONDON",10,15,"#1ea7ff"],["NY",15,23,"#fab219"]].forEach(s=>{
+    const ix=[]; b.forEach((x,i)=>{ const h=Math.floor((x[0]%86400)/3600); if(Math.floor(x[0]/86400)===day && h>=s[1] && h<s[2]) ix.push(i); });
+    if(ix.length<2) return; let h1=-Infinity,l1=Infinity; ix.forEach(i=>{ h1=Math.max(h1,b[i][2]); l1=Math.min(l1,b[i][3]); });
+    g.strokeStyle=s[3]; g.lineWidth=1.5; g.strokeRect(X(ix[0])-3,Y(h1),X(ix[ix.length-1])-X(ix[0])+6,Y(l1)-Y(h1)); g.fillStyle=s[3]; g.font="bold 12px sans-serif"; g.fillText(s[0],X(ix[0])+2,Y(h1)-4); });
+  if(f.pdh){ qtHL(g,8,W-ax,Y(f.pdh),"#22d3ee","PDH "+qtF(f.pdh,dg),true,12); qtHL(g,8,W-ax,Y(f.pdl),"#22d3ee","PDL "+qtF(f.pdl,dg),true,12); }
+  const e20=f.e20||[], e50=f.e50||[], off=N-e20.length;
+  [[e20,"#fab219"],[e50,"#a78bfa"]].forEach(a=>{ g.strokeStyle=a[1]; g.lineWidth=2; g.beginPath(); a[0].forEach((v,i)=>{ const x=X(i+off), y=Y(v); i?g.lineTo(x,y):g.moveTo(x,y); }); g.stroke(); });
+  qtCandles(g,W,H,b,lo,hi,8,W-ax-8,10,H-10);
+  const zs=it.f&&f.zone?f.zone:0;
+  if(f.plan){ const p=f.plan, x0=X(N-12);
+    g.fillStyle=(f.bias==="BUY")?"rgba(25,194,107,.2)":"rgba(229,72,77,.2)"; g.strokeStyle=(f.bias==="BUY")?"#19c26b":"#e5484d"; g.lineWidth=2;
+    g.fillRect(x0,Y(p.hi),W-ax-x0,Y(p.lo)-Y(p.hi)); g.strokeRect(x0,Y(p.hi),W-ax-x0,Y(p.lo)-Y(p.hi));
+    qtHL(g,x0,W-ax,Y(p.sl),"#e5484d","SL "+qtF(p.sl,dg),true); qtHL(g,x0,W-ax,Y(p.tp),"#19c26b","TP "+qtF(p.tp,dg),true); }
+  else if(zs){ qtHL(g,8,W-ax,Y(zs),"#7cc8ff","zone "+qtF(zs,dg),false); }
+  g.font="bold 13px sans-serif"; g.fillStyle="#fab219"; g.fillText("EMA20",14,H-16); g.fillStyle="#a78bfa"; g.fillText("EMA50",76,H-16);
+}
+async function qtAiNow(){
+  const b=qtE("qtAiB"); if(!QT.sel) return; b.disabled=true; b.textContent="🤖 …";
+  const d=await qtPost("/api/qt/ai",{sym:QT.sel}); b.disabled=false; b.textContent="🤖 AI sharax";
+  if(!d.ok){ qtE("qtAiN").textContent=d.error||"Khalad"; return; }
+  qtE("qtAi").textContent=d.text||"—"; qtE("qtAiSrc").textContent=d.src==="AI"?"🤖 AI":"xisaab dhab ah"; qtE("qtAiN").textContent=d.note||"";
+}
+/* ---------- SAWIR ---------- */
+function qtFile(ev){
+  const f=ev.target.files&&ev.target.files[0]; if(!f) return;
+  const rd=new FileReader();
+  rd.onload=()=>{ const im=new Image(); im.onload=()=>{ const m=1280, k=Math.min(1,m/Math.max(im.width,im.height)); const c=document.createElement("canvas"); c.width=Math.round(im.width*k); c.height=Math.round(im.height*k);
+      c.getContext("2d").drawImage(im,0,0,c.width,c.height); QT.shot=c.toDataURL("image/jpeg",0.85); const v=qtE("qtImg"); v.src=QT.shot; v.hidden=false; qtE("qtShotGo").disabled=false; qtE("qtFileT").textContent=f.name; };
+    im.src=rd.result; };
+  rd.readAsDataURL(f);
+}
+async function qtShotGo(){
+  if(!QT.shot) return; const b=qtE("qtShotGo"); b.disabled=true; b.textContent="🤖 akhrinaya…";
+  const d=await qtPost("/api/qt/photo",{img:QT.shot}); b.disabled=false; b.textContent="🤖 AKHRI SAWIRKA";
+  const box=qtE("qtShotRes"); box.hidden=false;
+  if(!d.ok){ box.innerHTML='<p class="qtk" style="color:#ff9a9d">LAMA AKHRIN</p><p>'+esc(d.error||"Khalad")+'</p>'; return; }
+  if(d.raw){ box.innerHTML='<p class="qtk" style="color:#ffd27a">AI WUXUU KA AKHRIYAY SAWIRKA</p><p class="qtai">'+esc(d.raw)+'</p>'; return; }
+  const r=d.res||{};
+  box.innerHTML='<p class="qtk" style="color:#ffd27a">AI WUXUU KA AKHRIYAY SAWIRKA <em>qiyaas</em></p><div class="qttb">'
+    +'<div><span>Lammaane · TF</span><b>'+esc((r.sym||"—")+" · "+(r.tf||"—"))+'</b></div><div><span>Jihada</span><b>'+esc(r.trend||"—")+'</b></div>'
+    +'<div><span>Go&#39;aan</span><b>'+esc(r.bias||"—")+'</b></div><div><span>Kalsooni</span><b class="a">'+esc(r.conf||"—")+'</b></div>'
+    +(r.levels||[]).map(l=>'<div><span>'+esc(l.type||"")+'</span><b>'+(l.price?esc(String(l.price)):"—")+' <small>(±)</small></b></div>').join("")
+    +'</div><p class="qtai" style="margin-top:8px">'+esc(r.notes||"")+'</p><p class="qtnote">Sawirku xog dhab ah ma laha → heerarka ku xaqiiji LIVE.</p>';
+}
+/* ---------- QORSHE ---------- */
+function qtPlans(){
+  const d=QT.st; if(!d) return; const s=d.stats||{};
+  qtE("qtStats").innerHTML='<div><span>QORSHE</span><b>'+(s.n||0)+'</b></div><div><span>TRADE</span><b>'+(s.tr||0)+'</b></div><div><span>GUUL</span><b>'+(s.tr?(s.wr+"%"):"—")+'</b></div>'
+    +'<div><span>R WADAR</span><b style="color:'+((s.R||0)>=0?"#7ff0b0":"#ff9a9d")+'">'+(s.tr?((s.R>0?"+":"")+Number(s.R).toFixed(1)):"—")+'</b></div>';
+  const L=d.plans||[], box=qtE("qtPlans");
+  if(!L.length){ box.innerHTML='<div class="card"><p class="qtnote" style="margin:0">Qorshe weli ma jiro. EA v72.3 (QORSHE TOOS ON) ayaa M15 kasta scan gareeya · London / NY.</p></div>'; return; }
+  box.innerHTML=L.slice(0,40).map(p=>{ const dg=p.dg, b=p.s>0;
+    return '<div class="qtpl" data-p="'+p.id+'"><div class="hd"><b>#'+p.id+' · '+esc(p.sym)+' · <span style="color:'+(b?"#7ff0b0":"#ff9a9d")+'">'+(b?"BUY":"SELL")+'</span>'+(p.tr8?"":' <small style="color:var(--ink3)">ⓘ muuji</small>')+'</b>'
+      +'<span class="'+qtStC(p.st)+'">'+qtStN(p.st)+((p.st===3||p.st===4||p.st===8)&&p.tE?(" "+(p.r>0?"+":"")+Number(p.r).toFixed(1)+"R"):"")+'</span></div>'
+      +'<div class="ln"><span>zone '+qtF(p.lo,dg)+'–'+qtF(p.hi,dg)+'</span><span style="color:#ff9a9d">SL '+qtF(p.sl,dg)+'</span><span style="color:#7ff0b0">TP '+qtF(p.tp,dg)+'</span><span>'+qtTm(p.t)+'</span></div></div>'; }).join("");
+}
+function qtSnapDraw(cv,sn,kind,full){
+  const g=cv.getContext("2d"), W=cv.width, H=cv.height; g.clearRect(0,0,W,H); g.fillStyle="#0a0d11"; g.fillRect(0,0,W,H);
+  if(!sn || !sn.b || sn.b.length<3){ g.fillStyle="#5d6773"; g.font=(full?"bold 22px":"bold 18px")+" sans-serif"; g.fillText(kind==="scan"?"sawir ma jiro":"weli ma dhicin",W/2-80,H/2); return; }
+  const p=sn.p||{}, b=sn.b, dg=sn.dg, ax=full?86:4;
+  let lo=Infinity, hi=-Infinity; b.forEach(x=>{ lo=Math.min(lo,x[3]); hi=Math.max(hi,x[2]); }); [p.sl,p.tp,p.eSL,p.eTP].forEach(v=>{ if(v){ lo=Math.min(lo,v); hi=Math.max(hi,v); } });
+  const pad=(hi-lo)*0.05; lo-=pad; hi+=pad;
+  if(full) qtGrid(g,W,H,lo,hi,8,H-8,dg,ax);
+  const N=b.length, x1=W-ax-4, X=i=>4+(x1-4)*(i+0.5)/N, Y=v=>8+(H-16)*(hi-v)/(hi-lo);
+  const ti=t=>{ let k=0; for(let i=0;i<N;i++){ if(b[i][0]<=t) k=i; } return k; };
+  const xs=X(ti(p.t||b[0][0]));
+  g.fillStyle=p.s>0?"rgba(25,194,107,.2)":"rgba(229,72,77,.2)"; g.strokeStyle=p.s>0?"#19c26b":"#e5484d"; g.lineWidth=full?2:1;
+  g.fillRect(xs,Y(p.hi),x1-xs,Y(p.lo)-Y(p.hi)); g.strokeRect(xs,Y(p.hi),x1-xs,Y(p.lo)-Y(p.hi));
+  const slv=(kind!=="scan"&&p.eSL)?p.eSL:p.sl, tpv=(kind!=="scan"&&p.eTP)?p.eTP:p.tp;
+  qtHL(g,xs,x1,Y(slv),"#e5484d",full?("SL "+qtF(slv,dg)):"",true); qtHL(g,xs,x1,Y(tpv),"#19c26b",full?("TP "+qtF(tpv,dg)):"",true);
+  g.strokeStyle="#a78bfa"; g.lineWidth=full?2:1; g.beginPath(); g.moveTo(xs,0); g.lineTo(xs,H); g.stroke();
+  qtCandles(g,W,H,b,lo,hi,4,x1,8,H-8);
+  if(kind!=="scan" && p.tT){ const x=X(ti(p.tT)); g.strokeStyle="#ffd27a"; g.lineWidth=full?3:1.5; g.beginPath(); g.arc(x,Y(p.ext||p.ent),full?10:4,0,7); g.stroke(); }
+  if(kind!=="scan" && p.tE && p.eP){ const x=X(ti(p.tE)); qtHL(g,x,x1,Y(p.eP),"#1ea7ff",full?((p.s>0?"BUY ":"SELL ")+qtF(p.eP,dg)):"",false,full?x+10:null); g.strokeStyle="#fff"; g.lineWidth=full?3:1.5; g.beginPath(); g.arc(x,Y(p.eP),full?9:3.5,0,7); g.stroke(); }
+  if(kind==="exit" && p.tX && p.xP){ const x=X(ti(p.tX)); g.fillStyle=p.r>0?"#19c26b":"#e5484d"; g.beginPath(); g.arc(x,Y(p.xP),full?10:4,0,7); g.fill();
+    if(full){ g.font="bold 24px sans-serif"; g.fillText(qtStN(p.st)+" "+(p.r>0?"+":"")+Number(p.r).toFixed(1)+"R",Math.max(10,x-220),Y(p.xP)+(p.r>0?-18:34)); } }
+  if(full){ g.fillStyle="#a78bfa"; g.font="bold 13px sans-serif"; g.fillText("scan "+qtHM(p.t),Math.max(4,xs-86),20); }
+}
+async function qtOpen(pid){
+  const d=await qtGet("/api/qt/plan/"+pid); if(!d||!d.ok) return; QT.pl=d;
+  const p=d.plan, dg=p.dg, b=p.s>0, sn=d.snaps||{}, tr=p.tr||[0,0,0];
+  const sh=qtE("qtSheet");
+  const rows=[["Waqti scan",qtTm(p.t)],["Lammaane",esc(p.sym)+(p.tr8?"":" · muuji kaliya")],["Trend M15 · H1 · H4",'<span class="'+(tr[0]>0?"g":"r")+'">'+qtAr(tr[0])+" "+qtAr(tr[1])+" "+qtAr(tr[2])+'</span>'],
+    ["Xeelad","SR "+(b?"demand":"supply")+" (pivot M15) · "+(p.md?"XAQIIJIN · CHoCH M5":"TOOS")],["Zone",qtF(p.lo,dg)+" – "+qtF(p.hi,dg)],
+    ["SL (qorshe)",'<span class="r">'+qtF(p.sl,dg)+'</span>'],["TP",'<span class="g">'+qtF(p.tp,dg)+'</span>'],["Ansax ilaa",qtTm(p.exp)],["Xaalad",'<span class="'+qtStC(p.st)+'">'+qtStN(p.st)+'</span>'+(p.why?(" · "+esc(p.why)):"")]];
+  const ok='<b class="g">✓</b>';
+  const ent=!!(p.tE&&p.eP);
+  const inz=p.tT?(b?(p.ext<=p.hi+1e-9):(p.ext>=p.lo-1e-9)):false;
+  const cmp=[["","SCAN ①","GELITAAN ②",""],
+    ["Zone",qtF(p.lo,dg)+"–"+qtF(p.hi,dg),p.tT?("taabtay "+qtF(p.ext,dg)):"—",p.tT?(inz?ok:'<b class="r">✕</b>'):""],
+    ["Jiho",b?"BUY":"SELL",ent?((b?"BUY ":"SELL ")+qtF(p.eP,dg)):"—",ent?ok:""],
+    ["TP",qtF(p.tp,dg),ent?qtF(p.eTP,dg):"—",ent?(Math.abs(p.eTP-p.tp)<1e-6?ok:'<b class="b">↔</b>'):""],
+    ["SL",qtF(p.sl,dg),ent?(qtF(p.eSL,dg)+(Math.abs(p.eSL-p.sl)>1e-6?" (adkeeyay)":"")):"—",ent?(Math.abs(p.eSL-p.sl)>1e-6?'<b class="b">↑</b>':ok):""],
+    ["Waqti",qtHM(p.t),ent?(qtHM(p.tE)+" ("+Math.round((p.tE-p.t)/60)+" daq)"):"—",ent?((p.tE-p.t)<=(p.exp-p.t)?ok:""):""],
+    ["Trend",qtAr(tr[0])+qtAr(tr[1])+qtAr(tr[2]),ent?(qtAr(tr[0])+qtAr(tr[1])+qtAr(tr[2])):"—",ent?ok:""]];
+  const T=d.trade;
+  sh.innerHTML='<div class="hd"><h3>#'+p.id+' · '+esc(p.sym)+' · <span style="color:'+(b?"#7ff0b0":"#ff9a9d")+'">'+(b?"BUY":"SELL")+'</span></h3><button type="button" class="qtx" id="qtShX">✕</button></div>'
+    +'<div class="card"><p class="qtk">🔍 XOGTA SCAN-KA <em>la kaydiyay</em></p><div class="qttb">'+rows.map(r=>'<div><span>'+r[0]+'</span><b>'+r[1]+'</b></div>').join("")+'</div></div>'
+    +'<div class="card"><p class="qtk">📸 SAWIRRADA KAYDSAN</p><div class="qtths">'
+    +[["scan","① SCAN",p.t],["entry","② GELITAAN",p.tE],["exit","③ XIDH",p.tX]].map(k=>'<div class="qtth'+(sn[k[0]]?"":" na")+'" data-k="'+k[0]+'"><canvas width="300" height="230"></canvas><div class="tl"><span>'+k[1]+'</span><span>'+qtHM(k[2])+'</span></div></div>').join("")
+    +'</div></div>'
+    +'<div class="card"><p class="qtk">✅ ISBARBARDHIG · SCAN ↔ GELITAAN</p><div class="qtcmp">'+cmp.map(r=>'<div><span>'+r[0]+'</span><b>'+r[1]+'</b><b>'+r[2]+'</b>'+r[3]+'</div>').join("")+'</div></div>'
+    +(T?('<div class="card"><p class="qtk">☰ TRADE-KA (Journal)</p><div class="qttb"><div><span>Ticket</span><b>#'+esc(String(T.tk))+'</b></div><div><span>Lot</span><b>'+Number(T.lot||0).toFixed(2)+'</b></div>'
+      +'<div><span>Gelitaan → xidh</span><b>'+esc(String(T.entry))+' → '+esc(String(T.exitp))+'</b></div><div><span>Faa&#39;iido</span><b class="'+(Number(T.profit)>=0?"g":"r")+'">'+j2M(T.profit)+'</b></div></div></div>'):'')
+    +((p.st===0||p.st===1)&&QT.st&&QT.st.can?'<button type="button" class="qtsm" id="qtCan" style="border-color:#e5484d;color:#ffb3b5;background:rgba(229,72,77,.12)">✕ Jooji qorshahan</button>':'');
+  sh.hidden=false;
+  sh.querySelectorAll(".qtth").forEach(el=>{ const k=el.dataset.k; qtSnapDraw(el.querySelector("canvas"),sn[k],k,false);
+    if(sn[k]) el.addEventListener("click",()=>qtFull(k)); });
+  qtE("qtShX").addEventListener("click",()=>{ sh.hidden=true; });
+  const cb=qtE("qtCan"); if(cb) cb.addEventListener("click",async()=>{ cb.disabled=true; const r=await qtPost("/api/qt/cancel",{pid:p.id}); cb.textContent=r.ok?"✓ amarka waa la diray":(r.error||"Khalad"); setTimeout(qtLoad,4000); });
+}
+function qtFull(k){
+  const d=QT.pl; if(!d) return; const sn=(d.snaps||{})[k]; if(!sn) return; const p=sn.p||{}, dg=sn.dg;
+  const t={scan:"① SCAN · "+qtHM(p.t),entry:"② GELITAAN · "+qtHM(p.tE),exit:"③ XIDH · "+qtHM(p.tX)}[k];
+  const n={scan:"Sawirka scan-ka: zone + SL + TP ayaa horay loo calaamadeeyay — qiimuhu weli ma iman.",
+    entry:(p.tE?("Qiimuhu zone-kii buu yimid (taabtay "+qtF(p.ext,dg)+") → "+(p.md?"CHoCH M5 → ":"")+(p.s>0?"BUY ":"SELL ")+qtF(p.eP,dg)+" · SL "+qtF(p.eSL,dg)):("Gelitaan ma dhicin · "+(p.why||""))),
+    exit:qtStN(p.st)+" · "+(p.r>0?"+":"")+Number(p.r||0).toFixed(2)+"R · xidh "+qtF(p.xP,dg)}[k];
+  const f=qtE("qtFull"); f.hidden=false; qtE("qtFH").textContent=t; qtE("qtFN").textContent=n; qtSnapDraw(qtE("qtFC"),sn,k,true);
+}
+/* ---------- SITIN ---------- */
+function qtSetPaint(){
+  const e=QT.ed; if(!e) return;
+  document.querySelectorAll("#qtVSet .qtopt").forEach(o=>o.classList.toggle("on",Number(o.dataset.g)===e.scg));
+  qtE("qtSwOn").classList.toggle("on",!!e.on); qtE("qtSwDr").classList.toggle("on",!!e.draw);
+  qtE("qtMd").querySelectorAll("button").forEach(b=>b.classList.toggle("on",Number(b.dataset.v)===e.md));
+  document.querySelectorAll("#qtVSet .qtstp").forEach(s=>{ const k=s.dataset.k; s.querySelector("b").textContent=(k==="risk")?(Number(e[k]).toFixed(1)+"%"):(k==="h"?(e[k]+" saac"):String(e[k])); });
+  const c=(QT.st&&QT.st.cfg)||{}; qtE("qtTrd").textContent="Trade: "+(c.trade||"XAUUSD")+" · qorshe cusub: saacadda server-ka "+(c.s0||9)+"–"+(c.s1||21)+(c.ver?(" · EA v"+c.ver):" · EA v72.3 weli xog ma soo dirin");
+}
+async function qtSave(){
+  const e=QT.ed, b=qtE("qtSave"); if(!e) return; b.disabled=true;
+  const values={SCG:e.scg,QTON:e.on?1:0,QTMODE:e.md,QTMAX:e.max,QTH:e.h,QTRISK:Number(e.risk).toFixed(2),QTDAY:e.day,QTDRAW:e.draw?1:0};
+  const body={values:values}; if(accSel) body.account=accSel.value;
+  let err=""; try{ const r=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); const d=await r.json(); if(!d.ok) err=d.error||"Lama kaydin."; }catch(x){ err="Internet ma jiro."; }
+  b.disabled=false; qtE("qtSaveN").textContent=err||"✓ La kaydiyay · bot-ku 20 ilbiriqsi gudahood ayuu qaadanayaa."; if(!err) QT.dirty=false;
+}
+/* ---------- view ---------- */
+function qtView(v){
+  QT.view=v; qtE("qtSeg").querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.dataset.v===v));
+  qtE("qtVScan").hidden=(v!=="scan"); qtE("qtVPlan").hidden=(v!=="plan"); qtE("qtVSet").hidden=(v!=="set");
+}
+function qtModeSet(m){
+  QT.mode=m; qtE("qtMode").querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.dataset.m===m));
+  qtE("qtLiveBox").hidden=(m!=="live"); qtE("qtShotBox").hidden=(m!=="shot");
+}
+(function(){
+  if(!qtE("pScan")) return;
+  const c=qtE("qtCard"); if(c){ c.addEventListener("click",()=>tab("Scan")); c.addEventListener("keydown",e=>{ if(e.key==="Enter") tab("Scan"); }); }
+  qtE("qtSeg").addEventListener("click",e=>{ const b=e.target.closest("button"); if(b) qtView(b.dataset.v); });
+  qtE("qtMode").addEventListener("click",e=>{ const b=e.target.closest("button"); if(b) qtModeSet(b.dataset.m); });
+  qtE("qtGo").addEventListener("click",qtScanNow);
+  qtE("qtAiB").addEventListener("click",qtAiNow);
+  qtE("qtRows").addEventListener("click",async e=>{ const r=e.target.closest(".qtrow"); if(!r) return; QT.sel=r.dataset.s; qtRows();
+    if(!QT.live || !QT.live.list.some(x=>x.sym===QT.sel)){ const d=await qtGet("/api/qt/live"); if(d && d.ok && d.list && d.list.length) QT.live=d; }   /* xogtii u dambeysay (scan M15 toos ah) */
+    if(QT.live && QT.live.list.some(x=>x.sym===QT.sel)){ qtShowRes(); qtE("qtGoN").textContent="xogta: "+qtHM(Math.floor(QT.live.ts))+" · cusub: riix 🔍 SCAN HADDA"; }
+    else { qtE("qtRes").hidden=true; qtE("qtGoN").textContent=QT.sel+": riix 🔍 SCAN HADDA si aad u aragto chart-ka iyo sharaxa."; } });
+  qtE("qtFile").addEventListener("change",qtFile);
+  qtE("qtShotGo").addEventListener("click",qtShotGo);
+  qtE("qtPlans").addEventListener("click",e=>{ const r=e.target.closest(".qtpl"); if(r) qtOpen(Number(r.dataset.p)); });
+  qtE("qtFX").addEventListener("click",()=>{ qtE("qtFull").hidden=true; });
+  document.querySelectorAll("#qtVSet .qtopt").forEach(o=>o.addEventListener("click",()=>{ if(!QT.ed) return; QT.ed.scg=Number(o.dataset.g); QT.dirty=true; qtSetPaint(); }));
+  qtE("qtSwOn").addEventListener("click",()=>{ if(!QT.ed) return; QT.ed.on=QT.ed.on?0:1; QT.dirty=true; qtSetPaint(); });
+  qtE("qtSwDr").addEventListener("click",()=>{ if(!QT.ed) return; QT.ed.draw=QT.ed.draw?0:1; QT.dirty=true; qtSetPaint(); });
+  qtE("qtMd").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b||!QT.ed) return; QT.ed.md=Number(b.dataset.v); QT.dirty=true; qtSetPaint(); });
+  document.querySelectorAll("#qtVSet .qtstp").forEach(s=>{ const bs=s.querySelectorAll("button");
+    const step=(dir)=>{ if(!QT.ed) return; const k=s.dataset.k, lo=Number(s.dataset.lo), hi=Number(s.dataset.hi), st=Number(s.dataset.st);
+      QT.ed[k]=Math.round(Math.max(lo,Math.min(hi,Number(QT.ed[k])+dir*st))*10)/10; QT.dirty=true; qtSetPaint(); };
+    bs[0].addEventListener("click",()=>step(-1)); bs[1].addEventListener("click",()=>step(1)); });
+  qtE("qtSave").addEventListener("click",qtSave);
+  const tr=qtE("j2Tr"); if(tr) tr.addEventListener("click",e=>{ const r=e.target.closest("[data-qt]"); if(!r) return;
+    const a=r.dataset.qt.split("|"), ot=Number(a[0]), sy=a[1];
+    const go=()=>{ const L=(QT.st&&QT.st.plans)||[]; const p=L.find(x=>x.sym===sy && x.tE && Math.abs(x.tE-ot)<=180); if(p){ tab("Scan"); qtView("plan"); qtOpen(p.id); } };
+    if(QT.st) go(); else qtLoad().then(go); });
+  setInterval(()=>{ qtCard(); const on=qtE("pScan").classList.contains("on"); if(on && Date.now()-QT.t>15000) qtLoad(); },5000);
+  setTimeout(qtCard,1500);
 })();
 </script></body></html>"""
 
