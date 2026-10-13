@@ -20,6 +20,8 @@ Web (session auth):
   /login /register /logout /dashboard /admin
   GET  /api/state         -> xogta account-ka user-ka
   POST /api/command       -> amar loo diro EA-da
+  v13.25: ⚡ BINARY FIX: Deriv API cusub (PAT + OTP · options/ws) wuxuu diiday buy-ga ("Input validation failed: parameters") ->
+          parameters.underlying_symbol (API cusub) · symbol (legacy) · buy="1" (string, schema) · khaladkaas -> si toos ah u beddel oo isku day
   v13.24: 🤖 BINARY · DBOT TICK (sida dbot.deriv.com): Synthetic 24/7 (Volatility 10 1s · 10 · 25 · 75 · 100) · OVER (barrier) ·
           DIFFERS · RISE/FALL · 1–5 tick · khasaare kadib: RECOVERY / ×1.5 / ×2 / ×2.5 / OFF · lakab xad · TP / SL wareeg ·
           kaar: Total stake · payout · runs · won · lost · P/L · digit-yada · ilaalin: stake ≤ 5% balance · DEMO · REAL = 300 DBOT + P/L ≥ 0
@@ -4965,6 +4967,7 @@ class _BinWorker:
         with db() as con:
             ul = _bin_unlock(_bin_hist(con, self.acc), self.cfg.get("eng") or "rsi")
         self.ws, acct = _bin_open(token, self.cfg.get("app") or BIN_APP_ENV, self.cfg.get("api") or "legacy", self.cfg.get("mode"), ul["ok"])
+        self.symk = "underlying_symbol" if (self.cfg.get("api") or "legacy") == "new" else "symbol"   # v13.25: API cusub
         ws = self.ws
         self.sym_api = sym
         self.tick_mode = False
@@ -5094,6 +5097,12 @@ class _BinWorker:
             msg = "Deriv: " + str(err.get("message") or err.get("code") or "khalad")[:150]   # v13.24
             if mt == "buy":
                 self.err_t = now
+                em = str(err.get("message") or "")
+                if "validation" in em.lower() and "parameters" in em.lower() and not getattr(self, "symsw", False):
+                    self.symsw = True                     # v13.25: API-ga kale -> furaha kale
+                    self.symk = "symbol" if getattr(self, "symk", "symbol") == "underlying_symbol" else "underlying_symbol"
+                    self.err_t = now - 4
+                    log.warning("binary %s: buy parameters -> %s", self.acc, self.symk)
                 if getattr(self, "dbot", False):
                     self.st.update(st="ERR", why=msg)
             self.st["err"] = msg
@@ -5209,7 +5218,7 @@ class _BinWorker:
             pass
         ct = c.get("ct") or "OVER"
         dur = int(c.get("dur") or 1)
-        par = {"amount": stake, "basis": "stake", "currency": acct.get("cur") or "USD", "duration": dur, "duration_unit": "t", "symbol": self.sym_api}
+        par = {"amount": stake, "basis": "stake", "currency": acct.get("cur") or "USD", "duration": dur, "duration_unit": "t", getattr(self, "symk", "symbol"): self.sym_api}
         bar = None
         if ct == "RF":
             par["contract_type"] = "CALL" if d > 0 else "PUT"
@@ -5224,7 +5233,7 @@ class _BinWorker:
                           "te": int(now) + dur * 2 + 6, "stake": stake, "pay": None, "id": None}
         lbl = ("RISE" if d > 0 else "FALL") if ct == "RF" else (("OVER %d" % bar) if ct == "OVER" else ("DIFFERS %d" % bar))
         self.st.update(st="RUN", why="DBOT · " + lbl + " · $%.2f" % stake + (" · lakab %d" % dbs.get("step") if dbs.get("step") else ""))
-        self.ws.send({"buy": 1, "price": stake, "req_id": self.nid(), "parameters": par})
+        self.ws.send({"buy": "1", "price": stake, "req_id": self.nid(), "parameters": par})
         self.save(True)
 
     def dbot_after(self, it):
@@ -5317,10 +5326,10 @@ class _BinWorker:
         self.st["cur"] = {"d": d, "rsi": round(r, 1), "en": self.closes[ks[-1]], "t0": int(now), "te": int(now) + 60 * int(c["exp"]),
                           "stake": stake, "pay": None, "id": None}
         self.st.update(st="RUN", why=("RISE" if d > 0 else "FALL") + " · RSI %.0f" % r)
-        self.ws.send({"buy": 1, "price": stake, "req_id": self.nid(),
+        self.ws.send({"buy": "1", "price": stake, "req_id": self.nid(),
                       "parameters": {"amount": stake, "basis": "stake", "contract_type": "CALL" if d > 0 else "PUT",
                                      "currency": acct.get("cur") or "USD", "duration": int(c["exp"]), "duration_unit": "m",
-                                     "symbol": sym}})
+                                     getattr(self, "symk", "symbol"): sym}})
         self.save(True)
 
 
