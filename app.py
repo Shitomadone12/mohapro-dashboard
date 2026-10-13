@@ -22,7 +22,8 @@ Web (session auth):
   POST /api/command       -> amar loo diro EA-da
   v13.23: 🧩 XEELAD KASTA = KAAR (sida CHART SCANNER): Guud · CORE 1 (TICK · GOLD BASKET · GRID) · CORE 2 (SR/SD · SMC · SCANNER) ·
           kaar kasta 3 bog (xaalad · trade furan · sitin degdeg) · ▌ shid/dami · riix → bogga xeeladda: sitin (badhamo waaweyn) +
-          maamulka hadda + trade-yada + ✕ xidh + KAYDI & DIR · /api/state cstat.s (xeelad kasta: maanta · 30 maalin · PF · win)
+          maamulka hadda + trade-yada + ✕ xidh + KAYDI & DIR · /api/state cstat.s (xeelad kasta: maanta · 30 maalin · PF · win) ·
+          💰 BALANCE = kaar (balance · equity · maanta · float · wadar · win · DD) · SABABTA HADDA → bogga SR/SD + SMC
   v13.22: ⇅ LABADA CORE (EA v72.9): LABADA CORE waxaa lagu beddelay grid labada dhinac (MOHA Grid Core v2 · la hagaajiyay) ·
           BUY + SELL basket · TP + trail · qayb-xidh · basket SL · trend-stop · range kaliya (ADX) · equity HALT · app: kaadh + sitin · 🧭 TREND EMA sidiisa
   v13.21: 🌍 FOREX + DAHAB (EA v72.8): magaca broker-ka si toos ah · lammaane kasta TRADE / MUUJI (default MUUJI · tijaabo 10 sano) ·
@@ -9769,6 +9770,12 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
 .xksave button:disabled{background:var(--surface);border-color:var(--line);color:var(--ink3)}
 .xksave small{display:block;text-align:center;font-size:11.5px;color:var(--ink3);margin-top:6px}
 body.xkon{overflow:hidden}
+#xkBal{margin:4px 0 6px}
+.xknc.xkbal .tx b.xkbv{font-size:26px;letter-spacing:.02em}
+.xknc.xkbal .tx small{color:#7d8a86}
+.xknc span.go{pointer-events:none}
+#xkAl{border:1px solid #7a1f23;background:rgba(229,72,77,.12);border-radius:16px;padding:11px 13px;margin:6px 0 4px;color:#ffb3b5;font-size:12.5px;line-height:1.45}
+#xkAl b{display:block;font-size:13.5px;color:#ff8a90}#xkAl p{margin:4px 0 0;color:#ffd0d2}
 </style></head><body>
 
 <div class="offban" id="offBan" hidden><b id="offBanT">KHADKA WAA GO'AY · DAAWASHO OO KELIYA</b><small id="offBanS">—</small></div>   <!-- v13.5: 📴 -->
@@ -9825,6 +9832,8 @@ body.xkon{overflow:hidden}
     <!-- v12.22 (EA v70.8): 💱 LAMAANAHA -->
     <div class="prstrip" id="prStrip" hidden role="tablist" aria-label="Lamaanaha"></div>
     <div class="prflt" id="prFlt" hidden><span>💱 <b id="prFltS">—</b> oo keliya · Trade-yada</span><button type="button" id="prFltX">✕ Dhammaan</button></div>
+    <div id="xkAl" hidden></div>   <!-- v13.23: ⚠ SABABTA digniin -->
+    <div id="xkBal"></div>   <!-- v13.23: 💰 BALANCE · kaar -->
     <div class="ggrid">   <!-- v13.1: balance · faa'iido (SHIDAN hoostiisa) -->
       <div class="tile"><div class="k">Balance</div><div class="v neu" id="bal">—</div></div>
       <div class="tile"><div class="k">Equity</div><div class="v neu" id="eq">—</div></div>
@@ -11298,6 +11307,7 @@ function paint(d){
   $("#fl").textContent=(flo>0?"+":"")+money(flo); $("#fl").className="v "+cls(flo);
   const all=p+flo;
   $("#tot").textContent=(all>0?"+":"")+money(all); $("#tot").className="v "+cls(all);
+  try{ xkBal(d,flo,openAll.length); }catch(e){ console.error(e); }   // v13.23: 💰 BALANCE kaar
 
   HIST=d.history||[];
   drawChart();
@@ -16778,9 +16788,10 @@ function xkTilesHtml(k){ return '<div class="xkqm">'+XKS[k].tiles().map(a=>'<div
 function xkSetHtml(id,h){ if(XK.html[id]===h) return; XK.html[id]=h; const e=$("#"+id); if(e) e.innerHTML=h; }
 function xkInit(){
   if(XK.init) return; XK.init=true;
-  const hold=$("#xkHold"), box=$("#xkBox"), rs=$("#rsnCard");
-  if(rs && rs.parentNode){ const ph=document.createElement("i"); ph.id="xkRsnPh"; ph.hidden=true; rs.parentNode.insertBefore(ph,rs); }
-  ["coreBox","tkCard","bskCard","grCard","znCard","asCard"].forEach(id=>{ const e=$("#"+id); if(e && hold) hold.appendChild(e); });
+  const hold=$("#xkHold"), box=$("#xkBox");
+  ["coreBox","tkCard","bskCard","grCard","znCard","asCard","rsnCard"].forEach(id=>{ const e=$("#"+id); if(e && hold) hold.appendChild(e); });
+  { const gg=document.querySelector("#pGuud .ggrid"); if(gg && hold) hold.appendChild(gg); }   /* v13.23: 💰 balance -> kaar */
+  { const bb=$("#xkBal"); if(bb) xkGest(bb); }
   /* CHART SCANNER -> CORE 2 (SR/SD + SMC kadib) */
   const qc=$("#qtCard"), qm=$("#qtMini"), l2=$("#xkL2");
   if(qc && l2 && box){ box.appendChild(qc); if(qm) box.appendChild(qm); }
@@ -16806,8 +16817,9 @@ function xkGest(box){
   box.addEventListener("pointerup",ev=>{
     if(!st) return; const s=st; st=null;
     const dx=ev.clientX-s.x, dy=ev.clientY-s.y;
-    if(Math.abs(dx)>40 && Math.abs(dx)>Math.abs(dy)*1.2){ const p=XK.cp[s.k]||0; XK.cp[s.k]=(p+(dx<0?1:2))%3; xkPaintGuud(); return; }
+    if(Math.abs(dx)>40 && Math.abs(dx)>Math.abs(dy)*1.2){ const p=XK.cp[s.k]||0; XK.cp[s.k]=(p+(dx<0?1:2))%3; if(s.k==="BAL") xkBalPaint(); else xkPaintGuud(); return; }
     if(Math.abs(dx)>12 || Math.abs(dy)>12) return;
+    if(s.k==="BAL"){ XK.cp.BAL=((XK.cp.BAL||0)+1)%3; xkBalPaint(); return; }
     if(s.go){ const g=box.querySelector('[data-go="'+s.k+'"]'); if(g && !g.disabled) xkToggle(s.k); return; }
     xkOpen(s.k);
   });
@@ -16848,8 +16860,8 @@ function xkOpen(k){
 function xkClose(fromBtn){
   const k=XK.open; if(!k) return;
   if(Object.keys(xkDiff()).length && !confirm("Isbeddelada lama kaydin. Ka bax?")) { if(!fromBtn){ try{ history.pushState({xk:k},""); }catch(e){} } return; }
-  const hold=$("#xkHold"), ph=$("#xkRsnPh");
-  XKS[k].live.forEach(id=>{ const e=$("#"+id); if(!e) return; if(id==="rsnCard" && ph && ph.parentNode){ ph.parentNode.insertBefore(e,ph); } else if(hold) hold.appendChild(e); });
+  const hold=$("#xkHold");
+  XKS[k].live.forEach(id=>{ const e=$("#"+id); if(e && hold) hold.appendChild(e); });
   XK.open=""; $("#xkPg").hidden=true; document.body.classList.remove("xkon");
   if(fromBtn && XK.bk){ XK.bk=false; try{ history.back(); }catch(e){} }
   xkPaintGuud();
@@ -16928,6 +16940,29 @@ function xkPaint(d){
   XK.d=d||null; if(!$("#xkBox")) return;
   xkInit(); xkPaintGuud();
   if(XK.open){ xkSeed(false); xkPaintPg(); }
+}
+
+/* ---------- 💰 BALANCE · kaar (sida xeeladaha) · 3 bog ---------- */
+var XK_BAL=null;
+function xkBal(d,flo,nOpen){ const x=(d&&d.data)||{}; XK_BAL={on:!!(d&&d.online),acc:d?d.account:"",bal:x.balance,eq:x.equity,p:Number(x.profit||0),fl:Number(flo)||0,n:Number(nOpen)||0,
+  wr:x.winrate,dd:Number(x.drawdown||0),ot:x.opentrades,brk:x.broker||"",cur:x.currency||""}; xkBalPaint(); }
+function xkBalPaint(){
+  const B=XK_BAL, el=$("#xkBal"); if(!B || !el) return;
+  const m=v=>(v==null||isNaN(v))?"—":Number(v).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const pg=XK.cp.BAL||0, all=B.p+B.fl, dg=v=>'<b class="'+xkCls(v)+'">'+xkUsd(v)+'</b>';
+  let inner="";
+  if(pg===1) inner='<div class="mini"><div><span>Faa&#39;iido furan (float)</span>'+dg(B.fl)+'</div><div><span>Wadarta hadda · maanta + float</span>'+dg(all)+'</div><div><span>Trade furan</span><b>'+(B.ot==null?B.n:B.ot)+'</b></div></div>';
+  else if(pg===2) inner='<div class="mini"><div><span>Win rate</span><b>'+(B.wr==null?"—":Number(B.wr).toFixed(1)+"%")+'</b></div><div><span>Drawdown</span><b class="'+(B.dd>10?"n":"")+'">'+B.dd.toFixed(1)+'%</b></div><div><span>Account</span><b>#'+esc(String(B.acc||""))+(B.brk?" · "+esc(String(B.brk).split(" ")[0]):"")+'</b></div></div>';
+  else inner='<div class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10.5h18"/><path d="M7 3.5h10"/><circle cx="16.5" cy="14.8" r="1.2"/></svg></div>'
+    +'<div class="tx"><small style="margin:0 0 3px">BALANCE</small><b class="xkbv">'+m(B.bal)+'</b><small>EQUITY '+m(B.eq)+(B.cur?" "+esc(B.cur):"")+'</small></div>'
+    +'<div class="rt '+xkCls(B.p)+'">'+xkUsd(B.p)+'<small>MAANTA</small></div>';
+  const h='<div class="xknc xkbal" data-k="BAL" style="--c:#2bd67b">'+inner+'<span class="go'+(B.on?'':' off')+'"></span>'
+    +'<div class="dots"><i'+(pg===0?' class="on"':'')+'></i><i'+(pg===1?' class="on"':'')+'></i><i'+(pg===2?' class="on"':'')+'></i></div></div>'
+    +'<div class="xkqm"><div><span>FLOAT</span><b class="'+xkCls(B.fl)+'">'+xkUsd(B.fl)+'</b></div><div><span>WADARTA</span><b class="'+xkCls(all)+'">'+xkUsd(all)+'</b></div><div><span>TRADE FURAN</span><b>'+(B.ot==null?B.n:B.ot)+'</b></div></div>';
+  xkSetHtml("xkBal",h);
+  /* ⚠ digniinta muhiimka ah ee SABABTA (ALGO damman · furaha · laysin) Guud way ku sii jirtaa */
+  const al=$("#rsnAlert"), xa=$("#xkAl");
+  if(xa){ const on=!!(al && !al.hidden); xa.hidden=!on; if(on){ const hh=al.innerHTML; if(xa.dataset.h!==hh){ xa.dataset.h=hh; xa.innerHTML=hh; } } }
 }
 </script></body></html>"""
 
