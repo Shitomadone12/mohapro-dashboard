@@ -5504,6 +5504,31 @@ def ea_qt():
     return jsonify(ok=True, n=len(plans))
 
 
+QT_TMP_ST = (5, 6, 7)          # v13.23: DHACAY · KA CARAY · LA JOOJIYAY (trade ma dhicin)
+QT_TMP_HIDE = 2 * 3600        # 2 saac kadib liiska way ka baxaan
+
+
+def _qt_vis(plans, cfg):
+    """v13.23: qorshayaasha aan trade noqon (DHACAY · KA CARAY · LA JOOJIYAY) -> 2 saac kadib qari. Waqtiga broker-ka (srv) ayaa la raacaa."""
+    now = time.time()
+    try:
+        off = (float(cfg.get("srv") or 0) - float(cfg.get("ts") or 0)) if cfg.get("srv") else 0.0
+    except (TypeError, ValueError):
+        off = 0.0
+    if abs(off) > 15 * 3600:
+        off = 0.0
+    bnow = now + off
+    out = []
+    for p in plans:
+        st = int(p.get("st") or 0)
+        if st in QT_TMP_ST and not p.get("cr"):
+            end = max(int(p.get("tX") or 0), int(p.get("tE") or 0), int(p.get("tT") or 0), int(p.get("exp") or 0) if st == 6 else 0, int(p.get("t") or 0))
+            if end > 0 and bnow - end > QT_TMP_HIDE:
+                continue
+        out.append(p)
+    return out
+
+
 def _qt_can(u, acc):
     lic = _user_lic(u, acc)
     if lic is not None:
@@ -5527,14 +5552,16 @@ def api_qt_state():
         cfg = _kv_get(con, "qtcfg:" + acc) or {}
         sc = _kv_get(con, "qtscan:" + acc) or {}
         lv = _kv_get(con, "qtlive:" + acc) or {}
-        rows = con.execute("SELECT data FROM qt_plans WHERE account=? ORDER BY pid DESC LIMIT 60", (acc,)).fetchall()
+        rows = con.execute("SELECT data FROM qt_plans WHERE account=? ORDER BY pid DESC LIMIT 150", (acc,)).fetchall()
         snap = con.execute("SELECT data FROM snapshots WHERE account=?", (acc,)).fetchone()
         cx = _cx_qt_part(con, acc)   # v13.19: ₿ SCAN CRYPTO (MUUJI)
     plans = [_jload(r["data"], {}) for r in rows]
+    stats = _qt_stats(plans[:60])
+    plans = _qt_vis(plans, cfg)[:60]                   # v13.23: DHACAY / KA CARAY / LA JOOJIYAY -> 2 saac kadib liiska way ka baxaan
     qs = (_jload(snap["data"], {}) or {}).get("qt") if snap else None
     allp = sorted(plans + cx["plans"], key=lambda p: -float(p.get("t") or 0)) if cx["on"] else plans
     return jsonify(ok=True, account=acc, cfg=cfg, scans=(sc.get("list") or []) + cx["scans"], scan_ts=sc.get("ts") or 0, plans=allp,
-                   stats=_qt_stats(plans), sum=qs if isinstance(qs, dict) else {}, live_ts=lv.get("ts") or 0,
+                   stats=stats, sum=qs if isinstance(qs, dict) else {}, live_ts=lv.get("ts") or 0,
                    cx=cx["on"], cx_ts=cx["ts"], cxstats=_cx_stats(cx["plans"]),
                    ai=bool(QT_AI_KEY), can=_qt_can(u, acc), st=QT_ST, now=time.time())
 
@@ -9776,6 +9803,12 @@ body.xkon{overflow:hidden}
 .xknc span.go{pointer-events:none}
 #xkAl{border:1px solid #7a1f23;background:rgba(229,72,77,.12);border-radius:16px;padding:11px 13px;margin:6px 0 4px;color:#ffb3b5;font-size:12.5px;line-height:1.45}
 #xkAl b{display:block;font-size:13.5px;color:#ff8a90}#xkAl p{margin:4px 0 0;color:#ffd0d2}
+
+.qtpth{position:relative;margin-top:8px;border-radius:11px;overflow:hidden;background:#0b0e13;border:1px solid var(--line)}
+.qtpth canvas,.qtpth img{display:block;width:100%;height:auto}
+.qtpth i{position:absolute;left:8px;bottom:6px;font-style:normal;font-size:10.5px;font-weight:800;color:#c9ced6;background:rgba(0,0,0,.55);padding:2px 7px;border-radius:7px}
+.qtmu{color:#ffd27a;font-weight:800}
+.qtplh{font-size:11.5px;color:var(--ink3);margin:2px 2px 8px;line-height:1.45}
 </style></head><body>
 
 <div class="offban" id="offBan" hidden><b id="offBanT">KHADKA WAA GO'AY · DAAWASHO OO KELIYA</b><small id="offBanS">—</small></div>   <!-- v13.5: 📴 -->
@@ -16064,10 +16097,10 @@ function qtPlans(){
     +'<div><span>R WADAR</span><b style="color:'+((s.R||0)>=0?"#7ff0b0":"#ff9a9d")+'">'+(s.tr?((s.R>0?"+":"")+Number(s.R).toFixed(1)):"—")+'</b></div>';
   const L=(d.plans||[]).filter(qtFok), box=qtE("qtPlans");
   if(!L.length){ box.innerHTML='<div class="card"><p class="qtnote" style="margin:0">'+(QT.flt==="cr"?"₿ Qorshe crypto weli ma jiro · server-ka ayaa M15 kasta scan gareeya (trend M15 · H1 · H4 isku raac + zone).":"Qorshe weli ma jiro. EA v72.8 (QORSHE TOOS ON) ayaa M15 kasta scan gareeya · London / NY.")+'</p></div>'; return; }
-  box.innerHTML=L.slice(0,40).map(p=>{ const dg=p.dg, b=p.s>0;
-    return '<div class="qtpl" data-p="'+p.id+'"><div class="hd"><b>#'+qtPid(p)+' · '+esc(p.sym)+' · <span style="color:'+(b?"#7ff0b0":"#ff9a9d")+'">'+(b?"BUY":"SELL")+'</span>'+(p.v2?' <span class="qttag v2">'+qtTFn(p.tf)+' · SR+SMC</span>':'')+(p.arm===1?' <span class="qttag v2">📷 SAWIR</span>':'')+(p.arm===2?' <span class="qttag arm">📌 ADIGA</span>':'')+(p.cr?qtCrTag():(p.tr8?"":' <small style="color:var(--ink3)">ⓘ muuji</small>'))+'</b>'
+  box.innerHTML='<p class="qtplh">📸 Kaar kasta sawirkiisa ayuu leeyahay · riix → 3 sawir (scan · gelitaan · xidh) · DHACAY / KA CARAY 2 saac kadib liiska way ka baxaan.</p>'+L.slice(0,40).map((p,ix)=>{ const dg=p.dg, b=p.s>0;
+    return '<div class="qtpl" data-p="'+p.id+'"><div class="hd"><b>#'+qtPid(p)+' · '+esc(p.sym)+' · <span style="color:'+(b?"#7ff0b0":"#ff9a9d")+'">'+(b?"BUY":"SELL")+'</span>'+(p.v2?' <span class="qttag v2">'+qtTFn(p.tf)+' · SR+SMC</span>':'')+(p.arm===1?' <span class="qttag v2">📷 SAWIR</span>':'')+(p.arm===2?' <span class="qttag arm">📌 ADIGA</span>':'')+(p.cr?qtCrTag():qtMuTag(p))+'</b>'
       +'<span class="'+qtStC(p.st)+(p.st===1&&p.q15?" q15":"")+'">'+qtStL(p)+((p.st===3||p.st===4||p.st===8)&&p.tE?(" "+(p.r>0?"+":"")+Number(p.r).toFixed(1)+"R"):"")+'</span></div>'
-      +'<div class="ln"><span>zone '+qtF(p.lo,dg)+'–'+qtF(p.hi,dg)+'</span><span style="color:#ff9a9d">SL '+qtF(p.sl,dg)+'</span><span style="color:#7ff0b0">TP '+qtF(p.tp,dg)+'</span><span>'+qtTm(p.t)+'</span></div></div>'; }).join("");
+      +'<div class="ln"><span>zone '+qtF(p.lo,dg)+'–'+qtF(p.hi,dg)+'</span><span style="color:#ff9a9d">SL '+qtF(p.sl,dg)+'</span><span style="color:#7ff0b0">TP '+qtF(p.tp,dg)+'</span><span>'+qtTm(p.t)+'</span></div>'+((ix<8&&!p.cr)?'<div class="qtpth" data-th="'+p.id+'"><canvas width="720" height="260"></canvas><i>sawir…</i></div>':'')+'</div>'; }).join(""); qtThumbs(L.slice(0,8));
 }
 /* ---------- 📸 sawir MT5 (chart buuxa) · xogta M5 ---------- */
 function qtMT5Draw(cv,sn,kind,s,mini){
@@ -16964,6 +16997,21 @@ function xkBalPaint(){
   const al=$("#rsnAlert"), xa=$("#xkAl");
   if(xa){ const on=!!(al && !al.hidden); xa.hidden=!on; if(on){ const hh=al.innerHTML; if(xa.dataset.h!==hh){ xa.dataset.h=hh; xa.innerHTML=hh; } } }
 }
+
+/* v13.23: 📸 sawirka qorshaha kaarka dhexdiisa (8-da ugu dambeeya) */
+var QT_TH={}, QT_THF={};
+function qtMuTag(p){ if(p.cr||p.tr8) return ""; const c=(QT.st&&QT.st.cfg)||{}, m=p.tf?Number(c["tf"+p.tf]):2;
+  return ' <small class="qtmu">👁 MUUJI · '+((p.tf && m!==2)?(qtTFn(p.tf)+" = MUUJI"):"lammaanaha")+'</small>'; }
+function qtThDraw(p){ const box=qtE("qtPlans"); if(!box) return; const el=box.querySelector('[data-th="'+p.id+'"]'); if(!el) return;
+  const d=QT_TH[p.id+":"+p.st]; if(!d) return; const sn=d.sn||{}, k=sn.exit?"exit":(sn.entry?"entry":"scan"), im=(d.imgs||[]).indexOf(k)>=0;
+  const L={scan:"① SCAN",entry:"② GELITAAN",exit:"③ XIDH"};
+  if(im){ if(!el.querySelector("img")) el.innerHTML='<img alt="" loading="lazy" src="'+qtImgU(p.id,k)+'"><i>'+L[k]+' · MT5 · riix → 3 sawir</i>'; return; }
+  const cv=el.querySelector("canvas"); if(!cv) return; qtMT5Draw(cv,sn[k],k,1,true);
+  const i=el.querySelector("i"); if(i) i.textContent=(sn[k]?L[k]:"sawir weli ma iman")+" · riix → 3 sawir"; }
+function qtThumbs(L){ (L||[]).forEach(p=>{ if(p.cr) return; const key=p.id+":"+p.st;
+  if(QT_TH[key]){ qtThDraw(p); return; }
+  if(QT_THF[key] && Date.now()-QT_THF[key]<60000) return; QT_THF[key]=Date.now();
+  qtGet("/api/qt/plan/"+p.id).then(d=>{ if(!d||!d.ok) return; QT_TH[key]={sn:d.snaps||{},imgs:d.imgs||[]}; qtThDraw(p); }).catch(()=>{}); }); }
 </script></body></html>"""
 
 T_ADMIN = """<!doctype html><html lang="so"><head><meta charset="utf-8">
