@@ -9804,6 +9804,7 @@ body.xkon{overflow:hidden}
 #xkAl{border:1px solid #7a1f23;background:rgba(229,72,77,.12);border-radius:16px;padding:11px 13px;margin:6px 0 4px;color:#ffb3b5;font-size:12.5px;line-height:1.45}
 #xkAl b{display:block;font-size:13.5px;color:#ff8a90}#xkAl p{margin:4px 0 0;color:#ffd0d2}
 
+.qtpw{color:#ffd27a}.qtpo{color:#7ff0b0}.qtpb{color:#ff9a9d}
 .qtpth{position:relative;margin-top:8px;border-radius:11px;overflow:hidden;background:#0b0e13;border:1px solid var(--line)}
 .qtpth canvas,.qtpth img{display:block;width:100%;height:auto}
 .qtpth i{position:absolute;left:8px;bottom:6px;font-style:normal;font-size:10.5px;font-weight:800;color:#c9ced6;background:rgba(0,0,0,.55);padding:2px 7px;border-radius:7px}
@@ -15888,7 +15889,7 @@ function qtCard(){
 async function qtLoad(){
   const d=await qtGet("/api/qt/state"); if(!d||!d.ok) return;
   QT.st=d; QT.t=Date.now();
-  if(!QT.ed || !QT.dirty) QT.ed={on:d.cfg.on==null?1:d.cfg.on, md:d.cfg.md==null?2:d.cfg.md, max:d.cfg.max||5, h:d.cfg.h||8, risk:d.cfg.risk||0.5, day:d.cfg.day==null?3:d.cfg.day, draw:d.cfg.draw==null?1:d.cfg.draw, scg:d.cfg.scg==null?2:d.cfg.scg, all:d.cfg.all==null?1:d.cfg.all, opn:d.cfg.opn||3,
+  if(qtPendHold(d)){ } else if(!QT.ed || !QT.dirty) QT.ed={on:d.cfg.on==null?1:d.cfg.on, md:d.cfg.md==null?2:d.cfg.md, max:d.cfg.max||5, h:d.cfg.h||8, risk:d.cfg.risk||0.5, day:d.cfg.day==null?3:d.cfg.day, draw:d.cfg.draw==null?1:d.cfg.draw, scg:d.cfg.scg==null?2:d.cfg.scg, all:d.cfg.all==null?1:d.cfg.all, opn:d.cfg.opn||3,
     rsi:d.cfg.rsi==null?1:d.cfg.rsi, star:d.cfg.star==null?1:d.cfg.star, ob:d.cfg.ob==null?1:d.cfg.ob, fvg:d.cfg.fvg==null?1:d.cfg.fvg, vol:d.cfg.vol==null?1:d.cfg.vol, news:d.cfg.news==null?1:d.cfg.news, be:d.cfg.be==null?1.5:d.cfg.be, tm:d.cfg.tm||0, tr:d.cfg.tr||0, pt:d.cfg.pt||0,   /* v13.18 */
     eng:d.cfg.eng==null?1:d.cfg.eng, tf1:d.cfg.tf1==null?1:d.cfg.tf1, tf5:d.cfg.tf5==null?1:d.cfg.tf5, tf15:d.cfg.tf15==null?2:d.cfg.tf15, v2e:d.cfg.v2e||0, v2l:d.cfg.v2l||0,   /* v13.20: 🧠 SCAN v2 */
     tl:qtTL(d)};   /* v13.21: 🌍 lammaane kasta TRADE / MUUJI */
@@ -16282,7 +16283,7 @@ async function qtSave(){
   values["IN:Inp_QT_Trade"]="h"+Array.from(new TextEncoder().encode((e.tl||[]).join(","))).map(x=>x.toString(16).padStart(2,"0")).join("");   /* v13.21: 🌍 lammaane kasta */
   const body={values:values}; if(accSel) body.account=accSel.value;
   let err=""; try{ const r=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); const d=await r.json(); if(!d.ok) err=d.error||"Lama kaydin."; }catch(x){ err="Internet ma jiro."; }
-  b.disabled=false; qtE("qtSaveN").textContent=err||"✓ La kaydiyay · bot-ku 20 ilbiriqsi gudahood ayuu qaadanayaa."; if(!err) QT.dirty=false;
+  b.disabled=false; qtE("qtSaveN").textContent=err||"✓ La kaydiyay · bot-ku 20 ilbiriqsi gudahood ayuu qaadanayaa."; if(!err){ QT.dirty=false; QT.pend={ed:JSON.parse(JSON.stringify(e)),t:Date.now()}; QT.pst=null; qtPendNote(); }
 }
 /* ---------- view ---------- */
 function qtView(v){
@@ -16339,7 +16340,7 @@ function qtModeSet(m){
     const a=r.dataset.qt.split("|"), ot=Number(a[0]), sy=a[1];
     const go=()=>{ const L=(QT.st&&QT.st.plans)||[]; const p=L.find(x=>x.sym===sy && x.tE && Math.abs(x.tE-ot)<=180); if(p){ tab("Scan"); qtView("plan"); qtOpen(p.id); } };
     if(QT.st) go(); else qtLoad().then(go); });
-  setInterval(()=>{ qtCard(); const on=qtE("pScan").classList.contains("on"); if(on && Date.now()-QT.t>15000) qtLoad(); },5000);
+  setInterval(()=>{ qtCard(); const on=qtE("pScan").classList.contains("on"); if(on && Date.now()-QT.t>(QT.pend?6000:15000)) qtLoad(); try{ qtPendNote(); }catch(e){} },5000);
   setTimeout(qtCard,1500);
 })();
 
@@ -17012,6 +17013,19 @@ function qtThumbs(L){ (L||[]).forEach(p=>{ if(p.cr) return; const key=p.id+":"+p
   if(QT_TH[key]){ qtThDraw(p); return; }
   if(QT_THF[key] && Date.now()-QT_THF[key]<60000) return; QT_THF[key]=Date.now();
   qtGet("/api/qt/plan/"+p.id).then(d=>{ if(!d||!d.ok) return; QT_TH[key]={sn:d.snaps||{},imgs:d.imgs||[]}; qtThDraw(p); }).catch(()=>{}); }); }
+
+/* v13.23: ⏳ sitinka scan-ka -> EA xaqiijin (M5 / M1 TRADE dib uma noqonayo MUUJI inta EA-gu qaadanayo) */
+var QT_PK=["tf1","tf5","tf15","eng","v2e","v2l","scg","on","md"];
+function qtPendNote(){ const el=qtE("qtSaveN"); if(!el) return; const P=QT.pend, S=QT.pst;
+  if(P){ const s=Math.round((Date.now()-P.t)/1000); el.innerHTML='<span class="qtpw">⏳ La kaydiyay · EA-ga ayaa la sugayaa inuu xaqiijiyo ('+s+'s · ilaa 2 daqiiqo) · sitinkaagu sidiisa ayuu u sii jiraa</span>'; return; }
+  if(S && S.c==="ok" && Date.now()-S.at<60000){ el.innerHTML='<span class="qtpo">✓ EA-gu wuu xaqiijiyay · M15 '+qtTfN(QT.ed&&QT.ed.tf15)+' · M5 '+qtTfN(QT.ed&&QT.ed.tf5)+' · M1 '+qtTfN(QT.ed&&QT.ed.tf1)+'</span>'; return; }
+  if(S && S.c==="bad") el.innerHTML='<span class="qtpb">⚠ EA-gu 3 daqiiqo gudahood ma xaqiijin · bot-ka VPS-ka hubi (online · EA v72.7+) · kadib mar kale KAYDI</span>'; }
+function qtTfN(v){ v=Number(v); return v===2?"TRADE":(v===1?"MUUJI":"OFF"); }
+function qtPendHold(d){ const P=QT.pend; if(!P) return false; const c=(d&&d.cfg)||{};
+  const ok=QT_PK.every(k=>c[k]==null || Number(c[k])===Number(P.ed[k]));
+  if(ok){ QT.pend=null; QT.pst={c:"ok",at:Date.now()}; return false; }
+  if(Date.now()-P.t>180000){ QT.pend=null; QT.pst={c:"bad",at:Date.now()}; return false; }
+  QT.ed=JSON.parse(JSON.stringify(P.ed)); return true; }
 </script></body></html>"""
 
 T_ADMIN = """<!doctype html><html lang="so"><head><meta charset="utf-8">
