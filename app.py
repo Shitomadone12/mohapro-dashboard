@@ -20,6 +20,9 @@ Web (session auth):
   /login /register /logout /dashboard /admin
   GET  /api/state         -> xogta account-ka user-ka
   POST /api/command       -> amar loo diro EA-da
+  v13.23: 🧩 XEELAD KASTA = KAAR (sida CHART SCANNER): Guud · CORE 1 (TICK · GOLD BASKET · GRID) · CORE 2 (SR/SD · SMC · SCANNER) ·
+          kaar kasta 3 bog (xaalad · trade furan · sitin degdeg) · ▌ shid/dami · riix → bogga xeeladda: sitin (badhamo waaweyn) +
+          maamulka hadda + trade-yada + ✕ xidh + KAYDI & DIR · /api/state cstat.s (xeelad kasta: maanta · 30 maalin · PF · win)
   v13.22: ⇅ LABADA CORE (EA v72.9): LABADA CORE waxaa lagu beddelay grid labada dhinac (MOHA Grid Core v2 · la hagaajiyay) ·
           BUY + SELL basket · TP + trail · qayb-xidh · basket SL · trend-stop · range kaliya (ADX) · equity HALT · app: kaadh + sitin · 🧭 TREND EMA sidiisa
   v13.21: 🌍 FOREX + DAHAB (EA v72.8): magaca broker-ka si toos ah · lammaane kasta TRADE / MUUJI (default MUUJI · tijaabo 10 sano) ·
@@ -4361,23 +4364,50 @@ def _j2_rows(raw, tzo):
 _CSTAT = {}
 
 
+def _xk_key(s):
+    """v13.23: strat (journal) -> kaarka xeeladda (TICK · GOLD · GRID · SR · SMC · SCAN)."""
+    s = str(s or "").strip().upper()
+    if s in ("TICK", "GRID", "SMC"):
+        return s
+    if s == "BASKET":
+        return "GOLD"
+    if s == "QORSHE":
+        return "SCAN"
+    if s == "ASIA":
+        return ""
+    return "SR"
+
+
 def _core_stat(con, acc):
     """Kaarka Guud: core kasta 30-kii maalmood ee u dambeeyay (trade · PF · guul). 60s cache."""
     now = time.time()
     c = _CSTAT.get(acc)
     if c and now - c[0] < 60:
         return c[1]
-    rows = con.execute("SELECT strat,profit FROM ctrades WHERE account=? AND ct>=?",
+    rows = con.execute("SELECT strat,profit,ct FROM ctrades WHERE account=? AND ct>=?",
                        (acc, int(now) - 30 * 86400)).fetchall()
     g = {1: [], 2: []}
+    xs, xd = {}, {}                                       # v13.23: 🧩 xeelad kasta
+    d0 = int(now) // 86400 * 86400
     for r in rows:
-        k = _strat_core(_col(r, "strat"))
+        st = _col(r, "strat")
+        p = _num(_col(r, "profit"))
+        k = _strat_core(st)
         if k in g:
-            g[k].append({"p": _num(_col(r, "profit"))})
+            g[k].append({"p": p})
+        x = _xk_key(st)
+        if x:
+            xs.setdefault(x, []).append({"p": p})
+            if int(_num(_col(r, "ct"))) >= d0:
+                xd[x] = xd.get(x, 0.0) + p
     out = {}
     for k, v in g.items():
         s = _j2_stat(v)
         out["c%d" % k] = {"n": s["n"], "pf": s["pf"], "wr": s["wr"], "net": s["net"]}
+    out["s"] = {}
+    for x in ("TICK", "GOLD", "GRID", "SR", "SMC", "SCAN"):
+        s = _j2_stat(xs.get(x, []))
+        out["s"][x] = {"n": s["n"], "pf": s["pf"], "wr": s["wr"], "net": s["net"], "d": round(xd.get(x, 0.0), 2)}
     if len(_CSTAT) > 500:
         _CSTAT.clear()
     _CSTAT[acc] = (now, out)
@@ -9662,6 +9692,83 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
 .lcb{height:6px;border-radius:99px;background:rgba(255,255,255,.07);overflow:hidden;margin-top:5px}.lcb i{display:block;height:100%}
 .lcn{display:block;font-size:11px;color:var(--ink3);margin-top:8px;line-height:1.45}
 #mSPBox input[type=number]{background:#111318;border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px 8px;font-weight:700}
+
+/* ===== v13.23: 🧩 XEELAD KASTA · KAAR (sida CHART SCANNER) + BOGGA XEELADDA ===== */
+#xkBox{margin:6px 0 4px}
+.xkcore{display:flex;align-items:center;gap:10px;margin:18px 2px 2px}
+.xkcore b{font-size:13px;letter-spacing:.1em;font-weight:900;white-space:nowrap}
+.xkcore b.c1{color:#f5c451}.xkcore b.c2{color:#4fb8ff}
+.xkcore .sp{flex:1}
+.xkcore em{font-style:normal;font-size:12.5px;font-weight:800;color:var(--ink3);white-space:nowrap}
+.xkcore em.p{color:#3ddc84}.xkcore em.n{color:#f07a7a}
+.xkcore.off b{opacity:.55}
+.xkcw{font-size:11.5px;color:#ffd27a;margin:4px 4px 0;line-height:1.4}
+.xknc{--c:#1ea7ff;position:relative;margin:12px 0 9px;border-radius:22px;border:2.5px solid var(--c);background:#050608;padding:20px 16px 28px;display:flex;align-items:center;gap:14px;cursor:pointer;
+  box-shadow:0 0 18px color-mix(in srgb,var(--c) 55%,transparent),inset 0 0 18px color-mix(in srgb,var(--c) 18%,transparent);touch-action:pan-y;user-select:none;-webkit-user-select:none;min-height:96px}
+.xknc.off{border-color:color-mix(in srgb,var(--c) 40%,#333);box-shadow:0 0 8px color-mix(in srgb,var(--c) 20%,transparent)}
+.xknc .ic{width:40px;height:40px;color:var(--c);flex:none}
+.xknc .ic svg{width:40px;height:40px;stroke:currentColor;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.xknc .tx{flex:1;min-width:0}
+.xknc .tx b{display:block;font-size:19px;letter-spacing:.06em;color:#fff;font-weight:800;line-height:1.2}
+.xknc .tx small{display:block;font-size:11px;letter-spacing:.12em;color:#6c7480;font-weight:700;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.xknc .rt{text-align:right;font-weight:900;font-size:16px;flex:none;margin-right:6px}
+.xknc .rt small{display:block;font-size:9.5px;letter-spacing:.1em;color:#6c7480;font-weight:800;margin-top:2px}
+.xknc .rt.p{color:#3ddc84}.xknc .rt.n{color:#f07a7a}
+.xknc .go{position:absolute;right:-8px;top:50%;transform:translateY(-50%);width:16px;height:42px;border-radius:9px;background:#19c26b;border:0;padding:0;box-shadow:0 0 10px rgba(25,194,107,.55)}
+.xknc .go.off{background:#3b3f48;box-shadow:none}
+.xknc .go:disabled{opacity:.55}
+.xknc .dots{position:absolute;bottom:9px;left:50%;transform:translateX(-50%);display:flex;gap:7px}
+.xknc .dots i{width:7px;height:7px;border-radius:50%;background:#555}.xknc .dots i.on{background:#fff}
+.xknc .mini{display:flex;flex-direction:column;gap:5px;width:100%;margin-right:8px}
+.xknc .mini div{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;font-weight:700;color:#d8d6e0}
+.xknc .mini span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.xknc .mini .b{color:#4fb8ff}.xknc .mini .s{color:#f07a7a}.xknc .mini .p{color:#3ddc84}.xknc .mini .n{color:#f07a7a}.xknc .mini .m{color:#8b8a99}
+.xkqm{display:flex;gap:8px;margin:0 0 6px}
+.xkqm div{flex:1;min-width:0;border:1px solid var(--line);border-radius:14px;padding:9px 11px;background:var(--surface)}
+.xkqm span{display:block;font-size:9.5px;font-weight:800;color:var(--ink3);letter-spacing:.08em}
+.xkqm b{font-size:14px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.xkqm .p{color:#3ddc84}.xkqm .n{color:#f07a7a}.xkqm .y{color:#f5c451}.xkqm .m{color:var(--ink3)}
+/* bogga */
+.xkpg{position:fixed;inset:0;z-index:60;background:var(--plane);overflow-y:auto;-webkit-overflow-scrolling:touch}
+.xkpgi{max-width:560px;margin:0 auto;padding:12px 15px 30px}
+.xkbk{display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:2;background:var(--plane);padding:6px 0 4px}
+.xkba{width:40px;height:40px;border-radius:13px;font-size:24px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0;background:var(--surface)}
+.xkbk b{flex:1;font-size:15px;letter-spacing:.12em;font-weight:900;color:color-mix(in srgb,var(--acc,#c4a5ff) 60%,#c4a5ff)}
+.xkmsg{border-radius:13px;padding:10px 12px;font-size:12.5px;margin:6px 0;border:1px solid}
+.xkmsg.ok{border-color:#1f7a46;background:rgba(31,157,92,.12);color:#8ff0b9}
+.xkmsg.bad{border-color:#7a1f23;background:rgba(229,72,77,.12);color:#ffb3b5}
+.xkmsg.wt{border-color:#6b5310;background:rgba(245,196,81,.1);color:#ffd27a}
+.xksec{border-top:1px solid var(--line);padding:16px 2px 4px;margin-top:12px}
+.xksec h4{font-size:17px;font-weight:700;margin:0}
+.xksec p{font-size:12.5px;color:var(--ink3);line-height:1.45;margin:5px 0 0}
+.xkop{display:grid;gap:9px;margin-top:12px}
+.xkop.c2{grid-template-columns:1fr 1fr}.xkop.c3{grid-template-columns:1fr 1fr 1fr}.xkop.c4{grid-template-columns:1fr 1fr 1fr 1fr}
+.xkop button{border:1.5px solid var(--line);border-radius:16px;padding:12px 4px;text-align:center;font-size:14px;font-weight:800;color:#d8d6e0;background:var(--surface);line-height:1.2;min-height:52px}
+.xkop button small{display:block;font-size:10.5px;font-weight:700;color:var(--ink3);margin-top:3px}
+.xkop button.on{border-color:#1ea7ff;background:#14243a;color:#fff;box-shadow:0 0 12px rgba(30,167,255,.35)}
+.xkop button.on small{color:#9ccfff}
+.xkop button:disabled{opacity:.5}
+.xkstp{display:flex;align-items:center;justify-content:space-between;margin-top:12px;border:1.5px solid var(--line);border-radius:16px;background:var(--surface);padding:6px}
+.xkstp button{width:48px;height:42px;border-radius:12px;font-size:22px;font-weight:800;padding:0}
+.xkstp b{font-size:18px;font-weight:900}
+.xktr{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px}
+.xktr:last-child{border-bottom:0}
+.xktr .d{font-size:10.5px;font-weight:900;padding:2px 7px;border-radius:7px}
+.xktr .d.b{background:rgba(77,163,255,.16);color:#4fb8ff}.xktr .d.s{background:rgba(255,90,99,.16);color:#ff8a90}
+.xktr .t{flex:1;min-width:0}.xktr .t small{display:block;font-size:11px;color:var(--ink3)}
+.xktr .p{font-weight:900}.xktr .p.g{color:#3ddc84}.xktr .p.r{color:#f07a7a}
+.xktr button{font-size:12px;padding:6px 10px;border-radius:10px}
+#xkLive>.card{margin-top:12px!important;margin-bottom:0!important}
+.xkbtns{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:12px}
+.xkbtns:empty{display:none}
+.xkbtns button{border-radius:15px;padding:13px 6px;font-size:13px;font-weight:900;border:1.5px solid;background:transparent}
+.xkbtns .g{border-color:#1f9d5c;color:#3ddc84}.xkbtns .r{border-color:#e5484d;color:#ff8a90}
+.xkall{width:100%;border-radius:15px;padding:13px;font-weight:800;font-size:13.5px;background:var(--surface)}
+.xksave{position:sticky;bottom:0;padding:14px 0 6px;background:linear-gradient(180deg,transparent,var(--plane) 30%)}
+.xksave button{width:100%;border-radius:16px;padding:15px;font-weight:900;font-size:15px;letter-spacing:.06em;background:#1f9d5c;border-color:#1f9d5c;color:#fff}
+.xksave button:disabled{background:var(--surface);border-color:var(--line);color:var(--ink3)}
+.xksave small{display:block;text-align:center;font-size:11.5px;color:var(--ink3);margin-top:6px}
+body.xkon{overflow:hidden}
 </style></head><body>
 
 <div class="offban" id="offBan" hidden><b id="offBanT">KHADKA WAA GO'AY · DAAWASHO OO KELIYA</b><small id="offBanS">—</small></div>   <!-- v13.5: 📴 -->
@@ -9728,6 +9835,18 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
       <div class="tile"><div class="k">Drawdown</div><div class="v" id="dd">—</div></div>
       <div class="tile"><div class="k">Trade furan</div><div class="v neu" id="ot">—</div></div>
     </div>
+
+
+    <!-- v13.23: 🧩 XEELAD KASTA · KAAR (sida CHART SCANNER) -->
+    <div id="xkBox">
+      <div class="xkcore" id="xkC1"><b class="c1">⚡ CORE 1 · SCALP</b><span class="sp"></span><em id="xkC1P">—</em><button class="sw" id="xkC1S" type="button" aria-label="CORE 1 shid / dami"><i></i></button></div>
+      <div class="xkcw" id="xkC1W" hidden></div>
+      <div id="xkL1"></div>
+      <div class="xkcore" id="xkC2"><b class="c2">🎯 CORE 2 · SR/SMC</b><span class="sp"></span><em id="xkC2P">—</em><button class="sw" id="xkC2S" type="button" aria-label="CORE 2 shid / dami"><i></i></button></div>
+      <div class="xkcw" id="xkC2W" hidden></div>
+      <div id="xkL2"></div>
+    </div>
+    <div id="xkHold" hidden></div>
 
     <!-- v13.15: 🔍 CHART SCANNER -->
     <div id="qtCard" role="button" tabindex="0" aria-label="Chart Scanner">
@@ -10856,6 +10975,24 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
 
   <div class="qtsheet" id="qtSheet" hidden></div>
   <div class="qtfull" id="qtFull" hidden><div class="qtfs" id="qtFS"><canvas id="qtFC" width="760" height="640"></canvas><img id="qtFI" alt="" hidden><div class="hd"><b id="qtFH">—</b><span><button type="button" class="qtx" id="qtFV" hidden>📷 MT5</button><button type="button" class="qtx" id="qtFR" title="jiif / taag">⟲</button><button type="button" class="qtx" id="qtFX">✕</button></span></div><p id="qtFN"></p></div></div>
+
+<!-- v13.23: 🧩 BOGGA XEELADDA (sitin + maamul) -->
+<div class="xkpg" id="xkPg" hidden>
+  <div class="xkpgi" id="xkPgI">
+    <div class="xkbk"><button type="button" class="xkba" id="xkBack" aria-label="Dib u noqo">‹</button><b id="xkPgT">—</b><button class="sw" id="xkPgS" type="button" aria-label="Shid / dami"><i></i></button></div>
+    <div id="xkPgC"></div>
+    <div class="xkqm" id="xkPgK"></div>
+    <div class="xkmsg" id="xkPgM" hidden></div>
+    <div id="xkPgF"></div>
+    <div class="xksec" id="xkLiveS"><h4>Maamulka · hadda</h4><p id="xkLiveP">—</p>
+      <div id="xkPgTr"></div>
+      <div id="xkLive"></div>
+      <div class="xkbtns" id="xkPgX"></div>
+    </div>
+    <div class="xksec"><button type="button" class="xkall" id="xkAll">⚙️ Sitinka oo dhan · Input ›</button></div>
+    <div class="xksave"><button type="button" id="xkSave" disabled>KAYDI &amp; DIR → EA</button><small id="xkSaveN">Wax lama beddelin</small></div>
+  </div>
+</div>
 </div>
 
 <nav class="appbar">
@@ -11066,6 +11203,7 @@ function paint(d){
   try{ muOnState(d,x); }catch(e){}                  // v12.20: 🎵 trade xidhmay -> codka hoos u dhig
   INPV=d.inp||null; if(INPS) inpPaint();            // v12.18: ⚙️ INPUT
   stPaint(d);                                       // v12.18: Maamul -> xeeladaha
+  try{ xkPaint(d); }catch(e){ console.error(e); }   // v13.23: 🧩 XEELAD KASTA · KAAR
   /* v13.0: 🌅 ASIA waa la saaray (EA v72.0) */
   paintBasket(d.bsk);                               // v12.7
   paintReasons(d);                                  // v12.8
@@ -16489,6 +16627,308 @@ function spBoxPaint(){
     if(!err) LCF.t=false;
   });
 })();
+
+/* ===== v13.23: 🧩 XEELAD KASTA · KAAR (sida CHART SCANNER) + BOGGA XEELADDA (sitin + maamul) =====
+   Guud: CORE 1 (TICK · GOLD BASKET · GRID) · CORE 2 (SR/SD · SMC · CHART SCANNER) - kaar iftiimaya · 3 bog (swipe) · ▌ shid/dami
+   Riix kaarka -> bogga: kaar + 3 tile · sitin (badhamo waaweyn) · maamulka hadda (kaarkii live-ka ahaa) · trade-yada · KAYDI & DIR */
+var XK={d:null,open:"",v:{},s:{},hold:{},pend:null,cp:{},msg:null,init:false,html:{},bk:false};
+var XK_IC={
+  TICK:'<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
+  GOLD:'<path d="M3 9h18l-2 11H5z"/><path d="M8 9l4-6 4 6"/>',
+  GRID:'<path d="M7 3v18M17 3v18M7 7h10M7 12h10M7 17h10"/>',
+  SR:'<path d="M3 6h18M3 18h18"/><path d="M4 15l4-5 4 3 4-6 4 4"/>',
+  SMC:'<path d="M3 17l5-6 3 3 5-8"/><rect x="15" y="3" width="6" height="5" rx="1"/>'
+};
+var XK_ORD={1:["TICK","GOLD","GRID"],2:["SR","SMC"]};
+var XK_BOOL={"IN:Inp_LC_Range_Only":1};
+var XK_INT={TKMAXD:1,BSKN:1,BSKDAY:1,BSKTGT:1,BSKSIG:1,BSKENT:1,BSKTP:1,GRLV:1,GRDIR:1,GRTPM:1,STRAT:1,STARS:1,SDPROF:1,ZNTF:1,ZNON:1,ZNSH:1,EMAF:1,SNIPER:1,TKBON:1,TKONLY:1,BSKBE:1,BSKSES:1,
+  "IN:Inp_LC_Dir":1,"IN:Inp_LC_Levels":1,"IN:Inp_LC_Trend_Stop":1};
+function xkN(v,d){ v=Number(v); return isFinite(v)?v:(d===undefined?0:d); }
+function xkUsd(v){ v=Number(v)||0; return (v>0?"+$":(v<0?"−$":"$"))+Math.abs(v).toFixed(2); }
+function xkCls(v){ v=Number(v)||0; return v>0?"p":(v<0?"n":""); }
+function xkKey(s){ s=String(s||"").toUpperCase(); if(s==="TICK") return "TICK"; if(s==="BASKET") return "GOLD"; if(s==="GRID") return "GRID"; if(s==="SMC") return "SMC"; if(s==="QORSHE") return "SCAN"; if(s==="ASIA") return ""; return "SR"; }
+function xkTrades(k){ const x=(XK.d&&XK.d.data)||{}; return (Array.isArray(x.trades)?x.trades:[]).filter(t=>String(t.st||"OPEN").toUpperCase()==="OPEN" && xkKey(t.strat||t.strategy)===k); }
+function xkStat(k){ return (typeof CSTAT!=="undefined" && CSTAT && CSTAT.s && CSTAT.s[k])?CSTAT.s[k]:null; }
+function xkSet(){ return ((XK.d&&XK.d.data)||{}).settings||{}; }
+function xkStratI(){ const s=String(xkSet().strat||"").toUpperCase(); return s==="SR"?0:(s==="SMC"?1:(s==="BOTH"||s==="LABADA"?2:null)); }
+function xkC2(){ return (typeof CORED!=="undefined" && CORED && CORED.c2)?!!Number(CORED.c2.on):true; }
+function xkHeld(k,v){ const h=XK.hold[k]; if(h && Date.now()-h.t<30000){ if(h.v===(v?1:0)) XK.hold[k]=null; return !!h.v; } return !!v; }
+/* ---------- xeelad kasta: xog + sitin ---------- */
+var XKS={
+  TICK:{nm:"TICK SCALPER",c:"#38bdf8",core:1,cat:"TICK",live:["tkCard"],
+    on:()=>{ const T=XK.d&&XK.d.tick; return !!(TKCFG?TKCFG.on:(T&&T.on)); },
+    sub:()=>{ const T=XK.d&&XK.d.tick; if(!T) return "XOG MA JIRO"; const M={OFF:"DAMMAN",SEARCH:"RAADINAYA MOMENTUM",PAUSE:"SUGAYA",OPEN:(T.bkt?"BASKET SOCDA":"TRADE SOCDA")}; return (M[T.st]||"—")+" · "+(T.sym||"XAUUSD"); },
+    day:()=>{ const T=XK.d&&XK.d.tick; return T&&T.day?xkN(T.day.pl):null; },
+    tiles:()=>{ const T=XK.d&&XK.d.tick, D=(T&&T.day)||{}, cf=TKCFG||{}; return [["XAALAD",T?({OFF:"damman",SEARCH:"raadinaya",PAUSE:"sugaya",OPEN:"trade socda"}[T.st]||"—"):"—","m"],["MAANTA · "+(D.n||0)+"/"+(cf.maxd||"—"),xkUsd(D.pl),xkCls(D.pl)]]; },
+    seed:()=>{ const c=TKCFG||{}; return {TKRISK:xkN(c.risk),TKLOT:xkN(c.lot,0.01),TKVSL:xkN(c.vsl),TKVTP:xkN(c.vtp),TKMAXD:xkN(c.maxd),TKBON:c.bon?1:0,TKONLY:c.only?1:0}; },
+    quick:v=>[["Lot",Number(v.TKRISK)>0?("risk "+v.TKRISK+"%"):Number(v.TKLOT).toFixed(2)],["SL · TP virtual","$"+v.TKVSL+" · "+(Number(v.TKVTP)>0?"$"+v.TKVTP:"trail")],["Trade maalintii",String(v.TKMAXD)]],
+    F:[{h:"Lot-ka",p:"LOT GO'AN = isla lot mar walba · RISK % = lot-ka balance-ka ayuu raacaa",c:3,o:[{t:"LOT GO'AN",set:{TKRISK:0}},{t:"RISK 0.25%",set:{TKRISK:0.25}},{t:"RISK 0.5%",set:{TKRISK:0.5}}]},
+       {h:"Lot go'an",p:"0.01 = $1 dhaqdhaqaaq $1 kasta (dahab)",stp:"TKLOT",min:0.01,max:100,step:0.01,dec:2,show:v=>!(Number(v.TKRISK)>0)},
+       {h:"Virtual SL ($)",p:"trade-ka waxaa lagu xidhaa khasaarahan",c:4,o:[2,3,5,8].map(x=>({t:"$"+x,set:{TKVSL:x}}))},
+       {h:"Virtual TP ($)",p:"0 = trailing oo keliya",c:4,o:[[0,"TRAIL"],[2,"$2"],[3,"$3"],[5,"$5"]].map(a=>({t:a[1],set:{TKVTP:a[0]}}))},
+       {h:"Trade maalintii",p:"ugu badnaan",c:4,o:[10,20,50,100].map(x=>({t:String(x),set:{TKMAXD:x}}))},
+       {h:"Habka",p:"HAL TRADE = hal mar · BASKET = dhowr trade isku jiho",c:2,show:()=>!!(TKCFG && TKCFG.bon!==undefined && TKCFG.bon!==null),o:[{t:"HAL TRADE",set:{TKBON:0}},{t:"BASKET",set:{TKBON:1}}]},
+       {h:"TICK oo keliya",p:"ON → xeeladaha kale XAUUSD trade cusub ma furaan",c:2,o:[{t:"OFF",set:{TKONLY:0}},{t:"ON",set:{TKONLY:1}}]}],
+    tog:v=>({TK:v}),
+    btns:()=>[["r","✕ XIDH TRADE-YADA TICK","tk"]]},
+  GOLD:{nm:"GOLD BASKET",c:"#f5c451",core:1,cat:"GOLD",live:["bskCard"],
+    on:()=>{ const B=XK.d&&XK.d.bsk; return !!(BSKCFG?BSKCFG.on:(B&&B.on)); },
+    sub:()=>{ const B=XK.d&&XK.d.bsk, S=["ZONE","EMA","LABADA","DOUBLE TOP/BOTTOM"], c=BSKCFG||{}; if(!B) return "XOG MA JIRO"; return (B.act?"BASKET SOCDA":(xkHeld("GOLD",XKS.GOLD.on())?"SUGAYA SIGNAL":"DAMMAN"))+" · "+(S[xkN(c.sig,-1)]||"EMA"); },
+    day:()=>{ const B=XK.d&&XK.d.bsk; return B&&B.day?xkN(B.day.pl):null; },
+    tiles:()=>{ const B=XK.d&&XK.d.bsk, D=(B&&B.day)||{}, n=xkTrades("GOLD").length; return [["BASKET",B&&B.act?(n+" furan"):"ma socdo",B&&B.act?"y":"m"],["MAANTA",xkUsd(D.pl),xkCls(D.pl)]]; },
+    seed:()=>{ const c=BSKCFG||{}; return {BSKSIG:xkN(c.sig),BSKN:xkN(c.n,3),BSKENT:xkN(c.ent),BSKRISK:xkN(c.risk,1),BSKTP:xkN(c.tp),BSKTGT:xkN(c.tgt,10),BSKDAY:xkN(c.day,2),BSKBE:c.be?1:0,BSKSES:c.ses?1:0}; },
+    quick:v=>[["Signal",["ZONE","EMA","LABADA","DOUBLE"][v.BSKSIG]||"—"],["Basket",v.BSKN+" trade · risk "+v.BSKRISK+"%"],["TP",Number(v.BSKTP)===1?("wadajir $"+v.BSKTGT):"jaranjar"]],
+    F:[{h:"Signal-ka",p:"waxa basket-ka furaya",c:4,o:[["ZONE",0],["EMA",1],["LABADA",2],["DOUBLE",3]].map(a=>({t:a[0],set:{BSKSIG:a[1]}}))},
+       {h:"Trade-yada basket-ka",p:"inta trade ee basket kasta",c:4,o:[2,3,4,5].map(x=>({t:String(x),set:{BSKN:x}}))},
+       {h:"Gelitaanka",p:"LAKAB = mid mid · ISKU MAR = dhammaan hal mar",c:2,o:[{t:"LAKAB",set:{BSKENT:0}},{t:"ISKU MAR",set:{BSKENT:1}}]},
+       {h:"Risk basket-ka (%)",p:"khatarta basket-ka oo dhan",c:3,o:[0.5,1,2].map(x=>({t:x+"%",set:{BSKRISK:x}}))},
+       {h:"Habka TP",p:"JARANJAR = trade kasta TP-giisa · WADAJIR = $ wadar → dhammaan xidh",c:2,o:[{t:"JARANJAR",set:{BSKTP:0}},{t:"WADAJIR",set:{BSKTP:1}}]},
+       {h:"Bartilmaameedka wadajir ($)",p:"basket-ku marka uu gaadho → xidh",c:4,show:v=>Number(v.BSKTP)===1,o:[5,10,20,50].map(x=>({t:"$"+x,set:{BSKTGT:x}}))},
+       {h:"Basket maalintii",p:"ugu badnaan",c:4,o:[1,2,3,5].map(x=>({t:String(x),set:{BSKDAY:x}}))},
+       {h:"Break-even (TP1 kadib)",c:2,o:[{t:"OFF",set:{BSKBE:0}},{t:"ON",set:{BSKBE:1}}]},
+       {h:"Waqtiga dahabka oo keliya",p:"London + New York",c:2,o:[{t:"OFF",set:{BSKSES:0}},{t:"ON",set:{BSKSES:1}}]}],
+    tog:v=>({BSK:v}),
+    btns:()=>[["g","⚖️ BASKET BE","cmd:BASKET:BE"],["r","✕ XIDH BASKET","cmd:BASKET:CLOSE"]]},
+  GRID:{nm:"GRID",c:"#a78bfa",core:1,cat:"GRID",live:["grCard"],
+    on:()=>{ const G=XK.d&&XK.d.grid; return !!(G&&((G.cfg&&G.cfg.on!==undefined)?Number(G.cfg.on):G.on)); },
+    sub:()=>{ const G=XK.d&&XK.d.grid; if(!G) return "XOG MA JIRO"; const dm=Number((G.cfg||{}).dir), md=dm===3?"LABADA CORE":(dm===4?"TREND EMA":"GRID"), n=xkN(G.c)||xkN(G.n);
+      return md+" · "+(G.st==="RUN"?(n+" HEER"+(G.dir&&G.dir!=="BOTH"?" · "+G.dir:"")):(XKS.GRID.on()?"SUGAYA":"DAMMAN")); },
+    day:()=>{ const G=XK.d&&XK.d.grid; return G&&G.day?xkN(G.day.pl):null; },
+    tiles:()=>{ const G=XK.d&&XK.d.grid||{}, n=xkN(G.c)||xkN(G.n); return [[G.st==="RUN"?"FLOAT":"HEERAR",G.st==="RUN"?xkUsd(G.fl):"0",G.st==="RUN"?xkCls(G.fl):"m"],["MAANTA",xkUsd((G.day||{}).pl),xkCls((G.day||{}).pl)]]; },
+    seed:()=>{ const G=XK.d&&XK.d.grid||{}, cf=G.cfg||{}, lc=(G.lc&&G.lc.cfg)||{};
+      return {GRDIR:xkN(cf.dir),GRLOT:xkN(cf.lot,0.01),GRLV:xkN(cf.lv,6),GRSTEP:xkN(cf.step),GRSATR:xkN(cf.satr,0.5),GRTPM:xkN(cf.tpm),GRTPX:xkN(cf.tpx,1),GRLBTP:xkN(cf.lbtp,3),GRSLX:xkN(cf.slx),GRLBSL:xkN(cf.lbsl),
+        "IN:Inp_LC_Dir":xkN(lc.dir),"IN:Inp_LC_Lot":xkN(lc.lot,0.01),"IN:Inp_LC_Levels":xkN(lc.lv,8),"IN:Inp_LC_ATR_Mult":xkN(lc.atr,1),"IN:Inp_LC_TP_Step":xkN(lc.tps,1),"IN:Inp_LC_Trend_Stop":xkN(lc.tst,2),"IN:Inp_LC_Range_Only":(lc.ro===undefined?1:(Number(lc.ro)?1:0))}; },
+    quick:v=>Number(v.GRDIR)===3?[["Nooca","LABADA CORE"],["Lot · heerar",Number(v["IN:Inp_LC_Lot"]).toFixed(2)+" · "+v["IN:Inp_LC_Levels"]],["Step · TP","ATR ×"+v["IN:Inp_LC_ATR_Mult"]+" · ×"+v["IN:Inp_LC_TP_Step"]]]
+      :[["Nooca",Number(v.GRDIR)===4?"TREND EMA":"GRID"],["Lot · heerar",Number(v.GRLOT).toFixed(2)+" · "+v.GRLV],["TP",Number(v.GRTPM)===1?("$"+v.GRLBTP):("× "+v.GRTPX)]],
+    F:[{h:"Nooca grid-ka",p:"TREND EMA = hal dhinac (jihada EMA) · LABADA CORE = BUY + SELL basket",c:2,o:[{t:"TREND EMA",s:"sidiisa",set:{GRDIR:4}},{t:"LABADA CORE",s:"basket · B+S",set:{GRDIR:3}}]},
+       {h:"Lot",p:"lakab kasta · 0.01 = $1 dhaqdhaqaaq $1 kasta",stp:"GRLOT",min:0.01,max:100,step:0.01,dec:2,show:v=>Number(v.GRDIR)!==3},
+       {h:"Heerar ugu badan",p:"inta lakab ee la furi karo",c:4,show:v=>Number(v.GRDIR)!==3,o:[4,6,8,12].map(x=>({t:String(x),set:{GRLV:x}}))},
+       {h:"Masaafada",p:"AUTO = ATR M5 × · ama $ go'an (Input)",c:3,show:v=>Number(v.GRDIR)!==3,o:v=>{ const a=[0.3,0.5,1].map(x=>({t:"AUTO ×"+x,set:{GRSTEP:0,GRSATR:x}})); if(Number(v.GRSTEP)>0) a.push({t:"$"+v.GRSTEP,s:"go'an",set:{GRSTEP:Number(v.GRSTEP)}}); return a; }},
+       {h:"Habka TP / SL",p:"× MASAAFO = baaritaanka · $ GO'AN = habkii hore",c:2,show:v=>Number(v.GRDIR)!==3,o:[{t:"× MASAAFO",set:{GRTPM:0}},{t:"$ GO'AN",set:{GRTPM:1}}]},
+       {h:"TP basket",p:"marka basket-ku gaadho → dhammaan waa la xidhaa",c:4,show:v=>Number(v.GRDIR)!==3,o:v=>Number(v.GRTPM)===1?[2,3,5,10].map(x=>({t:"$"+x,set:{GRLBTP:x}})):[1,1.5,2,3].map(x=>({t:"×"+x,set:{GRTPX:x}}))},
+       {h:"SL basket",p:"0 = OFF",c:4,show:v=>Number(v.GRDIR)!==3,o:v=>Number(v.GRTPM)===1?[[0,"OFF"],[20,"$20"],[50,"$50"],[100,"$100"]].map(a=>({t:a[1],set:{GRLBSL:a[0]}})):[[0,"OFF"],[3,"×3"],[5,"×5"],[8,"×8"]].map(a=>({t:a[1],set:{GRSLX:a[0]}}))},
+       {h:"Dhinaca",p:"LABADA = BUY + SELL",c:3,show:v=>Number(v.GRDIR)===3,o:[["LABADA",0],["BUY",1],["SELL",2]].map(a=>({t:a[0],set:{"IN:Inp_LC_Dir":a[1]}}))},
+       {h:"Lot lakab kasta",p:"martingale ma jiro",stp:"IN:Inp_LC_Lot",min:0.01,max:100,step:0.01,dec:2,show:v=>Number(v.GRDIR)===3},
+       {h:"Heerar dhinac kasta",p:"tijaabo: 8",c:4,show:v=>Number(v.GRDIR)===3,o:[4,6,8,10].map(x=>({t:String(x),set:{"IN:Inp_LC_Levels":x}}))},
+       {h:"Step (ATR H1 ×)",p:"fogaanta heer iyo heer",c:3,show:v=>Number(v.GRDIR)===3,o:[[0.8,"dhow"],[1,"talo"],[1.5,"fog"]].map(a=>({t:String(a[0]),s:a[1],set:{"IN:Inp_LC_ATR_Mult":a[0]}}))},
+       {h:"TP basket (step ×)",p:"tijaabo: 1.0",c:3,show:v=>Number(v.GRDIR)===3,o:[0.6,1,1.5].map(x=>({t:"×"+x,set:{"IN:Inp_LC_TP_Step":x}}))},
+       {h:"Trend-stop",p:"basket ≥ N + trend ka soo horjeeda → xidh",c:3,show:v=>Number(v.GRDIR)===3,o:[[0,"OFF"],[2,"2"],[3,"3"]].map(a=>({t:a[1],set:{"IN:Inp_LC_Trend_Stop":a[0]}}))},
+       {h:"Range kaliya (ADX)",p:"grid cusub marka suuqu range yahay",c:2,show:v=>Number(v.GRDIR)===3,o:[{t:"ON",set:{"IN:Inp_LC_Range_Only":1}},{t:"OFF",set:{"IN:Inp_LC_Range_Only":0}}]}],
+    tog:v=>({GRON:v}),
+    btns:()=>[["r","✕ XIDH GRID","cmd:GRID:CLOSE"]]},
+  SR:{nm:"SR / SD",c:"#2dd4bf",core:2,cat:"SRSD",live:["znCard","rsnCard"],
+    on:()=>{ const i=xkStratI(); return xkC2() && (i===0||i===2); },
+    sub:()=>{ const s=xkSet(), P=["TAYO","DHEXE","BADAN"]; return "ZONE · "+(P[xkN(s.sdprof,-1)]||"SNIPER")+" · RR 1:"+(s.rr||3); },
+    day:()=>{ const S=xkStat("SR"); return S?xkN(S.d):null; },
+    tiles:()=>{ const z=(typeof ZN!=="undefined"&&ZN)?ZN:null, S=xkStat("SR"); return [["ZONE YAR",z?(z.on?((Array.isArray(z.z)?z.z.length:0)+" zone"):"damman"):"—",z&&z.on?"y":"m"],["MAANTA",xkUsd(S?S.d:0),xkCls(S?S.d:0)]]; },
+    seed:()=>{ const s=xkSet(), z=(typeof ZN!=="undefined"&&ZN)?ZN:{}; return {SDPROF:xkN(s.sdprof,1),SNRR:xkN(s.rr,3),STARS:xkN(s.stars,2),EMAF:(s.ema_on===undefined?1:(s.ema_on?1:0)),SNIPER:((s.sniper_on!==undefined?s.sniper_on:s.sniper)?1:0),ZNON:z.on?1:0,ZNTF:xkN(z.tf,1),ZNSH:z.sh?1:0}; },
+    quick:v=>[["Zone",["TAYO","DHEXE","BADAN"][v.SDPROF]||"—"],["RR · ★","1:"+v.SNRR+" · ★"+v.STARS],["EMA filter",Number(v.EMAF)?"ON":"OFF"]],
+    F:[{h:"Heerka zone-ka",p:"TAYO = zone xoog leh oo keliya · BADAN = trade badan",c:3,o:[["TAYO",0],["DHEXE",1],["BADAN",2]].map(a=>({t:a[0],set:{SDPROF:a[1]}}))},
+       {h:"RR (SR + SMC)",p:"TP = SL × RR",c:3,o:[2,3,4].map(x=>({t:"1:"+x,set:{SNRR:x}}))},
+       {h:"★ ugu yar (SR + SMC)",p:"tayada signal-ka",c:3,o:[1,2,3].map(x=>({t:"★".repeat(x),set:{STARS:x}}))},
+       {h:"EMA filter (H1 + H4)",p:"jihada EMA la raac",c:2,o:[{t:"OFF",set:{EMAF:0}},{t:"ON",set:{EMAF:1}}]},
+       {h:"Sniper",p:"gelitaan adag oo keliya",c:2,o:[{t:"OFF",set:{SNIPER:0}},{t:"ON",set:{SNIPER:1}}]},
+       {h:"Zone yar (M1 / M5)",p:"zone-yada yaryar ee chart-ka",c:2,o:[{t:"OFF",set:{ZNON:0}},{t:"ON",set:{ZNON:1}}]},
+       {h:"Zone yar · TF",c:3,show:v=>Number(v.ZNON)===1,o:[["M1",0],["M5",1],["LABADA",2]].map(a=>({t:a[0],set:{ZNTF:a[1]}}))},
+       {h:"Zone yar · chart MT5",c:2,show:v=>Number(v.ZNON)===1,o:[{t:"MUUJI",set:{ZNSH:1}},{t:"QARI",set:{ZNSH:0}}]}],
+    tog:v=>xkC2Tog("SR",v),
+    btns:()=>[["r","✕ XIDH TRADE-YADA SR","tk"]]},
+  SMC:{nm:"SMC",c:"#f472b6",core:2,cat:"SMC",live:["rsnCard"],
+    on:()=>{ const i=xkStratI(); return xkC2() && (i===1||i===2); },
+    sub:()=>{ const s=xkSet(); return "SWEEP · BOS · OB · FVG · RR 1:"+(s.rr||3); },
+    day:()=>{ const S=xkStat("SMC"); return S?xkN(S.d):null; },
+    tiles:()=>{ const S=xkStat("SMC"), n=xkTrades("SMC").length; return [["FURAN",String(n),n?"y":"m"],["MAANTA",xkUsd(S?S.d:0),xkCls(S?S.d:0)]]; },
+    seed:()=>{ const s=xkSet(); return {SNRR:xkN(s.rr,3),STARS:xkN(s.stars,2),EMAF:(s.ema_on===undefined?1:(s.ema_on?1:0)),SNIPER:((s.sniper_on!==undefined?s.sniper_on:s.sniper)?1:0)}; },
+    quick:v=>[["RR","1:"+v.SNRR],["★ ugu yar","★"+v.STARS],["EMA · Sniper",(Number(v.EMAF)?"ON":"OFF")+" · "+(Number(v.SNIPER)?"ON":"OFF")]],
+    F:[{h:"RR (SR + SMC)",p:"TP = SL × RR",c:3,o:[2,3,4].map(x=>({t:"1:"+x,set:{SNRR:x}}))},
+       {h:"★ ugu yar (SR + SMC)",p:"tayada signal-ka",c:3,o:[1,2,3].map(x=>({t:"★".repeat(x),set:{STARS:x}}))},
+       {h:"EMA filter (H1 + H4)",c:2,o:[{t:"OFF",set:{EMAF:0}},{t:"ON",set:{EMAF:1}}]},
+       {h:"Sniper",p:"gelitaan adag oo keliya",c:2,o:[{t:"OFF",set:{SNIPER:0}},{t:"ON",set:{SNIPER:1}}]}],
+    tog:v=>xkC2Tog("SMC",v),
+    btns:()=>[["r","✕ XIDH TRADE-YADA SMC","tk"]]}
+};
+function xkC2Tog(k,v){
+  let sr=XKS.SR.on(), smc=XKS.SMC.on();
+  if(k==="SR") sr=!!v; else smc=!!v;
+  if(!sr && !smc) return {C2ON:0};
+  return {C2ON:1,STRAT:(sr&&smc)?2:(sr?0:1)};
+}
+function xkOn(k){ return xkHeld(k,XKS[k].on()); }
+/* ---------- Guud: kaararka ---------- */
+function xkCardHtml(k,big){
+  const D=XKS[k], on=xkOn(k), pg=big?0:(XK.cp[k]||0), dl=D.day(), dis=(typeof PERMS!=="undefined"&&PERMS)?" disabled":"";
+  let inner="";
+  if(pg===1){
+    const tr=xkTrades(k).slice(0,3);
+    inner='<div class="mini">'+(tr.length?tr.map(t=>{ const b=String(t.type||"").toUpperCase()==="BUY", p=xkN(t.profit);
+      return '<div><span><b class="'+(b?"b":"s")+'">'+(b?"BUY":"SELL")+'</b> '+esc(t.sym||"")+' · '+xkN(t.lot).toFixed(2)+'</span><b class="'+xkCls(p)+'">'+xkUsd(p)+'</b></div>'; }).join(""):'<div><span class="m">Trade furan ma jiro</span><b class="m">0</b></div>')
+      +(xkTrades(k).length>3?'<div><span class="m">+ '+(xkTrades(k).length-3)+' kale</span><b></b></div>':'')+'</div>';
+  } else if(pg===2){
+    const v=Object.assign({},D.seed(),(XK.pend&&Date.now()-XK.pend.t<40000)?XK.pend.v:{});
+    inner='<div class="mini">'+D.quick(v).map(a=>'<div><span>'+esc(a[0])+'</span><b>'+esc(String(a[1]))+'</b></div>').join("")+'</div>';
+  } else {
+    inner='<div class="ic"><svg viewBox="0 0 24 24">'+XK_IC[k]+'</svg></div><div class="tx"><b>'+esc(D.nm)+'</b><small>'+esc(D.sub())+'</small></div>'
+      +(dl===null?'':'<div class="rt '+xkCls(dl)+'">'+xkUsd(dl)+'<small>MAANTA</small></div>');
+  }
+  return '<div class="xknc'+(on?'':' off')+'" data-k="'+k+'" style="--c:'+D.c+'">'+inner
+    +'<button type="button" class="go'+(on?'':' off')+'" data-go="'+k+'" aria-label="'+esc(D.nm)+' shid / dami"'+dis+'></button>'
+    +(big?'':'<div class="dots"><i'+(pg===0?' class="on"':'')+'></i><i'+(pg===1?' class="on"':'')+'></i><i'+(pg===2?' class="on"':'')+'></i></div>')+'</div>';
+}
+function xkTilesHtml(k){ return '<div class="xkqm">'+XKS[k].tiles().map(a=>'<div><span>'+esc(a[0])+'</span><b class="'+(a[2]||"")+'">'+esc(String(a[1]))+'</b></div>').join("")+'</div>'; }
+function xkSetHtml(id,h){ if(XK.html[id]===h) return; XK.html[id]=h; const e=$("#"+id); if(e) e.innerHTML=h; }
+function xkInit(){
+  if(XK.init) return; XK.init=true;
+  const hold=$("#xkHold"), box=$("#xkBox"), rs=$("#rsnCard");
+  if(rs && rs.parentNode){ const ph=document.createElement("i"); ph.id="xkRsnPh"; ph.hidden=true; rs.parentNode.insertBefore(ph,rs); }
+  ["coreBox","tkCard","bskCard","grCard","znCard","asCard"].forEach(id=>{ const e=$("#"+id); if(e && hold) hold.appendChild(e); });
+  /* CHART SCANNER -> CORE 2 (SR/SD + SMC kadib) */
+  const qc=$("#qtCard"), qm=$("#qtMini"), l2=$("#xkL2");
+  if(qc && l2 && box){ box.appendChild(qc); if(qm) box.appendChild(qm); }
+  [1,2].forEach(c=>{ const b=$("#xkC"+c+"S"); if(b) b.addEventListener("click",()=>{ const s=$("#coreSw"+c); if(s && !s.disabled) s.click(); setTimeout(()=>xkPaintGuud(),50); }); });
+  if(box) xkGest(box);
+  const pg=$("#xkPg");
+  if(pg){
+    $("#xkBack").addEventListener("click",()=>xkClose(true));
+    $("#xkPgS").addEventListener("click",()=>{ if(XK.open) xkToggle(XK.open); });
+    $("#xkPgF").addEventListener("click",xkFieldClick);
+    $("#xkSave").addEventListener("click",xkSave);
+    $("#xkAll").addEventListener("click",()=>{ const k=XK.open; if(!k) return; const c=XKS[k].cat; xkClose(true); try{ tab("Input"); inCatSet(c,true); }catch(e){} });
+    $("#xkPgX").addEventListener("click",xkBtnClick);
+    $("#xkPgTr").addEventListener("click",ev=>{ const b=ev.target.closest("button[data-tk]"); if(!b || b.disabled) return; xkCloseTk([b.dataset.tk],"✕ Xidh trade #"+b.dataset.tk+"?"); });
+    const pc=$("#xkPgC"); if(pc) pc.addEventListener("click",ev=>{ const g=ev.target.closest("[data-go]"); if(g && !g.disabled) xkToggle(g.dataset.go); });
+  }
+  addEventListener("popstate",()=>{ if(XK.open) xkClose(false); });
+}
+function xkGest(box){
+  let st=null;
+  box.addEventListener("pointerdown",ev=>{ const c=ev.target.closest(".xknc[data-k]"); if(!c) return; st={k:c.dataset.k,x:ev.clientX,y:ev.clientY,go:!!ev.target.closest("[data-go]")}; });
+  box.addEventListener("pointercancel",()=>{ st=null; });
+  box.addEventListener("pointerup",ev=>{
+    if(!st) return; const s=st; st=null;
+    const dx=ev.clientX-s.x, dy=ev.clientY-s.y;
+    if(Math.abs(dx)>40 && Math.abs(dx)>Math.abs(dy)*1.2){ const p=XK.cp[s.k]||0; XK.cp[s.k]=(p+(dx<0?1:2))%3; xkPaintGuud(); return; }
+    if(Math.abs(dx)>12 || Math.abs(dy)>12) return;
+    if(s.go){ const g=box.querySelector('[data-go="'+s.k+'"]'); if(g && !g.disabled) xkToggle(s.k); return; }
+    xkOpen(s.k);
+  });
+}
+function xkPaintGuud(){
+  [1,2].forEach(c=>{
+    xkSetHtml("xkL"+c,XK_ORD[c].map(k=>xkCardHtml(k,false)+xkTilesHtml(k)).join(""));
+    const x=(typeof CORED!=="undefined"&&CORED)?CORED["c"+c]:null, row=$("#xkC"+c), sw=$("#xkC"+c+"S"), em=$("#xkC"+c+"P"), w=$("#xkC"+c+"W");
+    if(!row) return;
+    let on=true; try{ on=!!coreOn(c); }catch(e){ on=x?!!Number(x.on):true; }
+    row.classList.toggle("off",!on); swSet("xkC"+c+"S",on); if(sw) sw.disabled=!x || (typeof PERMS!=="undefined"&&!!PERMS);
+    if(em){ if(x){ const p=xkN(x.pl); em.textContent=xkUsd(p); em.className=xkCls(p); } else { em.textContent=""; em.className=""; } }
+    if(w){ const ok=x?!!Number(x.ok):true, why=x?String(x.why||""):""; w.hidden=!(x && on && !ok && why); w.textContent=w.hidden?"":"⏸ "+why; }
+  });
+}
+/* ---------- shid / dami ---------- */
+async function xkToggle(k){
+  if(typeof PERMS!=="undefined" && PERMS){ xkMsg("bad","Shid / dami: admin-ka ayaa maamula."); return; }
+  const v=xkOn(k)?0:1, vals=XKS[k].tog(v);
+  XK.hold[k]={v:v,t:Date.now()}; if(k==="SR"||k==="SMC"){ const o=(k==="SR")?"SMC":"SR"; XK.hold[o]={v:xkOn(o)?1:0,t:Date.now()}; }
+  xkPaintGuud(); if(XK.open) xkPaintPg();
+  const err=await cfgPost(vals);
+  if(err){ XK.hold[k]=null; xkMsg("bad","⚠️ "+err); }
+  else xkMsg(v?"ok":"wt",(v?"✓ ":"⏸ ")+XKS[k].nm+(v?" waa la shiday":" waa la damiyay")+" · bot-ku ~10–20 ilbiriqsi gudahood ayuu qaadanayaa"+(v?"":" · trade-yada furan waa la sii maamulaa"));
+  xkPaintGuud(); if(XK.open) xkPaintPg();
+}
+function xkMsg(c,t){ XK.msg={c:c,t:t,at:Date.now()}; const m=$("#xkPgM"); if(m && XK.open){ m.hidden=false; m.className="xkmsg "+c; m.textContent=t; } else { try{ tmLog(c==="bad"?"bad":"wt",esc(t)); }catch(e){} } }
+/* ---------- bogga xeeladda ---------- */
+function xkOpen(k){
+  if(!XKS[k]) return;
+  XK.open=k; XK.msg=null; XK.v={}; XK.s={}; ["xkPgC","xkPgK","xkPgF","xkPgTr","xkPgX"].forEach(x=>{ XK.html[x]=null; });
+  xkSeed(true);
+  const live=$("#xkLive"); if(live){ XKS[k].live.forEach(id=>{ const e=$("#"+id); if(e) live.appendChild(e); }); }
+  $("#xkPg").hidden=false; document.body.classList.add("xkon"); $("#xkPg").scrollTop=0;
+  try{ history.pushState({xk:k},""); XK.bk=true; }catch(e){ XK.bk=false; }
+  xkPaintPg();
+}
+function xkClose(fromBtn){
+  const k=XK.open; if(!k) return;
+  if(Object.keys(xkDiff()).length && !confirm("Isbeddelada lama kaydin. Ka bax?")) { if(!fromBtn){ try{ history.pushState({xk:k},""); }catch(e){} } return; }
+  const hold=$("#xkHold"), ph=$("#xkRsnPh");
+  XKS[k].live.forEach(id=>{ const e=$("#"+id); if(!e) return; if(id==="rsnCard" && ph && ph.parentNode){ ph.parentNode.insertBefore(e,ph); } else if(hold) hold.appendChild(e); });
+  XK.open=""; $("#xkPg").hidden=true; document.body.classList.remove("xkon");
+  if(fromBtn && XK.bk){ XK.bk=false; try{ history.back(); }catch(e){} }
+  xkPaintGuud();
+}
+function xkSeed(force){
+  const k=XK.open; if(!k) return;
+  const s=XKS[k].seed();
+  if(XK.pend && Date.now()-XK.pend.t<40000) Object.keys(XK.pend.v).forEach(x=>{ if(s[x]!==undefined) s[x]=XK.pend.v[x]; });
+  const touched=Object.keys(xkDiff()).length>0;
+  XK.s=s; if(force || !touched) XK.v=Object.assign({},s);
+}
+function xkDiff(){ const o={}; Object.keys(XK.v).forEach(x=>{ if(XK.s[x]===undefined || Math.abs(Number(XK.v[x])-Number(XK.s[x]))>1e-9) o[x]=XK.v[x]; }); return o; }
+function xkActive(set){ return Object.keys(set).every(x=>XK.v[x]!==undefined && Math.abs(Number(XK.v[x])-Number(set[x]))<1e-9); }
+function xkFieldsHtml(){
+  const k=XK.open, D=XKS[k], v=XK.v, dis=(typeof PERMS!=="undefined"&&PERMS)?" disabled":"";
+  let h='<div class="xksec" style="border:0;margin-top:2px;padding-top:6px"><h4 style="font-size:13px;letter-spacing:.12em;color:var(--ink3)">⚙️ SITINKA '+esc(D.nm)+'</h4></div>';
+  D.F.forEach((f,i)=>{
+    if(f.show && !f.show(v)) return;
+    h+='<div class="xksec"><h4>'+esc(f.h)+'</h4>'+(f.p?'<p>'+esc(f.p)+'</p>':'');
+    if(f.stp){ const x=Number(v[f.stp]); h+='<div class="xkstp"><button type="button" data-f="'+i+'" data-d="-1"'+dis+'>−</button><b>'+(isFinite(x)?x.toFixed(f.dec||0):"—")+'</b><button type="button" data-f="'+i+'" data-d="1"'+dis+'>+</button></div>'; }
+    else { const o=(typeof f.o==="function")?f.o(v):f.o;
+      h+='<div class="xkop c'+Math.min(4,f.c||o.length)+'">'+o.map((a,j)=>'<button type="button" data-f="'+i+'" data-o="'+j+'" class="'+(xkActive(a.set)?"on":"")+'"'+dis+'>'+esc(a.t)+(a.s?'<small>'+esc(a.s)+'</small>':'')+'</button>').join("")+'</div>'; }
+    h+='</div>';
+  });
+  return h;
+}
+function xkFieldClick(ev){
+  const b=ev.target.closest("button[data-f]"); if(!b || b.disabled) return;
+  const f=XKS[XK.open].F[Number(b.dataset.f)]; if(!f) return;
+  if(f.stp){ const st=f.step||1, cur=Number(XK.v[f.stp]); let x=(isFinite(cur)?cur:f.min)+st*Number(b.dataset.d); x=Math.max(f.min,Math.min(f.max,Math.round(x/st)*st)); XK.v[f.stp]=Number(x.toFixed(f.dec||0)); }
+  else { const o=(typeof f.o==="function")?f.o(XK.v):f.o, a=o[Number(b.dataset.o)]; if(!a) return; Object.keys(a.set).forEach(x=>{ XK.v[x]=a.set[x]; }); }
+  xkPaintPg();
+}
+function xkPaintPg(){
+  const k=XK.open; if(!k) return; const D=XKS[k];
+  $("#xkPgT").textContent=D.nm; swSet("xkPgS",xkOn(k)); $("#xkPgS").disabled=(typeof PERMS!=="undefined"&&!!PERMS);
+  xkSetHtml("xkPgC",xkCardHtml(k,true));
+  const S=xkStat(k), dl=D.day();
+  xkSetHtml("xkPgK",'<div><span>MAANTA</span><b class="'+xkCls(dl)+'">'+(dl===null?"—":xkUsd(dl))+'</b></div><div><span>30 MAALIN</span><b class="'+xkCls(S?S.net:0)+'">'+(S&&S.n?xkUsd(S.net):"—")+'</b></div><div><span>PF · WIN</span><b>'+(S&&S.n?((S.pf>=99?"∞":Number(S.pf).toFixed(2))+" · "+Math.round(S.wr)+"%"):"—")+'</b></div>');
+  const m=$("#xkPgM"); if(XK.msg && Date.now()-XK.msg.at<15000){ m.hidden=false; m.className="xkmsg "+XK.msg.c; m.textContent=XK.msg.t; } else m.hidden=true;
+  xkSetHtml("xkPgF",xkFieldsHtml());
+  /* trade-yada */
+  const tr=xkTrades(k), can=(typeof permOK==="function")?permOK("close"):true, fl=tr.reduce((a,t)=>a+xkN(t.profit),0);
+  $("#xkLiveP").textContent=tr.length?(tr.length+" trade furan · "+xkUsd(fl)):"Trade furan ma jiro hadda.";
+  xkSetHtml("xkPgTr",tr.map(t=>{ const b=String(t.type||"").toUpperCase()==="BUY", p=xkN(t.profit), dg=Number(t.dg)>=0&&Number(t.dg)<=8?Number(t.dg):2;
+    return '<div class="xktr"><span class="d '+(b?"b":"s")+'">'+(b?"BUY":"SELL")+'</span><div class="t"><b>'+esc(t.sym||"")+' · '+xkN(t.lot).toFixed(2)+'</b><small>'+(xkN(t.entry)?xkN(t.entry).toFixed(dg):"")+(xkN(t.cur)?" → "+xkN(t.cur).toFixed(dg):"")+' · #'+esc(String(t.tk||""))+'</small></div><span class="p '+(p>=0?"g":"r")+'">'+xkUsd(p)+'</span>'
+      +(t.tk?'<button type="button" data-tk="'+esc(String(t.tk))+'"'+(can?"":" disabled")+'>✕</button>':'')+'</div>'; }).join(""));
+  xkSetHtml("xkPgX",D.btns().map((a,i)=>'<button type="button" class="'+a[0]+'" data-b="'+i+'"'+(can?"":" disabled")+'>'+esc(a[1])+'</button>').join(""));
+  const df=Object.keys(xkDiff()).length, sv=$("#xkSave");
+  sv.disabled=!df || (typeof PERMS!=="undefined"&&!!PERMS); $("#xkSaveN").textContent=df?(df+" sitin ayaa isbeddelay · riix KAYDI"):"Wax lama beddelin";
+}
+function xkBtnClick(ev){
+  const b=ev.target.closest("button[data-b]"); if(!b || b.disabled) return;
+  const a=XKS[XK.open].btns()[Number(b.dataset.b)]; if(!a) return;
+  if(a[2]==="tk"){ const tks=xkTrades(XK.open).map(t=>String(t.tk)).filter(Boolean); if(!tks.length){ xkMsg("wt","Trade furan ma jiro."); xkPaintPg(); return; } xkCloseTk(tks,a[1]+" ("+tks.length+")?"); return; }
+  const cmd=a[2].slice(4);
+  const go=()=>{ tmSend(cmd).then(ok=>{ xkMsg(ok?"wt":"bad",ok?("⏳ "+a[1]+" · bot-ka ayaa loo diray"):"⚠️ lama dirin"); xkPaintPg(); }); };
+  try{ cfmOpen({title:a[1]+"?",html:"Amarka bot-ka ayaa isla markiiba loo dirayaa.",ok:a[1],okCls:"o",onOk:go}); }catch(e){ if(confirm(a[1]+"?")) go(); }
+}
+function xkCloseTk(tks,title){
+  const go=async ()=>{ let n=0; for(const t of tks){ if(await tmSend("TRD:CLOSE:"+t)) n++; } xkMsg(n?"wt":"bad",n?("⏳ "+n+" trade · xidhid ayaa loo diray"):"⚠️ lama dirin"); xkPaintPg(); };
+  try{ cfmOpen({title:title,html:"Trade-yada waxaa lagu xidhayaa qiimaha suuqa.",ok:"✕ XIDH",okCls:"o",onOk:go}); }catch(e){ if(confirm(title)) go(); }
+}
+async function xkSave(){
+  const k=XK.open; if(!k) return; const df=xkDiff(); if(!Object.keys(df).length) return;
+  const vals={};
+  Object.keys(df).forEach(x=>{ let v=Number(df[x]); if(XK_BOOL[x]) vals[x]=v?"true":"false"; else if(XK_INT[x]) vals[x]=String(Math.round(v)); else vals[x]=String(Number(v.toFixed(4))); });
+  const sv=$("#xkSave"); sv.disabled=true; sv.textContent="Kaydinaya…";
+  const err=await cfgPost(vals);
+  sv.textContent="KAYDI & DIR → EA";
+  if(err){ xkMsg("bad","⚠️ "+err); }
+  else { XK.pend={v:Object.assign({},df),t:Date.now()}; XK.s=Object.assign({},XK.v); xkMsg("ok","✓ La kaydiyay oo EA-ga ayaa loo diray · bot-ku 5–20 ilbiriqsi gudahood ayuu qaadanayaa"); }
+  xkPaintPg(); xkPaintGuud();
+}
+function xkPaint(d){
+  XK.d=d||null; if(!$("#xkBox")) return;
+  xkInit(); xkPaintGuud();
+  if(XK.open){ xkSeed(false); xkPaintPg(); }
+}
 </script></body></html>"""
 
 T_ADMIN = """<!doctype html><html lang="so"><head><meta charset="utf-8">
