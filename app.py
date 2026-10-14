@@ -20,6 +20,7 @@ Web (session auth):
   /login /register /logout /dashboard /admin
   GET  /api/state         -> xogta account-ka user-ka
   POST /api/command       -> amar loo diro EA-da
+  v13.33: 👑 /update jawaab: vps_age · vps_algo (EA v74.0 ROYAL GOLD dashboard · VPS shidan / damsan)
   v13.32: 🧮 GRID BASKET: BUY / SELL (EA v73.3 · jihada EMA200 H1 + H4) → kaarka · NEXT · trade-yada magacyadooda
   v13.31: 🧮 GRID BASKET: jid labaad (EA v73.1): xaaladda push-ka weyn (gbx) · sitin / amarro → GBX: (amarrada bot-ka) · EA OFFLINE 75s kadib
   v13.30: 🧮 GRID BASKET = xeelad bot-ka weyn (EA v73.0 · ⚡ CORE 1 · magic +156 · chart-ka dahabka) · journal GBASKET (🧮 · CORE 1) ·
@@ -3323,11 +3324,13 @@ def ea_update():
     gbx = d.pop("gbx", None)                             # v13.31 (EA v73.1): 🧮 GRID BASKET xaalad (jid labaad)
     vps = d.pop("vps", None)                             # v13.12 (EA v72.1.7): 🛰 xaaladda bot-ka
     evl = d.pop("ev", None)                              # v13.12: dhacdooyinka
+    va, vg = -1, 1                                       # v13.33: 👑 EA dashboard -> VPS (ilbiriqsi · algo)
     if isinstance(vps, dict) or isinstance(evl, list):
         with db() as con:
             watch = _save_vps(con, acc, vps, evl, now)
+            va, vg = _vps_age(con, acc, now)
         if watch:   # PC (Algo damman · daawasho) + VPS shaqaynaya -> xogta VPS-ka ha dul qorin
-            return jsonify(ok=True, account=acc, watch=1)                         # v13.0 (EA v72.0): 🧩 2 CORE
+            return jsonify(ok=True, account=acc, watch=1, vps_age=va, vps_algo=vg)                         # v13.0 (EA v72.0): 🧩 2 CORE
     with db() as con:
         _save_inp(con, acc, inp, d)
         _save_zn(con, acc, zn)
@@ -3369,7 +3372,7 @@ def ea_update():
                         "DELETE FROM history WHERE account=? AND id NOT IN"
                         " (SELECT id FROM history WHERE account=? ORDER BY ts DESC LIMIT ?)",
                         (acc, acc, HISTORY_CAP))
-    return jsonify(ok=True, account=acc)
+    return jsonify(ok=True, account=acc, vps_age=va, vps_algo=vg)
 
 
 @app.post("/trades")
@@ -5511,7 +5514,7 @@ def _gb_text(lines, code=200):
 @app.get("/gb")
 def ea_gb_ping():
     """v13.29: browser-ka ka hubi in app-ka cusub la shubay."""
-    return _gb_text(["MOHA GRID BASKET · app v13.32 · diyaar (EA-gu POST ayuu u diraa)"])
+    return _gb_text(["MOHA GRID BASKET · app v13.33 · diyaar (EA-gu POST ayuu u diraa)"])
 
 
 @app.post("/gb")
@@ -7510,6 +7513,18 @@ def _ev_merge(con, acc, items, now):
         lst.append(it)
     lst.sort(key=lambda e: float(e.get("t") or 0))
     _kv_put(con, "ev:" + acc, {"l": lst[-80:]})
+
+
+def _vps_age(con, acc, now):
+    """v13.33: VPS-ka xogtiisii ugu dambeysay (ilbiriqsi) · algo · -1 = VPS weligii lama arag."""
+    rec = _kv_get(con, "vps:" + acc)
+    v = rec.get("VPS") if isinstance(rec, dict) else None
+    if not isinstance(v, dict):
+        return -1, 1
+    t = max(float(v.get("at") or 0), float(v.get("lat") or 0))
+    if t <= 0:
+        return -1, 1
+    return int(max(0, now - t)), (1 if v.get("algo") else 0)
 
 
 def _save_vps(con, acc, v, ev, now):
