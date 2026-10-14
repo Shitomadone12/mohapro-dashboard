@@ -20,6 +20,9 @@ Web (session auth):
   /login /register /logout /dashboard /admin
   GET  /api/state         -> xogta account-ka user-ka
   POST /api/command       -> amar loo diro EA-da
+  v13.26: 🎯 DBOT SNIPER AMMAAN: Signal = TICK KASTA / SNIPER · SNIPER = sug calaamad (OVER: N digit ≤ barrier isku xiga ·
+          DIFFERS: N digit isku mid · RISE/FALL: N tick isku jiho) · stake go'an (martingale OFF) · xad maalinle $ · trade maalintii ·
+          nasasho trade kadib · TP/SL wareeg · daacad: calaamaddu fursadda ma beddesho (20M tick) → khasaare tartiib ah oo xadidan
   v13.25: ⚡ BINARY FIX: Deriv API cusub (PAT + OTP · options/ws) wuxuu diiday buy-ga ("Input validation failed: parameters") ->
           parameters.underlying_symbol (API cusub) · symbol (legacy) · buy="1" (string, schema) · khaladkaas -> si toos ah u beddel oo isku day
   v13.24: 🤖 BINARY · DBOT TICK (sida dbot.deriv.com): Synthetic 24/7 (Volatility 10 1s · 10 · 25 · 75 · 100) · OVER (barrier) ·
@@ -4455,7 +4458,8 @@ BIN_SYMS = {"XAU": ("frxXAUUSD", "XAU/USD", 2), "EUR": ("frxEURUSD", "EUR/USD", 
             "GBP": ("frxGBPUSD", "GBP/USD", 5), "BTC": ("cryBTCUSD", "BTC/USD", 2)}
 BIN_DEF = {"on": 0, "sym": "XAU", "exp": 5, "stake": 1.0, "hs": 7, "he": 20, "dl": 5.0, "maxn": 20,
            "mode": "demo", "rlo": 30, "rhi": 70,
-           "eng": "rsi", "dsym": "1HZ10V", "ct": "OVER", "bar": 1, "dur": 1, "mm": -1.0, "mstep": 5, "tp": 10.0, "sl": 100.0, "dbr": 0}   # v13.24: 🤖 DBOT
+           "eng": "rsi", "dsym": "1HZ10V", "ct": "OVER", "bar": 1, "dur": 1, "mm": -1.0, "mstep": 5, "tp": 10.0, "sl": 100.0, "dbr": 0,
+           "sn": 0, "snk": 2, "scd": 30}   # v13.24: 🤖 DBOT · v13.26: 🎯 SNIPER
 BIN_DSYMS = {"1HZ10V": ("Volatility 10 (1s)", 2), "R_10": ("Volatility 10", 3), "R_25": ("Volatility 25", 3),
              "R_75": ("Volatility 75", 4), "R_100": ("Volatility 100", 2)}
 BIN_CTS = {"RF": "RISE / FALL", "OVER": "OVER", "DIFF": "DIFFERS"}
@@ -4665,6 +4669,11 @@ def _bin_clean(v):
         except (TypeError, ValueError):
             pass
     num("mstep", 1, 10, int)
+    if str(v.get("sn")) in ("0", "1"):                     # v13.26: 🎯 SNIPER
+        o["sn"] = int(v["sn"])
+    num("snk", 1, 4, int)
+    if str(v.get("scd")) in ("0", "10", "30", "60"):
+        o["scd"] = int(v["scd"])
     num("tp", 0.0, 10000.0)
     num("sl", 1.0, 10000.0)
     if v.get("mode") in ("demo", "real"):
@@ -5057,6 +5066,19 @@ class _BinWorker:
             dbs = self.st.get("db") or {}
             if dbs.get("stop"):
                 return False
+            if c.get("sn"):                               # v13.26: 🎯 SNIPER -> xad maalinle + trade maalintii
+                sd = getattr(self, "_snd", None)
+                if not sd or now - sd[0] > 20:
+                    with db() as con:
+                        sd = (now, _bin_day(_bin_hist(con, self.acc), now))
+                    self._snd = sd
+                day = sd[1]
+                if day["pl"] <= -float(c["dl"]) + 1e-9:
+                    self.st.update(st="XAD", why="🎯 SNIPER · xad maalinle (−$%.2f) la gaadhay · berri" % float(c["dl"]))
+                    return False
+                if day["n"] >= int(c["maxn"]):
+                    self.st.update(st="XAD", why="🎯 SNIPER · trade maalintii (%d) la gaadhay · berri" % int(c["maxn"]))
+                    return False
             if self.st.get("st") != "DONE" and not (self.st.get("st") == "ERR" and time.time() - float(getattr(self, "err_t", 0) or 0) < 5):
                 self.st.update(st="WAIT", why="DBOT · tick xiga · " + BIN_CTS.get(c.get("ct"), "") + " · $%.2f" % float(dbs.get("next") or c["stake"]))
             return True
@@ -5188,7 +5210,7 @@ class _BinWorker:
                       "ex": p.get("exit_tick") or p.get("current_spot"), "rsi": cur.get("rsi"),
                       "v": 1 if (self.st.get("acct") or {}).get("virt") else 0, "exp": int(self.cfg["exp"])}
                 if cur.get("e") == "dbot":                # v13.24: 🤖 DBOT
-                    it.update(e="dbot", ct=cur.get("ct"), bar=cur.get("bar"), sym=self.cfg.get("dsym"), exp=0, dur=cur.get("dur"))
+                    it.update(e="dbot", ct=cur.get("ct"), bar=cur.get("bar"), sym=self.cfg.get("dsym"), exp=0, dur=cur.get("dur"), sn=cur.get("sn") or 0)
                 self.add_hist(it)
                 self.st.update(cur=None, last=it, st="WAIT", why="signal sugaya")
                 if it.get("e") == "dbot":
@@ -5208,6 +5230,17 @@ class _BinWorker:
             return
         c, dbs = self.cfg, self.st.get("db") or _bin_dbnew(self.cfg)
         self.st["db"] = dbs
+        if c.get("sn"):                                   # v13.26: 🎯 SNIPER
+            lf = float(c.get("scd") or 0) - (now - float(getattr(self, "sn_t", 0) or 0))
+            if lf > 0:
+                self.st.update(st="WAIT", why="🎯 SNIPER · nasasho %ds" % int(lf + 0.99))
+                return
+            ok, rule = _bin_snok(c.get("ct") or "OVER", c.get("bar"), c.get("snk") or 2, self.st.get("dgt") or [])
+            if not ok:
+                self.st.update(st="WAIT", why="🎯 SNIPER sugaya · " + rule)
+                return
+            self.sn_t = now
+            dbs["next"] = round(max(0.35, float(c["stake"])), 2)     # stake go'an
         stake = round(max(0.35, float(dbs.get("next") or c["stake"])), 2)
         acct = self.st.get("acct") or {}
         try:
@@ -5229,14 +5262,15 @@ class _BinWorker:
             bar = int(c.get("bar") or 1)
             par.update(contract_type="DIGITOVER", barrier=str(bar))
         self.pend = now
-        self.st["cur"] = {"d": d if ct == "RF" else 1, "e": "dbot", "ct": ct, "bar": bar, "dur": dur, "en": q, "t0": int(now),
+        self.st["cur"] = {"d": d if ct == "RF" else 1, "e": "dbot", "sn": 1 if c.get("sn") else 0, "ct": ct, "bar": bar, "dur": dur, "en": q, "t0": int(now),
                           "te": int(now) + dur * 2 + 6, "stake": stake, "pay": None, "id": None}
         lbl = ("RISE" if d > 0 else "FALL") if ct == "RF" else (("OVER %d" % bar) if ct == "OVER" else ("DIFFERS %d" % bar))
-        self.st.update(st="RUN", why="DBOT · " + lbl + " · $%.2f" % stake + (" · lakab %d" % dbs.get("step") if dbs.get("step") else ""))
+        self.st.update(st="RUN", why=("🎯 SNIPER · " if c.get("sn") else "DBOT · ") + lbl + " · $%.2f" % stake + (" · lakab %d" % dbs.get("step") if dbs.get("step") else ""))
         self.ws.send({"buy": "1", "price": stake, "req_id": self.nid(), "parameters": par})
         self.save(True)
 
     def dbot_after(self, it):
+        self._snd = None                                  # v13.26: maanta dib u xisaabi
         c, dbs = self.cfg, self.st.get("db") or _bin_dbnew(self.cfg)
         base = round(max(0.35, float(c["stake"])), 2)
         stake, pr = float(it.get("stake") or base), float(it.get("pr") or 0)
@@ -5255,6 +5289,8 @@ class _BinWorker:
             loss = float(dbs.get("loss", 0)) + stake
             step = int(dbs.get("step", 0)) + 1
             mm = float(c.get("mm") if c.get("mm") is not None else -1)
+            if c.get("sn"):
+                mm = 0.0                                  # v13.26: 🎯 SNIPER = martingale OFF
             if mm == 0 or step >= int(c.get("mstep") or 5):
                 dbs.update(step=0, loss=0.0, next=base)
             else:
@@ -5391,6 +5427,41 @@ def _bin_boot():
 
 def _bin_can(u):
     return u["role"] == "admin" or bool(u["can_control"])
+
+
+def _bin_snok(ct, bar, k, tl):
+    """v13.26: 🎯 SNIPER — calaamaddu ma dhammaystiran tahay? tl = [[epoch, quote, digit], ...] (kan u dambeeya = hadda).
+    -> (ok, qoraal). OVER: k digit ≤ barrier isku xiga · DIFF: k digit isku mid · RF: k tick isku jiho."""
+    k = max(1, int(k or 1))
+    ds = [int(t[2]) for t in tl]
+    if ct == "RF":
+        q = [float(t[1]) for t in tl][-(k + 1):]
+        if len(q) < k + 1:
+            return False, "%d tick isku jiho (xog sug)" % k
+        mv = [1 if b > a else (-1 if b < a else 0) for a, b in zip(q, q[1:])]
+        run = 0
+        for x in reversed(mv):
+            if x != 0 and x == mv[-1]:
+                run += 1
+            else:
+                break
+        return run >= k, "%d tick isku jiho (hadda %d)" % (k, run)
+    if ct == "DIFF":
+        run = 0
+        for x in reversed(ds):
+            if x == ds[-1]:
+                run += 1
+            else:
+                break
+        return (len(ds) >= k and run >= k), "%d digit isku mid ah (hadda %d)" % (k, run)
+    b = int(bar or 1)
+    run = 0
+    for x in reversed(ds):
+        if x <= b:
+            run += 1
+        else:
+            break
+    return run >= k, "%d digit ≤ %d isku xiga (hadda %d)" % (k, b, run)
 
 
 def _bin_dbnew(c):
@@ -10036,6 +10107,12 @@ body.xkon{overflow:hidden}
 .bnal.g{background:rgba(25,194,107,.1);border-color:rgba(25,194,107,.5);color:#b6f5d2}
 #bnEng button,#bnCtS button{font-size:12.5px}
 #bnMm button{font-size:11px;letter-spacing:0}
+
+/* ===== v13.26: 🎯 SNIPER ===== */
+.bnsnn{font-size:11.5px;line-height:1.5;color:#ffd27a;margin:0;border:1px solid rgba(250,178,25,.35);background:rgba(250,178,25,.07);border-radius:12px;padding:9px 11px}
+.bnsnn b{color:#fff}
+#bnSn button{font-size:12.5px}
+#bnMain [hidden]{display:none!important}
 </style></head><body>
 
 <div class="offban" id="offBan" hidden><b id="offBanT">KHADKA WAA GO'AY · DAAWASHO OO KELIYA</b><small id="offBanS">—</small></div>   <!-- v13.5: 📴 -->
@@ -11051,6 +11128,16 @@ body.xkon{overflow:hidden}
             <div class="bnchips" id="bnDsym"></div></div>
           <div class="bnrow" style="display:block"><div class="k" style="margin-bottom:6px">Nooca contract-ka <small>OVER = digit-ka u dambeeya &gt; barrier · DIFFERS = digit ≠ kan hadda · RISE/FALL = jihada tick-ka</small></div>
             <div class="bnseg" id="bnCtS"><button type="button" data-v="OVER">OVER</button><button type="button" data-v="DIFF">DIFFERS</button><button type="button" data-v="RF">RISE / FALL</button></div></div>
+          <!-- v13.26: 🎯 SNIPER -->
+          <div class="bnrow" style="display:block"><div class="k" style="margin-bottom:6px">Signal <small>TICK KASTA = sida DBot (degdeg) · 🎯 SNIPER = sug calaamad · stake go'an · xad maalinle</small></div>
+            <div class="bnseg" id="bnSn"><button type="button" data-v="0">TICK KASTA</button><button type="button" data-v="1">🎯 SNIPER</button></div></div>
+          <div id="bnSnB" hidden>
+            <div class="bnrow" style="display:block"><div class="k" style="margin-bottom:6px">Calaamadda <small id="bnSnT">—</small></div>
+              <div class="bnseg" id="bnSnk"><button type="button" data-v="1">1</button><button type="button" data-v="2">2</button><button type="button" data-v="3">3</button><button type="button" data-v="4">4</button></div></div>
+            <div class="bnrow" style="display:block"><div class="k" style="margin-bottom:6px">Nasasho trade kadib <small>trade yar → khasaare tartiib ah</small></div>
+              <div class="bnseg" id="bnScd"><button type="button" data-v="0">0s</button><button type="button" data-v="10">10s</button><button type="button" data-v="30">30s</button><button type="button" data-v="60">60s</button></div></div>
+            <div class="bnrow" style="display:block"><p class="bnsnn">🎯 SNIPER AMMAAN: martingale OFF (stake go'an) · <b>Xad maalinle</b> + <b>Trade maalintii</b> (hoos) · TP / SL wareeg.<br>Daacad: tijaabo 20 milyan tick → calaamaddu win%-ka ma beddesho (OVER 1 = 80% mar walba). Faa'iido ma keento — khasaaraha ayay yaraysaa oo xadidaa.</p></div>
+          </div>
           <div class="bnrow" style="display:block" id="bnBarR"><div class="k" style="margin-bottom:6px">Barrier (OVER) <small>OVER 1 = digit 2–9 → guul ~80% · payout yar</small></div>
             <div class="bnseg" id="bnBar"><button type="button" data-v="0">0</button><button type="button" data-v="1">1</button><button type="button" data-v="2">2</button><button type="button" data-v="3">3</button><button type="button" data-v="4">4</button><button type="button" data-v="5">5</button></div></div>
           <div class="bnrow" style="display:block"><div class="k" style="margin-bottom:6px">Muddada <small>1 tick ≈ 1 ilbiriqsi (Volatility 1s)</small></div>
@@ -16095,7 +16182,7 @@ function bnChart(){
   bnE("bnHe").addEventListener("change",e=>{ BNdraft.he=Number(e.target.value); BNdirty=true; bnSetPaint(); });
   bnE("bnDl").addEventListener("input",e=>{ BNdraft.dl=Number(e.target.value); BNdirty=true; bnSetPaint(); });
   bnE("bnSave").addEventListener("click",async()=>{ const b=bnE("bnSave"); b.disabled=true; b.textContent="…";
-    const e=await bnPost("/api/binary/config",{values:{sym:BNdraft.sym,exp:BNdraft.exp,stake:BNdraft.stake,hs:BNdraft.hs,he:BNdraft.he,dl:BNdraft.dl,maxn:BNdraft.maxn,mode:BNdraft.mode,eng:BNdraft.eng,dsym:BNdraft.dsym,ct:BNdraft.ct,bar:BNdraft.bar,dur:BNdraft.dur,mm:BNdraft.mm,mstep:BNdraft.mstep,tp:BNdraft.tp,sl:BNdraft.sl}});
+    const e=await bnPost("/api/binary/config",{values:{sym:BNdraft.sym,exp:BNdraft.exp,stake:BNdraft.stake,hs:BNdraft.hs,he:BNdraft.he,dl:BNdraft.dl,maxn:BNdraft.maxn,mode:BNdraft.mode,eng:BNdraft.eng,dsym:BNdraft.dsym,ct:BNdraft.ct,bar:BNdraft.bar,dur:BNdraft.dur,mm:BNdraft.mm,mstep:BNdraft.mstep,tp:BNdraft.tp,sl:BNdraft.sl,sn:BNdraft.sn,snk:BNdraft.snk,scd:BNdraft.scd}});
     if(e){ bnE("bnSetM").textContent=e; bnE("bnSetM").style.color="#ff9a9d"; } else { BNdirty=false; BNdraft=Object.assign({},BN.cfg); bnE("bnSetM").textContent="✓ la kaydiyay · trade-ka XIGA"; bnE("bnSetM").style.color="#8ff0b9"; bnSetPaint(); } });
   bnE("bnModX").addEventListener("click",()=>{ bnE("bnMod").hidden=true; });
   const card=bnE("binCard"); if(card) card.addEventListener("click",()=>tab("Binary"));
@@ -17397,6 +17484,34 @@ function bnDbChart(){
   segc("bnEng","eng",false); segc("bnCtS","ct",false); segc("bnBar","bar",true); segc("bnDur","dur",true); segc("bnMm","mm",true);
   const stp=(m,p,k,lo,hi,st)=>{ bnE(m).addEventListener("click",()=>{ BNdraft[k]=Math.max(lo,Number(BNdraft[k])-st); BNdirty=true; bnSetPaint(); }); bnE(p).addEventListener("click",()=>{ BNdraft[k]=Math.min(hi,Number(BNdraft[k])+st); BNdirty=true; bnSetPaint(); }); };
   stp("bnMsM","bnMsP","mstep",1,10,1); stp("bnTpM","bnTpP","tp",0,1000,5); stp("bnSlM","bnSlP","sl",5,2000,5);
+})();
+
+/* ---- v13.26: 🎯 DBOT SNIPER AMMAAN ---- */
+function bnSnRule(c){ const k=Number(c.snk)||2; if(c.ct==="RF") return k+" tick isku jiho → isla jihada (RISE / FALL)"; if(c.ct==="DIFF") return k+" digit isku mid ah → DIFFERS digit-kaas"; return k+" digit ≤ "+(c.bar)+" isku xiga → OVER "+c.bar; }
+(function(){
+  if(!bnE("bnSn")) return;
+  const S0=bnSetPaint, P0=bnPaint;
+  bnSetPaint=function(){ S0(); try{
+    const c=BNdraft, d=BN; if(!c||!d) return; const dbm=c.eng==="dbot", sn=dbm&&Number(c.sn)===1;
+    const seg=(id,k)=>bnE(id).querySelectorAll("button").forEach(b=>b.classList.toggle("sel",String(b.dataset.v)===String(Number(c[k]||0))));
+    seg("bnSn","sn"); seg("bnSnk","snk"); seg("bnScd","scd");
+    bnE("bnSnB").hidden=!sn; bnE("bnSnT").textContent=bnSnRule(c);
+    const mr=bnE("bnMm").closest(".bnrow"); if(mr) mr.hidden=sn; if(sn) bnE("bnMsR").hidden=true;
+    ["bnDl","bnMx"].forEach(id=>{ const r=bnE(id).closest(".bnrow"); if(r) r.hidden=dbm&&!sn; });
+  }catch(e){ console.error(e); } };
+  bnPaint=function(){ P0(); try{
+    const d=BN; if(!d||!d.tok||!d.tok.has||!bnDb()) return; const c=d.cfg, s=d.st||{}, dy=d.day||{n:0,pl:0};
+    if(Number(c.sn)!==1) return;
+    const left=Number(c.dl)+Number(dy.pl);
+    bnE("bnLim").textContent="🎯 −$"+Number(c.dl).toFixed(0)+" · hadhay $"+Math.max(0,left).toFixed(2)+" · "+dy.n+"/"+c.maxn;
+    bnE("bnLim").style.color=left<=Number(c.dl)*0.4?"#ffb3b5":"";
+    const db=s.db||{}; if(!db.stop) bnE("bnDbM").innerHTML="🎯 SNIPER · "+esc(bnSnRule(c))+" · stake go'an $"+Number(c.stake).toFixed(2)+(c.scd?" · nasasho "+c.scd+"s":"")+(c.on&&s.why?'<br><span style="color:#c3c2b7">'+esc(s.why)+"</span>":"");
+    bnE("bnDbT").textContent="🎯 "+bnE("bnDbT").textContent.replace(/^🎯 /,"");
+  }catch(e){ console.error(e); } };
+  const L0=bnLive;
+  bnLive=function(){ L0(); try{ const d=BN; if(!d||!bnDb()||Number(d.cfg.sn)!==1) return; const s=d.st||{}; if(!s.cur){ bnE("bnCtA").textContent="🎯 calaamad sug"; bnE("bnCtC").textContent="stake go'an $"+Number(d.cfg.stake).toFixed(2); } }catch(e){ console.error(e); } };
+  const segc=(id,k)=>bnE(id).querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{ if(!BNdraft) return; BNdraft[k]=Number(b.dataset.v); BNdirty=true; bnSetPaint(); }));
+  segc("bnSn","sn"); segc("bnSnk","snk"); segc("bnScd","scd");
 })();
 </script></body></html>"""
 
