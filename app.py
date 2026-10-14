@@ -20,6 +20,7 @@ Web (session auth):
   /login /register /logout /dashboard /admin
   GET  /api/state         -> xogta account-ka user-ka
   POST /api/command       -> amar loo diro EA-da
+  v13.28: 🧮 GRID BASKET: kaar tilmaan ah marka EA-gu weli xidhmin · GET /gb = hubinta shubista
   v13.27: 🧮 GRID BASKET EA (MOHA_Grid_Basket_EA v1.20): EA gooni ah oo isla URL + token-ka isticmaala · POST /gb (xaalad → sitin + amarro) ·
           Guud: kaar oranji (CORE 1 hoostiisa) · bogga: P/L · SL↔TP · avg · BE · TP@ · SL@ · next buy · trade-yada ✕ · xidh faa'iido / dhammaan ·
           basket cusub ON/OFF · reset HALT · ⚙️ sitin (lot · mult · step · trade · TP · trail · SL% · DD% · maalinle) → KAYDI & DIR → EA (≤ 3s)
@@ -5495,6 +5496,12 @@ def _gb_text(lines, code=200):
     return r
 
 
+@app.get("/gb")
+def ea_gb_ping():
+    """v13.28: browser-ka ka hubi in app-ka cusub la shubay."""
+    return _gb_text(["MOHA GRID BASKET · app v13.28 · diyaar (EA-gu POST ayuu u diraa)"])
+
+
 @app.post("/gb")
 def ea_gb():
     if not token_ok():
@@ -10362,6 +10369,9 @@ body.xkon{overflow:hidden}
 .gbsl{font-size:11px;font-weight:800;color:var(--ink3);letter-spacing:.06em;margin:12px 2px -4px}
 .gbnone{font-size:12.5px;color:var(--ink3);padding:8px 0}
 #gbT{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.gbhelp{border:1.5px dashed #6b4a2a;border-radius:16px;padding:11px 13px;font-size:12px;line-height:1.6;color:var(--ink2);margin:0 0 8px}
+.gbhelp b{display:block;color:#fb923c;font-size:12.5px;margin-bottom:3px}
+.gbhelp i{font-style:normal;color:var(--ink)}
 </style></head><body>
 
 <div class="offban" id="offBan" hidden><b id="offBanT">KHADKA WAA GO'AY · DAAWASHO OO KELIYA</b><small id="offBanS">—</small></div>   <!-- v13.5: 📴 -->
@@ -17848,7 +17858,14 @@ function gbCmd(key,cmd,title,html,okTxt){
 /* ---- Guud ---- */
 function gbPaintGuud(){
   const box=gbE("gbBox"); if(!box) return; const d=GB.d, bots=(d&&d.bots)||[];
-  box.hidden=!bots.length; if(!bots.length) return;
+  box.hidden=false;
+  if(!bots.length){   /* v13.28: EA weli lama xidhin -> tilmaan */
+    gbE("gbHP").textContent="—"; gbE("gbHP").className=""; const hs0=gbE("gbHS"); hs0.classList.remove("on"); hs0.disabled=true;
+    gbE("gbL").innerHTML='<div class="xknc gbc dead off" style="--c:#fb923c"><div class="ic"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 10h16M4 14h16M4 18h16"/><path d="M8 3v18" stroke-dasharray="2 2"/></svg></div>'
+      +'<div class="tx"><b>GRID BASKET</b><small>EA WELI LAMA XIDHIN</small></div><span class="go off"></span></div>'
+      +'<div class="gbhelp"><b>Sida loo xidho</b>① MetaEditor: <i>MOHA_Grid_Basket_EA_110708030.mq5</i> → F7<br>② MT5: chart XAUUSD ku dar · AutoTrading ON<br>'
+      +'③ Chart-ka dashboard-ka hoostiisa: <span style="color:#3ddc84">APP ok</span> → kaarku halkan ayuu ka soo muuqanayaa (≤ 10s)</div>';
+    return; }
   let tot=0, anyOn=false;
   gbE("gbL").innerHTML=bots.map(b=>{
     const s=b.st||{}, c=b.cfg||{}, on=!!Number(c.en), net=Number(s.net)||0, dg=b.dg||2; tot+=net; if(on) anyOn=true;
