@@ -20,6 +20,8 @@ Web (session auth):
   /login /register /logout /dashboard /admin
   GET  /api/state         -> xogta account-ka user-ka
   POST /api/command       -> amar loo diro EA-da
+  v13.32: 🧮 GRID BASKET: BUY / SELL (EA v73.3 · jihada EMA200 H1 + H4) → kaarka · NEXT · trade-yada magacyadooda
+  v13.31: 🧮 GRID BASKET: jid labaad (EA v73.1): xaaladda push-ka weyn (gbx) · sitin / amarro → GBX: (amarrada bot-ka) · EA OFFLINE 75s kadib
   v13.30: 🧮 GRID BASKET = xeelad bot-ka weyn (EA v73.0 · ⚡ CORE 1 · magic +156 · chart-ka dahabka) · journal GBASKET (🧮 · CORE 1) ·
           kaarka: '🧮 GRID BASKET · CORE 1' · tilmaan: MOHA PRO v73.0 → app-ka ka shid
   v13.29: 🧮 GRID BASKET: /update?gb=1 = jid labaad (EA v1.22: /gb ma gaadho → MOHA PRO URL-ka)
@@ -3318,6 +3320,7 @@ def ea_update():
     grd = d.pop("grid", None)                            # v12.25 (EA v71.0): 🪜 GRID STOP
     tres = d.pop("tres", None)                           # v12.31 (EA v71.6): 🔴 LIVE TRADES natiijooyinka
     cores = d.pop("cores", None)
+    gbx = d.pop("gbx", None)                             # v13.31 (EA v73.1): 🧮 GRID BASKET xaalad (jid labaad)
     vps = d.pop("vps", None)                             # v13.12 (EA v72.1.7): 🛰 xaaladda bot-ka
     evl = d.pop("ev", None)                              # v13.12: dhacdooyinka
     if isinstance(vps, dict) or isinstance(evl, list):
@@ -3332,6 +3335,10 @@ def ea_update():
         _save_grid(con, acc, grd)            # v12.25
         _save_tres(con, acc, tres)           # v12.31
         _save_cores(con, acc, cores)         # v13.0
+        if isinstance(gbx, dict):            # v13.31: 🧮 GRID BASKET
+            _gbk = _gb_key(gbx.get("sym"), gbx.get("magic"))
+            if _gbk:
+                _gb_ingest(con, acc, _gbk, gbx, now, False)
         con.execute(
             "INSERT INTO snapshots(account,bot,data,updated_at) VALUES(?,?,?,?)"
             " ON CONFLICT(account) DO UPDATE SET bot=excluded.bot,"
@@ -5445,7 +5452,7 @@ GB_DEF = {"en": 1, "nb": 1, "lot": 0.01, "mult": 1.0, "smode": 0, "step": 300, "
 GB_LIM = {"en": (0, 1, int), "nb": (0, 1, int), "lot": (0.01, 10.0, float), "mult": (1.0, 3.0, float),
           "smode": (0, 1, int), "step": (10, 100000, int), "mo": (1, 50, int), "tp": (0.0, 100000.0, float),
           "trl": (0, 1, int), "slp": (0.0, 100.0, float), "dd": (0.0, 100.0, float), "dl": (0.0, 100.0, float)}
-GB_ALIVE = 20
+GB_ALIVE = 75
 GB_CMDS = ("CLOSE_ALL", "CLOSE_PROFIT", "RESET_HALT")
 
 
@@ -5504,7 +5511,7 @@ def _gb_text(lines, code=200):
 @app.get("/gb")
 def ea_gb_ping():
     """v13.29: browser-ka ka hubi in app-ka cusub la shubay."""
-    return _gb_text(["MOHA GRID BASKET · app v13.30 · diyaar (EA-gu POST ayuu u diraa)"])
+    return _gb_text(["MOHA GRID BASKET · app v13.32 · diyaar (EA-gu POST ayuu u diraa)"])
 
 
 @app.post("/gb")
@@ -5520,13 +5527,33 @@ def ea_gb():
     key = _gb_key(d.get("sym"), d.get("magic"))
     if not key:
         return _gb_text(["ERR sym/magic"], 400)
-    now = time.time()
+    with db() as con:
+        c, cmds, erev = _gb_ingest(con, acc, key, d, time.time(), True)
+    out = ["OK"]
+    if int(c.get("rev") or 0) > erev:
+        out.append("REV=%d" % int(c["rev"]))
+        out.append("CFG=" + _gb_kv(c))
+    for x in cmds:
+        out.append("CMD=" + str(x.get("c")))
+    return _gb_text(out)
+
+
+def _gb_kv(c):
+    return ";".join("%s:%s" % (k, c["v"][k]) for k in GB_LIM if k in c["v"])
+
+
+def _gb_main_cmd(con, acc, cmd, by, now):
+    """v13.31: jid labaad -> amarrada bot-ka weyn (/api/commands) · EA v73.1: GBX:CFG:<rev>:<kv> · GBX:CMD:<amar>."""
+    con.execute("INSERT INTO commands(account,cmd,by_account,created_at) VALUES(?,?,?,?)", (acc, cmd, by, now))
+
+
+def _gb_ingest(con, acc, key, d, now, take_q):
     ecfg = _gb_clean(d.get("cfg"))
     try:
         erev = int(d.get("rev") or 0)
     except (TypeError, ValueError):
         erev = 0
-    with db() as con:
+    if True:
         b = _kv_get(con, "gb:" + acc) or {}
         bots = b.get("bots") if isinstance(b.get("bots"), dict) else {}
         bots[key] = {"st": _gb_st(d.get("st")), "pos": _gb_pos(d.get("pos")), "ts": now, "ecfg": ecfg, "erev": erev,
@@ -5541,18 +5568,19 @@ def ea_gb():
             c = {"v": dict(GB_DEF, **ecfg), "rev": erev}           # sitinka EA-ga ayaa la qaatay (bilow · DB cusub)
             cf[key] = c
             _kv_put(con, "gbc:" + acc, cf)
-        q = _kv_get(con, "gbq:" + acc) or {}
-        cmds = [x for x in (q.get(key) or []) if now - float(x.get("t") or 0) < 120]
-        if q.get(key):
-            q[key] = []
-            _kv_put(con, "gbq:" + acc, q)
-    out = ["OK"]
-    if int(c.get("rev") or 0) > erev:
-        out.append("REV=%d" % int(c["rev"]))
-        out.append("CFG=" + ";".join("%s:%s" % (k, c["v"][k]) for k in GB_LIM if k in c["v"]))
-    for x in cmds:
-        out.append("CMD=" + str(x.get("c")))
-    return _gb_text(out)
+        cmds = []
+        if take_q:
+            q = _kv_get(con, "gbq:" + acc) or {}
+            cmds = [x for x in (q.get(key) or []) if now - float(x.get("t") or 0) < 120]
+            if q.get(key):
+                q[key] = []
+                _kv_put(con, "gbq:" + acc, q)
+        elif int(c.get("rev") or 0) > erev and now - float(c.get("qt") or 0) > 60:   # sitin weli ma iman -> mar kale GBX:
+            c["qt"] = now
+            cf[key] = c
+            _kv_put(con, "gbc:" + acc, cf)
+            _gb_main_cmd(con, acc, "GBX:CFG:%d:%s" % (int(c["rev"]), _gb_kv(c)), "gb", now)
+    return c, cmds, erev
 
 
 def _gb_acc(u, src):
@@ -5618,8 +5646,10 @@ def api_gb_config():
         c["v"] = dict(GB_DEF, **(c.get("v") or {}))
         c["v"].update(v)
         c["rev"] = int(c.get("rev") or 0) + 1
+        c["qt"] = time.time()
         cf[key] = c
         _kv_put(con, "gbc:" + acc, cf)
+        _gb_main_cmd(con, acc, "GBX:CFG:%d:%s" % (c["rev"], _gb_kv(c)), u["account"], time.time())   # v13.31
         out = _gb_view(con, acc, u)
     return jsonify(out)
 
@@ -5648,6 +5678,7 @@ def api_gb_cmd():
         lst.append({"c": cmd, "t": now, "by": u["account"]})
         q[key] = lst
         _kv_put(con, "gbq:" + acc, q)
+        _gb_main_cmd(con, acc, "GBX:CMD:" + cmd, u["account"], now)   # v13.31: jid labaad
         out = _gb_view(con, acc, u)
     return jsonify(out)
 
@@ -11674,7 +11705,7 @@ body.xkon{overflow:hidden}
     <div class="xksec"><h4>Grid step</h4><p id="gbStepP">fogaanta u dhexeysa heer iyo heer</p>
       <div class="xkop c2" data-k="smode"><button type="button" data-v="0">POINTS<small>go'an</small></button><button type="button" data-v="1">ATR<small>H1 × (input)</small></button></div>
       <div class="xkstp" id="gbStepR"><button type="button" data-st="step" data-d="-1">−</button><b id="gbVstep">300</b><button type="button" data-st="step" data-d="1">+</button></div></div>
-    <div class="xksec"><h4>Trade ugu badan</h4><p>inta Buy ee basket-ku yeelan karo</p>
+    <div class="xksec"><h4>Trade ugu badan</h4><p>inta trade ee basket-ku yeelan karo</p>
       <div class="xkop c4" data-k="mo"><button type="button" data-v="4">4</button><button type="button" data-v="6">6</button><button type="button" data-v="8">8</button><button type="button" data-v="10">10</button></div></div>
     <div class="xksec"><h4>Basket TP ($)</h4><p>faa'iido saafi ah (swap + commission laga jaray) → dhammaan waa la xidhaa</p>
       <div class="xkop c4" data-k="tp"><button type="button" data-v="5">$5</button><button type="button" data-v="10">$10</button><button type="button" data-v="20">$20</button><button type="button" data-v="50">$50</button></div>
@@ -17876,7 +17907,7 @@ function gbPaintGuud(){
   let tot=0, anyOn=false;
   gbE("gbL").innerHTML=bots.map(b=>{
     const s=b.st||{}, c=b.cfg||{}, on=!!Number(c.en), net=Number(s.net)||0, dg=b.dg||2; tot+=net; if(on) anyOn=true;
-    const sub=b.alive?("BUY GRID · "+esc(b.sym)+" · "+(s.n||0)+"/"+(c.mo||"—")):("EA LAMA ARKO · "+gbAgo(b.age));
+    const sub=b.alive?((Number(s.dir)<0?"SELL GRID · ":"BUY GRID · ")+esc(b.sym)+" · "+(s.n||0)+"/"+(c.mo||"—")):("EA LAMA ARKO · "+gbAgo(b.age));
     return '<div class="xknc gbc'+(b.alive?"":" dead")+(on?"":" off")+'" style="--c:#fb923c" data-gb="'+esc(b.key)+'">'
       +'<div class="ic"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 10h16M4 14h16M4 18h16"/><path d="M8 3v18" stroke-dasharray="2 2"/></svg></div>'
       +'<div class="tx"><b>GRID BASKET</b><small>'+sub+'</small></div>'
@@ -17922,12 +17953,12 @@ function gbPaintPg(){
     +'<div class="gbbar">'+bar+'<em style="left:'+(z*100)+'%"></em></div>'
     +'<div class="gbbl"><span style="color:#ff8a90">'+(sl>0?("SL "+gbM(-sl)):"SL off")+'</span><span style="color:#3ddc84">TP '+gbM(tp)+(Number(s.trail)?" · TRAIL":"")+'</span></div>'
     +'<div class="gbtl"><div><span>AVG</span><b style="color:#c4a5ff">'+gbPx(s.avg,dg)+'</b></div><div><span>BREAK-EVEN</span><b style="color:#c4a5ff">'+gbPx(s.be,dg)+'</b></div><div><span>TP @</span><b style="color:#3ddc84">'+gbPx(s.tpp,dg)+'</b></div>'
-    +'<div><span>SL @</span><b style="color:#ff8a90">'+gbPx(s.slp,dg)+'</b></div><div><span>NEXT BUY</span><b style="color:#ff9f43">'+nx+'</b></div><div><span>STEP</span><b style="color:#4fb8ff">'+(Number(s.step)||0)+' pts</b></div></div>'
+    +'<div><span>SL @</span><b style="color:#ff8a90">'+gbPx(s.slp,dg)+'</b></div><div><span>'+(Number(s.dir)<0?"NEXT SELL":"NEXT BUY")+'</span><b style="color:#ff9f43">'+nx+'</b></div><div><span>STEP</span><b style="color:#4fb8ff">'+(Number(s.step)||0)+' pts</b></div></div>'
     +(s.why?('<div class="gbst" style="margin-top:10px;color:'+stC+'">'+esc(s.why)+'</div>'):"");
   // trade-yada
-  const pos=(b.pos||[]).slice().sort((a,c2)=>c2[2]-a[2]);
-  gbE("gbPos").innerHTML=pos.length?pos.map((x,i)=>'<div class="gbps"><span class="d">BUY</span><div class="t">#'+(i+1)+' · '+Number(x[1]).toFixed(2)+' @ '+Number(x[2]).toFixed(dg)+'<small>'+new Date(x[4]*1000).toISOString().slice(11,16)+' · #'+x[0]+'</small></div>'
-    +'<b style="color:'+gbCol(x[3])+'">'+gbM(x[3])+'</b><button type="button" data-gbx="'+x[0]+'"'+(can&&b.alive?"":" disabled")+'>✕</button></div>').join(""):'<div class="gbnone">Trade furan ma jiro · '+(on?"Buy #1 suuqa ayuu ka furayaa":"GRID waa damman yahay")+'</div>';
+  const pos=(b.pos||[]).slice().sort((a,c2)=>Number(s.dir)<0?a[2]-c2[2]:c2[2]-a[2]);
+  gbE("gbPos").innerHTML=pos.length?pos.map((x,i)=>'<div class="gbps"><span class="d"'+(Number(s.dir)<0?' style="background:rgba(255,107,115,.16);color:#ff6b73"':'')+'>'+(Number(s.dir)<0?"SELL":"BUY")+'</span><div class="t">#'+(i+1)+' · '+Number(x[1]).toFixed(2)+' @ '+Number(x[2]).toFixed(dg)+'<small>'+new Date(x[4]*1000).toISOString().slice(11,16)+' · #'+x[0]+'</small></div>'
+    +'<b style="color:'+gbCol(x[3])+'">'+gbM(x[3])+'</b><button type="button" data-gbx="'+x[0]+'"'+(can&&b.alive?"":" disabled")+'>✕</button></div>').join(""):'<div class="gbnone">Trade furan ma jiro · '+(on?"trade #1 jihada EMA200 (BUY / SELL) ayuu ka furayaa":"GRID waa damman yahay")+'</div>';
   // badhamada
   const nb=!!Number(c.nb), en=can&&b.alive;
   gbE("gbBP").disabled=!en||!pos.length; gbE("gbBA").disabled=!en||!pos.length;
