@@ -20,6 +20,9 @@ Web (session auth):
   /login /register /logout /dashboard /admin
   GET  /api/state         -> xogta account-ka user-ka
   POST /api/command       -> amar loo diro EA-da
+  v13.27: 🧮 GRID BASKET EA (MOHA_Grid_Basket_EA v1.20): EA gooni ah oo isla URL + token-ka isticmaala · POST /gb (xaalad → sitin + amarro) ·
+          Guud: kaar oranji (CORE 1 hoostiisa) · bogga: P/L · SL↔TP · avg · BE · TP@ · SL@ · next buy · trade-yada ✕ · xidh faa'iido / dhammaan ·
+          basket cusub ON/OFF · reset HALT · ⚙️ sitin (lot · mult · step · trade · TP · trail · SL% · DD% · maalinle) → KAYDI & DIR → EA (≤ 3s)
   v13.26: 🎯 DBOT SNIPER AMMAAN: Signal = TICK KASTA / SNIPER · SNIPER = sug calaamad (OVER: N digit ≤ barrier isku xiga ·
           DIFFERS: N digit isku mid · RISE/FALL: N tick isku jiho) · stake go'an (martingale OFF) · xad maalinle $ · trade maalintii ·
           nasasho trade kadib · TP/SL wareeg · daacad: calaamaddu fursadda ma beddesho (20M tick) → khasaare tartiib ah oo xadidan
@@ -5425,6 +5428,216 @@ def _bin_boot():
         threading.Thread(target=_bin_super, name="bin-super", daemon=True).start()
 
 
+# ======================================================================
+# v13.27: 🧮 GRID BASKET EA (MOHA_Grid_Basket_EA v1.20) — EA gooni ah · app-ka ka maamul
+#   EA -> POST /gb (Bearer token · isla URL + token-ka MOHA PRO) · jawaab qoraal: OK / REV= / CFG= / CMD=
+#   kv: gb:<acc> (bots: xaalad) · gbc:<acc> (sitin + rev) · gbq:<acc> (amarro sugaya)
+#   MOHA PRO (/update · snapshots) lama taabanayo.
+# ======================================================================
+GB_DEF = {"en": 1, "nb": 1, "lot": 0.01, "mult": 1.0, "smode": 0, "step": 300, "mo": 8, "tp": 10.0, "trl": 0,
+          "slp": 10.0, "dd": 20.0, "dl": 5.0}
+GB_LIM = {"en": (0, 1, int), "nb": (0, 1, int), "lot": (0.01, 10.0, float), "mult": (1.0, 3.0, float),
+          "smode": (0, 1, int), "step": (10, 100000, int), "mo": (1, 50, int), "tp": (0.0, 100000.0, float),
+          "trl": (0, 1, int), "slp": (0.0, 100.0, float), "dd": (0.0, 100.0, float), "dl": (0.0, 100.0, float)}
+GB_ALIVE = 20
+GB_CMDS = ("CLOSE_ALL", "CLOSE_PROFIT", "RESET_HALT")
+
+
+def _gb_key(sym, mg):
+    s = re.sub(r"[^A-Za-z0-9._#-]", "", str(sym or ""))[:24]
+    m = re.sub(r"[^0-9]", "", str(mg or ""))[:20]
+    return (s + "|" + m) if (s and m) else ""
+
+
+def _gb_clean(v):
+    o = {}
+    if not isinstance(v, dict):
+        return o
+    for k, (lo, hi, ct) in GB_LIM.items():
+        if k in v:
+            try:
+                x = ct(min(hi, max(lo, float(v[k]))))
+            except (TypeError, ValueError):
+                continue
+            o[k] = round(x, 2) if ct is float else x
+    return o
+
+
+def _gb_st(v):
+    """xaaladda EA-ga -> dict yar (nambar / qoraal gaaban oo keliya)."""
+    o = {}
+    if isinstance(v, dict):
+        for k, x in list(v.items())[:40]:
+            k = str(k)[:12]
+            if isinstance(x, bool):
+                o[k] = int(x)
+            elif isinstance(x, (int, float)):
+                o[k] = x
+            elif isinstance(x, str):
+                o[k] = x[:120]
+    return o
+
+
+def _gb_pos(v):
+    out = []
+    for p in (v if isinstance(v, list) else [])[:60]:
+        try:
+            out.append([int(p[0]), round(float(p[1]), 2), float(p[2]), round(float(p[3]), 2), int(p[4])])
+        except (TypeError, ValueError, IndexError):
+            pass
+    return out
+
+
+def _gb_text(lines, code=200):
+    r = make_response("\n".join(lines) + "\n", code)
+    r.headers["Content-Type"] = "text/plain; charset=utf-8"
+    r.headers["Cache-Control"] = "no-store"
+    return r
+
+
+@app.post("/gb")
+def ea_gb():
+    if not token_ok():
+        return _gb_text(["ERR bad token"], 401)
+    d = _ea_body()
+    if getattr(g, "_ebad", False):
+        return _gb_text(["ERR body"], 400)
+    acc = clean_account(d.get("account"))
+    if not acc or not ea_bind(acc):
+        return _gb_text(["ERR key"], 403)
+    key = _gb_key(d.get("sym"), d.get("magic"))
+    if not key:
+        return _gb_text(["ERR sym/magic"], 400)
+    now = time.time()
+    ecfg = _gb_clean(d.get("cfg"))
+    try:
+        erev = int(d.get("rev") or 0)
+    except (TypeError, ValueError):
+        erev = 0
+    with db() as con:
+        b = _kv_get(con, "gb:" + acc) or {}
+        bots = b.get("bots") if isinstance(b.get("bots"), dict) else {}
+        bots[key] = {"st": _gb_st(d.get("st")), "pos": _gb_pos(d.get("pos")), "ts": now, "ecfg": ecfg, "erev": erev,
+                     "dg": int(d.get("dg") or 2) if str(d.get("dg") or "2").isdigit() else 2,
+                     "ver": str(d.get("ver") or "")[:10], "cur": str(d.get("cur") or "USD")[:6]}
+        for k in [k for k, x in bots.items() if now - float(x.get("ts") or 0) > 7 * 86400]:
+            bots.pop(k, None)
+        _kv_put(con, "gb:" + acc, {"bots": bots})
+        cf = _kv_get(con, "gbc:" + acc) or {}
+        c = cf.get(key)
+        if not isinstance(c, dict) or erev > int(c.get("rev") or 0):
+            c = {"v": dict(GB_DEF, **ecfg), "rev": erev}           # sitinka EA-ga ayaa la qaatay (bilow · DB cusub)
+            cf[key] = c
+            _kv_put(con, "gbc:" + acc, cf)
+        q = _kv_get(con, "gbq:" + acc) or {}
+        cmds = [x for x in (q.get(key) or []) if now - float(x.get("t") or 0) < 120]
+        if q.get(key):
+            q[key] = []
+            _kv_put(con, "gbq:" + acc, q)
+    out = ["OK"]
+    if int(c.get("rev") or 0) > erev:
+        out.append("REV=%d" % int(c["rev"]))
+        out.append("CFG=" + ";".join("%s:%s" % (k, c["v"][k]) for k in GB_LIM if k in c["v"]))
+    for x in cmds:
+        out.append("CMD=" + str(x.get("c")))
+    return _gb_text(out)
+
+
+def _gb_acc(u, src):
+    acc = clean_account(src.get("account")) if u["role"] == "admin" else u["account"]
+    return acc or u["account"]
+
+
+def _gb_can(u, acc):
+    if u["role"] == "admin":
+        return True
+    lic = _user_lic(u, acc)
+    if lic is not None:
+        return lic.get("state") == "OK" and bool((lic.get("perms") or {}).get("close"))
+    return bool(u["can_control"])
+
+
+def _gb_view(con, acc, u):
+    now = time.time()
+    b = _kv_get(con, "gb:" + acc) or {}
+    cf = _kv_get(con, "gbc:" + acc) or {}
+    q = _kv_get(con, "gbq:" + acc) or {}
+    out = []
+    for key, x in sorted((b.get("bots") or {}).items()):
+        c = cf.get(key) or {"v": dict(GB_DEF), "rev": 0}
+        sym, mg = (key.split("|") + [""])[:2]
+        age = now - float(x.get("ts") or 0)
+        out.append({"key": key, "sym": sym, "mg": mg, "alive": age < GB_ALIVE, "age": int(age), "st": x.get("st") or {},
+                    "pos": x.get("pos") or [], "dg": x.get("dg") or 2, "ver": x.get("ver") or "", "cur": x.get("cur") or "USD",
+                    "cfg": dict(GB_DEF, **(c.get("v") or {})), "rev": int(c.get("rev") or 0), "erev": int(x.get("erev") or 0),
+                    "q": len(q.get(key) or [])})
+    return {"ok": True, "now": now, "account": acc, "bots": out, "can": _gb_can(u, acc)}
+
+
+@app.get("/api/gb/state")
+@login_required
+def api_gb_state():
+    u = request.user
+    acc = _gb_acc(u, request.args)
+    with db() as con:
+        return jsonify(_gb_view(con, acc, u))
+
+
+@app.post("/api/gb/config")
+@login_required
+def api_gb_config():
+    u = request.user
+    body = request.get_json(silent=True) or {}
+    acc = _gb_acc(u, body)
+    if not _gb_can(u, acc):
+        return jsonify(ok=False, error="Ogolaansho ma lihid."), 403
+    key = str(body.get("key") or "")[:50]
+    v = _gb_clean(body.get("values") or {})
+    if not v:
+        return jsonify(ok=False, error="Wax la beddelay ma jiro."), 400
+    with db() as con:
+        b = _kv_get(con, "gb:" + acc) or {}
+        if key not in (b.get("bots") or {}):
+            return jsonify(ok=False, error="Bot-kan lama yaqaan (EA-ga ha xidhmo marka hore)."), 404
+        cf = _kv_get(con, "gbc:" + acc) or {}
+        c = cf.get(key) or {"v": dict(GB_DEF), "rev": 0}
+        c["v"] = dict(GB_DEF, **(c.get("v") or {}))
+        c["v"].update(v)
+        c["rev"] = int(c.get("rev") or 0) + 1
+        cf[key] = c
+        _kv_put(con, "gbc:" + acc, cf)
+        out = _gb_view(con, acc, u)
+    return jsonify(out)
+
+
+@app.post("/api/gb/cmd")
+@login_required
+def api_gb_cmd():
+    u = request.user
+    body = request.get_json(silent=True) or {}
+    acc = _gb_acc(u, body)
+    if not _gb_can(u, acc):
+        return jsonify(ok=False, error="Ogolaansho ma lihid."), 403
+    key = str(body.get("key") or "")[:50]
+    cmd = str(body.get("cmd") or "").strip().upper()
+    if not (cmd in GB_CMDS or re.fullmatch(r"CLOSE:\d{1,20}", cmd)):
+        return jsonify(ok=False, error="Amar aan la aqoon."), 400
+    now = time.time()
+    with db() as con:
+        b = _kv_get(con, "gb:" + acc) or {}
+        if key not in (b.get("bots") or {}):
+            return jsonify(ok=False, error="Bot-kan lama yaqaan."), 404
+        q = _kv_get(con, "gbq:" + acc) or {}
+        lst = [x for x in (q.get(key) or []) if now - float(x.get("t") or 0) < 120]
+        if len(lst) >= 20:
+            return jsonify(ok=False, error="Amarro badan ayaa sugaya — EA-ga hubi."), 429
+        lst.append({"c": cmd, "t": now, "by": u["account"]})
+        q[key] = lst
+        _kv_put(con, "gbq:" + acc, q)
+        out = _gb_view(con, acc, u)
+    return jsonify(out)
+
+
 def _bin_can(u):
     return u["role"] == "admin" or bool(u["can_control"])
 
@@ -10113,6 +10326,42 @@ body.xkon{overflow:hidden}
 .bnsnn b{color:#fff}
 #bnSn button{font-size:12.5px}
 #bnMain [hidden]{display:none!important}
+
+/* ===== v13.27: 🧮 GRID BASKET EA ===== */
+#gbBox{margin:4px 0}
+.gbc .go{border:0;padding:0}
+.gbc.dead{opacity:.6}
+.gbpill{font-size:10px;font-weight:900;padding:4px 9px;border-radius:99px;border:1.5px solid currentColor;letter-spacing:.06em;white-space:nowrap}
+.gblive{border:2px solid #fb923c;border-radius:20px;background:#08070c;padding:13px;margin-top:10px;box-shadow:0 0 14px rgba(251,146,60,.35)}
+.gbh{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.gbh .k{font-size:10px;font-weight:800;color:var(--ink3);letter-spacing:.08em}
+.gbh .v{font-size:30px;font-weight:900;line-height:1.1}
+.gbh .r{text-align:right;font-size:12px;font-weight:800;line-height:1.5}
+.gbbar{position:relative;height:10px;border-radius:99px;background:#2a2635;margin-top:10px;overflow:hidden}
+.gbbar i{position:absolute;top:0;bottom:0;border-radius:99px}
+.gbbar em{position:absolute;top:0;bottom:0;width:2px;background:#fff}
+.gbbl{display:flex;justify-content:space-between;font-size:11px;font-weight:800;margin-top:5px}
+.gbtl{display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-top:10px}
+.gbtl.c2{grid-template-columns:1fr 1fr}
+.gbtl div{border:1px solid var(--line);border-radius:13px;background:var(--surface);padding:8px 9px;min-width:0}
+.gbtl span{display:block;font-size:9px;font-weight:800;color:var(--ink3);letter-spacing:.07em}
+.gbtl b{font-size:13.5px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.gbps{display:flex;align-items:center;gap:9px;padding:9px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+.gbps:last-child{border-bottom:0}
+.gbps .d{font-size:10px;font-weight:900;padding:2px 7px;border-radius:7px;background:rgba(79,184,255,.16);color:#4fb8ff}
+.gbps .t{flex:1;min-width:0}.gbps .t small{display:block;font-size:10.5px;color:var(--ink3)}
+.gbps button{width:32px;height:32px;border-radius:9px;border:1px solid #4a2a33;color:#ff8a90;background:transparent;font-weight:900;padding:0}
+.gbbtns{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:12px}
+.gbbtns button{border-radius:15px;padding:13px 6px;font-size:12.5px;font-weight:900;border:1.5px solid;background:transparent}
+.gbbtns .g{border-color:#1f9d5c;color:#3ddc84}.gbbtns .r{border-color:#e5484d;color:#ff8a90}
+.gbbtns .y{border-color:#c9a13b;color:#f5c451}.gbbtns .b{border-color:#2f7fbf;color:#4fb8ff}
+.gbbtns button:disabled{opacity:.45}
+.gbst{display:flex;gap:8px;align-items:center;font-size:11.5px;font-weight:700;color:var(--ink3);margin-top:12px}
+.gbst i{width:8px;height:8px;border-radius:50%;background:#3ddc84;box-shadow:0 0 8px #3ddc84;flex:none}
+.gbst i.off{background:#e5484d;box-shadow:0 0 8px #e5484d}
+.gbsl{font-size:11px;font-weight:800;color:var(--ink3);letter-spacing:.06em;margin:12px 2px -4px}
+.gbnone{font-size:12.5px;color:var(--ink3);padding:8px 0}
+#gbT{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 </style></head><body>
 
 <div class="offban" id="offBan" hidden><b id="offBanT">KHADKA WAA GO'AY · DAAWASHO OO KELIYA</b><small id="offBanS">—</small></div>   <!-- v13.5: 📴 -->
@@ -10188,6 +10437,11 @@ body.xkon{overflow:hidden}
       <div class="xkcore" id="xkC1"><b class="c1">⚡ CORE 1 · SCALP</b><span class="sp"></span><em id="xkC1P">—</em><button class="sw" id="xkC1S" type="button" aria-label="CORE 1 shid / dami"><i></i></button></div>
       <div class="xkcw" id="xkC1W" hidden></div>
       <div id="xkL1"></div>
+      <!-- v13.27: 🧮 GRID BASKET EA -->
+      <div id="gbBox" hidden>
+        <div class="xkcore"><b style="color:#fb923c">🧮 GRID BASKET EA</b><span class="sp"></span><em id="gbHP">—</em><button class="sw" id="gbHS" type="button" aria-label="GRID BASKET shid / dami"><i></i></button></div>
+        <div id="gbL"></div>
+      </div>
       <div class="xkcore" id="xkC2"><b class="c2">🎯 CORE 2 · SR/SMC</b><span class="sp"></span><em id="xkC2P">—</em><button class="sw" id="xkC2S" type="button" aria-label="CORE 2 shid / dami"><i></i></button></div>
       <div class="xkcw" id="xkC2W" hidden></div>
       <div id="xkL2"></div>
@@ -11381,6 +11635,44 @@ body.xkon{overflow:hidden}
   </div>
 </div>
 </div>
+<!-- v13.27: 🧮 GRID BASKET EA · bogga -->
+<div class="xkpg" id="gbPg" hidden><div class="xkpgi">
+  <div class="xkbk"><button class="xkba" id="gbBack" type="button" aria-label="dib">‹</button><b id="gbT" style="color:#fb923c">🧮 GRID BASKET</b><span class="gbpill" id="gbPill">—</span><button class="sw" id="gbPS" type="button" aria-label="shid / dami"><i></i></button></div>
+  <div id="gbMsg"></div>
+  <div id="gbMain">
+    <div class="gblive" id="gbLive"></div>
+    <div class="xksec"><h4>Trade-yada furan</h4><div id="gbPos"></div></div>
+    <div class="gbbtns">
+      <button type="button" class="g" id="gbBP">💰 XIDH FAA'IIDADA</button><button type="button" class="r" id="gbBA">✕ XIDH DHAMMAAN</button>
+      <button type="button" class="y" id="gbBN">⏸ BASKET CUSUB OFF</button><button type="button" class="b" id="gbBH">↺ RESET HALT</button>
+    </div>
+    <div class="gbtl c2" id="gbDay"></div>
+    <button type="button" class="xkall" id="gbSet" style="margin-top:12px">⚙️ SITINKA</button>
+    <div class="gbst" id="gbConn"></div>
+  </div>
+  <div id="gbCfg" hidden>
+    <div class="xksec" style="border:0;margin-top:2px"><h4>Lot · multiplier</h4><p>Next Lot = Lot × Mult ^ trade-yada · 1.0 = lot go'an</p>
+      <div class="xkstp"><button type="button" data-st="lot" data-d="-1">−</button><b id="gbVlot">0.01</b><button type="button" data-st="lot" data-d="1">+</button></div>
+      <div class="xkop c4" data-k="mult"><button type="button" data-v="1">×1.0<small>go'an</small></button><button type="button" data-v="1.2">×1.2</button><button type="button" data-v="1.5">×1.5</button><button type="button" data-v="2">×2.0<small>khatar</small></button></div></div>
+    <div class="xksec"><h4>Grid step</h4><p id="gbStepP">fogaanta u dhexeysa heer iyo heer</p>
+      <div class="xkop c2" data-k="smode"><button type="button" data-v="0">POINTS<small>go'an</small></button><button type="button" data-v="1">ATR<small>H1 × (input)</small></button></div>
+      <div class="xkstp" id="gbStepR"><button type="button" data-st="step" data-d="-1">−</button><b id="gbVstep">300</b><button type="button" data-st="step" data-d="1">+</button></div></div>
+    <div class="xksec"><h4>Trade ugu badan</h4><p>inta Buy ee basket-ku yeelan karo</p>
+      <div class="xkop c4" data-k="mo"><button type="button" data-v="4">4</button><button type="button" data-v="6">6</button><button type="button" data-v="8">8</button><button type="button" data-v="10">10</button></div></div>
+    <div class="xksec"><h4>Basket TP ($)</h4><p>faa'iido saafi ah (swap + commission laga jaray) → dhammaan waa la xidhaa</p>
+      <div class="xkop c4" data-k="tp"><button type="button" data-v="5">$5</button><button type="button" data-v="10">$10</button><button type="button" data-v="20">$20</button><button type="button" data-v="50">$50</button></div>
+      <div class="xkstp"><button type="button" data-st="tp" data-d="-1">−</button><b id="gbVtp">$10</b><button type="button" data-st="tp" data-d="1">+</button></div>
+      <div class="xkop c2" data-k="trl"><button type="button" data-v="0">TRAIL OFF<small>TP = xidh</small></button><button type="button" data-v="1">TRAIL ON<small>25% dhac</small></button></div></div>
+    <div class="xksec"><h4>Ilaalin</h4><p>Basket SL % balance · Equity DD → dhammaan xidh + HALT · khasaare maalinle → berri</p>
+      <div class="gbsl">Basket SL</div>
+      <div class="xkop c4" data-k="slp"><button type="button" data-v="5">5%</button><button type="button" data-v="10">10%</button><button type="button" data-v="15">15%</button><button type="button" data-v="0">OFF</button></div>
+      <div class="gbsl">Equity DD → HALT</div>
+      <div class="xkop c3" data-k="dd"><button type="button" data-v="10">10%</button><button type="button" data-v="20">20%</button><button type="button" data-v="30">30%</button></div>
+      <div class="gbsl">Khasaare maalinle</div>
+      <div class="xkop c4" data-k="dl"><button type="button" data-v="0">OFF</button><button type="button" data-v="3">3%</button><button type="button" data-v="5">5%</button><button type="button" data-v="10">10%</button></div></div>
+    <div class="xksave"><button type="button" id="gbSave">KAYDI &amp; DIR → EA</button><small id="gbSaveN">Wax lama beddelin</small></div>
+  </div>
+</div></div>
 
 <nav class="appbar">
   <button class="on" data-tab="Guud">
@@ -17512,6 +17804,173 @@ function bnSnRule(c){ const k=Number(c.snk)||2; if(c.ct==="RF") return k+" tick 
   bnLive=function(){ L0(); try{ const d=BN; if(!d||!bnDb()||Number(d.cfg.sn)!==1) return; const s=d.st||{}; if(!s.cur){ bnE("bnCtA").textContent="🎯 calaamad sug"; bnE("bnCtC").textContent="stake go'an $"+Number(d.cfg.stake).toFixed(2); } }catch(e){ console.error(e); } };
   const segc=(id,k)=>bnE(id).querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{ if(!BNdraft) return; BNdraft[k]=Number(b.dataset.v); BNdirty=true; bnSetPaint(); }));
   segc("bnSn","sn"); segc("bnSnk","snk"); segc("bnScd","scd");
+})();
+
+/* ======================== v13.27: 🧮 GRID BASKET EA (MOHA_Grid_Basket_EA v1.20) ======================== */
+const GB={d:null, open:"", view:"main", t:0, busy:false, draft:null, msg:"", mcls:"", pend:0};
+const GB_LOTS=[0.01,0.02,0.03,0.05,0.1,0.2,0.3,0.5,1,2];
+function gbE(id){ return document.getElementById(id); }
+function gbQ(){ try{ return (typeof accSel!=="undefined" && accSel)?("account="+encodeURIComponent(accSel.value)):""; }catch(e){ return ""; } }
+function gbM(v){ v=Number(v)||0; return (v>0?"+":(v<0?"−":""))+"$"+Math.abs(v).toFixed(2); }
+function gbCls(v){ v=Number(v)||0; return v>0?"p":(v<0?"n":""); }
+function gbCol(v){ v=Number(v)||0; return v>0?"#3ddc84":(v<0?"#ff8a90":"var(--ink)"); }
+function gbPx(v,dg){ v=Number(v)||0; return v>0?v.toFixed(dg):"—"; }
+function gbBot(){ const d=GB.d; if(!d||!d.bots) return null; return d.bots.find(b=>b.key===GB.open)||null; }
+function gbState(b){
+  const s=b.st||{};
+  if(!b.alive) return ["EA OFFLINE","#ff8a90"];
+  const m={"HALT":"#ff6b73","PAUSED":"#ff9f43","TRAILING":"#f5c451","IN BASKET":"#4fb8ff","COOLDOWN":"#f5c451","WAITING":"#f5c451","READY":"#3ddc84"};
+  const t=s.state||"—"; return [t, m[t]||"#c3c2b7"];
+}
+function gbAgo(a){ a=Number(a)||0; return a<60?(a+"s ka hor"):(a<3600?(Math.floor(a/60)+" daq ka hor"):(Math.floor(a/3600)+" saac ka hor")); }
+async function gbLoad(){
+  if(GB.busy) return; GB.busy=true;
+  try{ const q=gbQ(); const r=await fetch("/api/gb/state"+(q?("?"+q):""),{cache:"no-store"}); if(r.status===401){ location.href="/login"; return; }
+    const d=await r.json(); if(d&&d.ok){ GB.d=d; gbPaint(); } }
+  catch(e){} finally{ GB.busy=false; GB.t=Date.now(); }
+}
+async function gbPost(url,body){
+  try{ const q=gbQ(); if(q) body.account=decodeURIComponent(q.split("=")[1]);
+    const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const d=await r.json(); if(d&&d.ok){ GB.d=d; gbPaint(); return ""; } return (d&&d.error)||"Khalad."; }
+  catch(e){ return "Internet ma jiro — isku day mar kale."; }
+}
+function gbSetMsg(cls,t){ GB.mcls=cls; GB.msg=t; const m=gbE("gbMsg"); if(m){ m.innerHTML=t?('<div class="xkmsg '+cls+'">'+esc(t)+'</div>'):""; } }
+async function gbCfg(key,vals,okMsg){
+  const e=await gbPost("/api/gb/config",{key:key,values:vals});
+  if(e) gbSetMsg("bad","⚠️ "+e); else { GB.pend=Date.now(); if(okMsg) gbSetMsg("wt",okMsg); }
+  return e;
+}
+function gbCmd(key,cmd,title,html,okTxt){
+  const go=async()=>{ const e=await gbPost("/api/gb/cmd",{key:key,cmd:cmd}); gbSetMsg(e?"bad":"wt",e?("⚠️ "+e):"⏳ "+title+" · EA-ga ayaa loo diray (≤ 3s)"); };
+  try{ cfmOpen({title:title,html:html||"",ok:okTxt||"OK",okCls:"o",onOk:go}); }catch(e){ if(confirm(title)) go(); }
+}
+/* ---- Guud ---- */
+function gbPaintGuud(){
+  const box=gbE("gbBox"); if(!box) return; const d=GB.d, bots=(d&&d.bots)||[];
+  box.hidden=!bots.length; if(!bots.length) return;
+  let tot=0, anyOn=false;
+  gbE("gbL").innerHTML=bots.map(b=>{
+    const s=b.st||{}, c=b.cfg||{}, on=!!Number(c.en), net=Number(s.net)||0, dg=b.dg||2; tot+=net; if(on) anyOn=true;
+    const sub=b.alive?("BUY GRID · "+esc(b.sym)+" · "+(s.n||0)+"/"+(c.mo||"—")):("EA LAMA ARKO · "+gbAgo(b.age));
+    return '<div class="xknc gbc'+(b.alive?"":" dead")+(on?"":" off")+'" style="--c:#fb923c" data-gb="'+esc(b.key)+'">'
+      +'<div class="ic"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 10h16M4 14h16M4 18h16"/><path d="M8 3v18" stroke-dasharray="2 2"/></svg></div>'
+      +'<div class="tx"><b>GRID BASKET</b><small>'+sub+'</small></div>'
+      +'<div class="rt '+gbCls(net)+'">'+((s.n||0)?gbM(net):"$0.00")+'<small>BASKET</small></div>'
+      +'<button type="button" class="go'+(on?"":" off")+'" data-gbgo="'+esc(b.key)+'" aria-label="shid / dami"'+(d.can?"":" disabled")+'></button></div>'
+      +'<div class="xkqm"><div><span>TP @</span><b style="color:#3ddc84">'+gbPx(s.tpp,dg)+'</b></div><div><span>SL @</span><b style="color:#ff8a90">'+gbPx(s.slp,dg)+'</b></div>'
+      +'<div><span>MAANTA</span><b style="color:'+gbCol(s.today)+'">'+gbM(s.today)+'</b></div></div>';
+  }).join("");
+  const hp=gbE("gbHP"); hp.textContent=gbM(tot); hp.className=gbCls(tot);
+  const hs=gbE("gbHS"); hs.classList.toggle("on",anyOn); hs.disabled=!d.can;
+}
+/* ---- bogga ---- */
+function gbOpen(key){
+  GB.open=key; GB.view="main"; GB.draft=null; gbSetMsg("","");
+  gbE("gbPg").hidden=false; document.body.classList.add("xkon");
+  try{ history.pushState({gb:key},""); GB.bk=true; }catch(e){ GB.bk=false; }
+  gbPaintPg(); gbLoad();
+}
+function gbClose(fromBtn){
+  if(GB.view==="cfg"){ if(gbDiffN() && !confirm("Isbeddelada lama kaydin. Ka bax?")){ if(!fromBtn){ try{ history.pushState({gb:GB.open},""); }catch(e){} } return; }
+    GB.view="main"; GB.draft=null; gbPaintPg(); if(fromBtn&&GB.bk){ /* sub-view: history entry stays */ } if(!fromBtn){ try{ history.pushState({gb:GB.open},""); }catch(e){} } return; }
+  GB.open=""; gbE("gbPg").hidden=true; document.body.classList.remove("xkon");
+  if(fromBtn && GB.bk){ GB.bk=false; try{ history.back(); }catch(e){} }
+}
+function gbDiff(){ const b=gbBot(); if(!b||!GB.draft) return {}; const o={}; Object.keys(GB.draft).forEach(k=>{ if(String(GB.draft[k])!==String(b.cfg[k])) o[k]=GB.draft[k]; }); return o; }
+function gbDiffN(){ return Object.keys(gbDiff()).length; }
+function gbPaintPg(){
+  const pg=gbE("gbPg"); if(!pg||pg.hidden) return; const b=gbBot();
+  if(!b){ gbE("gbLive").innerHTML='<div class="gbnone">Bot-kan lama helin.</div>'; return; }
+  const s=b.st||{}, c=b.cfg||{}, dg=b.dg||2, can=!!(GB.d&&GB.d.can), on=!!Number(c.en);
+  const [stT,stC]=gbState(b); const pill=gbE("gbPill"); pill.textContent=stT; pill.style.color=stC;
+  gbE("gbT").textContent="🧮 GRID BASKET · "+b.sym;
+  const ps=gbE("gbPS"); ps.classList.toggle("on",on); ps.disabled=!can;
+  gbE("gbMain").hidden=GB.view!=="main"; gbE("gbCfg").hidden=GB.view!=="cfg";
+  if(GB.view==="cfg"){ gbPaintCfg(b); return; }
+  // live
+  const net=Number(s.net)||0, tp=Number(s.tpu)||0, sl=Number(s.slu)||0;
+  const lo=sl>0?-sl:-Math.max(tp*5,1), hi=tp>0?tp:1, z=-lo/(hi-lo), p=Math.max(0,Math.min(1,(net-lo)/(hi-lo)));
+  const bar=p>=z?('<i style="left:'+(z*100)+'%;width:'+Math.max(.6,(p-z)*100)+'%;background:#19c26b"></i>'):('<i style="left:'+(p*100)+'%;width:'+Math.max(.6,(z-p)*100)+'%;background:#e5484d"></i>');
+  const nx=(s.n||0)===0?"market":((Number(s.nxt)||0)>0?Number(s.nxt).toFixed(dg):((s.n||0)>=(c.mo||0)?"max":"—"));
+  gbE("gbLive").innerHTML='<div class="gbh"><div><div class="k">BASKET P/L (net)</div><div class="v" style="color:'+gbCol(net)+'">'+((s.n||0)?gbM(net):"$0.00")+'</div></div>'
+    +'<div class="r">'+(s.n||0)+' / '+(c.mo||"—")+' orders<br><span style="color:var(--ink3)">'+(Number(s.lots)||0).toFixed(2)+' / '+(Number(s.mtl)||0).toFixed(2)+' lots</span></div></div>'
+    +'<div class="gbbar">'+bar+'<em style="left:'+(z*100)+'%"></em></div>'
+    +'<div class="gbbl"><span style="color:#ff8a90">'+(sl>0?("SL "+gbM(-sl)):"SL off")+'</span><span style="color:#3ddc84">TP '+gbM(tp)+(Number(s.trail)?" · TRAIL":"")+'</span></div>'
+    +'<div class="gbtl"><div><span>AVG</span><b style="color:#c4a5ff">'+gbPx(s.avg,dg)+'</b></div><div><span>BREAK-EVEN</span><b style="color:#c4a5ff">'+gbPx(s.be,dg)+'</b></div><div><span>TP @</span><b style="color:#3ddc84">'+gbPx(s.tpp,dg)+'</b></div>'
+    +'<div><span>SL @</span><b style="color:#ff8a90">'+gbPx(s.slp,dg)+'</b></div><div><span>NEXT BUY</span><b style="color:#ff9f43">'+nx+'</b></div><div><span>STEP</span><b style="color:#4fb8ff">'+(Number(s.step)||0)+' pts</b></div></div>'
+    +(s.why?('<div class="gbst" style="margin-top:10px;color:'+stC+'">'+esc(s.why)+'</div>'):"");
+  // trade-yada
+  const pos=(b.pos||[]).slice().sort((a,c2)=>c2[2]-a[2]);
+  gbE("gbPos").innerHTML=pos.length?pos.map((x,i)=>'<div class="gbps"><span class="d">BUY</span><div class="t">#'+(i+1)+' · '+Number(x[1]).toFixed(2)+' @ '+Number(x[2]).toFixed(dg)+'<small>'+new Date(x[4]*1000).toISOString().slice(11,16)+' · #'+x[0]+'</small></div>'
+    +'<b style="color:'+gbCol(x[3])+'">'+gbM(x[3])+'</b><button type="button" data-gbx="'+x[0]+'"'+(can&&b.alive?"":" disabled")+'>✕</button></div>').join(""):'<div class="gbnone">Trade furan ma jiro · '+(on?"Buy #1 suuqa ayuu ka furayaa":"GRID waa damman yahay")+'</div>';
+  // badhamada
+  const nb=!!Number(c.nb), en=can&&b.alive;
+  gbE("gbBP").disabled=!en||!pos.length; gbE("gbBA").disabled=!en||!pos.length;
+  const bn=gbE("gbBN"); bn.disabled=!can; bn.textContent=nb?"⏸ BASKET CUSUB OFF":"▶ BASKET CUSUB ON"; bn.className=nb?"y":"g";
+  gbE("gbBH").disabled=!en||!(Number(s.halt)||Number(s.pause));
+  gbE("gbDay").innerHTML='<div><span>MAANTA</span><b style="color:'+gbCol(s.today)+'">'+gbM(s.today)+'</b></div><div><span>EQUITY DD</span><b>'+(Number(s.dd)||0).toFixed(1)+'% / '+(Number(c.dd)||0)+'%</b></div>';
+  const pend=b.rev>b.erev;
+  gbE("gbConn").innerHTML='<i class="'+(b.alive?"":"off")+'"></i>EA · '+esc(b.sym)+' · magic '+esc(b.mg)+' · '+gbAgo(b.age)+(b.ver?(" · v"+esc(b.ver)):"")+(pend?" · ⏳ sitin sugaya":"")+(b.q?(" · ⏳ "+b.q+" amar"):"");
+  if(GB.msg && GB.mcls==="wt" && !pend && !b.q && Date.now()-GB.pend>4000){ gbSetMsg("ok","✓ EA-ga wuu qaatay"); setTimeout(()=>{ if(GB.mcls==="ok") gbSetMsg("",""); },4000); }
+}
+function gbPaintCfg(b){
+  if(!GB.draft) GB.draft=Object.assign({},b.cfg);
+  const c=GB.draft, dg=b.dg||2;
+  document.querySelectorAll("#gbCfg .xkop[data-k]").forEach(g=>{ const k=g.dataset.k; g.querySelectorAll("button").forEach(x=>x.classList.toggle("on",Number(x.dataset.v)===Number(c[k]))); });
+  gbE("gbVlot").textContent=Number(c.lot).toFixed(2);
+  gbE("gbVstep").textContent=c.step+" pts";
+  gbE("gbStepR").hidden=Number(c.smode)===1;
+  gbE("gbStepP").textContent=Number(c.smode)===1?"ATR H1 × multiplier (EA input) · basket kasta mar la xisaabiyaa":("fogaanta heer iyo heer · "+c.step+" pts ≈ "+(c.step*Math.pow(10,-dg)).toFixed(dg)+" qiimo");
+  gbE("gbVtp").textContent="$"+Number(c.tp).toFixed(Number(c.tp)%1?2:0);
+  const n=gbDiffN(), sv=gbE("gbSave"); sv.disabled=!n||!(GB.d&&GB.d.can);
+  gbE("gbSaveN").textContent=n?(n+" sitin ayaa isbeddelay · riix KAYDI"):"Wax lama beddelin";
+}
+function gbStep(k,dir){
+  const c=GB.draft; if(!c) return;
+  if(k==="lot"){ const v=Number(c.lot); c.lot=dir>0?(GB_LOTS.find(x=>x>v+1e-9)||v):([...GB_LOTS].reverse().find(x=>x<v-1e-9)||v); }
+  else if(k==="step"){ const v=Number(c.step); const st=v>=2000?250:(v>=500?100:50); c.step=Math.max(10,Math.min(100000,v+dir*st)); }
+  else if(k==="tp"){ const v=Number(c.tp); const st=v>=50?10:(v>=10?5:1); c.tp=Math.max(0,v+dir*st); }
+  gbPaintPg();
+}
+async function gbSave(){
+  const b=gbBot(), df=gbDiff(); if(!b||!Object.keys(df).length) return;
+  const sv=gbE("gbSave"); sv.disabled=true; sv.textContent="Kaydinaya…";
+  const e=await gbCfg(b.key,df,"⏳ La kaydiyay · EA-ga ayaa loo diray (≤ 3s) · basket-ka xiga + kan socda (TP / SL)");
+  sv.textContent="KAYDI & DIR → EA";
+  if(!e){ GB.draft=null; GB.view="main"; }
+  gbPaintPg();
+}
+function gbPaint(){ gbPaintGuud(); gbPaintPg(); }
+(function(){
+  if(!gbE("gbBox")) return;
+  gbE("gbL").addEventListener("click",ev=>{
+    const go=ev.target.closest("[data-gbgo]");
+    if(go){ ev.stopPropagation(); if(go.disabled) return; const b=(GB.d.bots||[]).find(x=>x.key===go.dataset.gbgo); if(!b) return;
+      const on=!Number(b.cfg.en); gbCfg(b.key,{en:on?1:0},on?"⏳ GRID SHID · EA-ga ayaa loo diray":"⏳ GRID DAMI (trade cusub ma furo · TP / SL way socdaan)"); return; }
+    const c=ev.target.closest(".gbc[data-gb]"); if(c) gbOpen(c.dataset.gb);
+  });
+  gbE("gbHS").addEventListener("click",async()=>{ const bots=(GB.d&&GB.d.bots)||[]; if(!bots.length) return; const on=!bots.some(b=>Number(b.cfg.en));
+    for(const b of bots){ if(!!Number(b.cfg.en)!==on) await gbCfg(b.key,{en:on?1:0},""); } });
+  gbE("gbBack").addEventListener("click",()=>gbClose(true));
+  gbE("gbPS").addEventListener("click",()=>{ const b=gbBot(); if(!b) return; const on=!Number(b.cfg.en);
+    gbCfg(b.key,{en:on?1:0},on?"⏳ GRID SHID · EA-ga ayaa loo diray":"⏳ GRID DAMI · trade cusub ma furo (TP / SL way socdaan)"); });
+  gbE("gbBP").addEventListener("click",()=>{ const b=gbBot(); if(b) gbCmd(b.key,"CLOSE_PROFIT","💰 Xidh trade-yada faa'iidada leh?","Trade kasta oo faa'iido ku jira ayaa la xidhayaa · kuwa kale way sii furan yihiin.","💰 XIDH"); });
+  gbE("gbBA").addEventListener("click",()=>{ const b=gbBot(); if(b) gbCmd(b.key,"CLOSE_ALL","✕ Xidh basket-ka oo dhan?","Dhammaan trade-yada GRID BASKET ("+esc(b.sym)+") ayaa qiimaha suuqa lagu xidhayaa.","✕ XIDH DHAMMAAN"); });
+  gbE("gbBH").addEventListener("click",()=>{ const b=gbBot(); if(b) gbCmd(b.key,"RESET_HALT","↺ Reset HALT / nasashada maalinlaha?","EA-ga wuxuu dib u bilaabayaa basket cusub.","↺ RESET"); });
+  gbE("gbBN").addEventListener("click",()=>{ const b=gbBot(); if(!b) return; const nb=!Number(b.cfg.nb);
+    gbCfg(b.key,{nb:nb?1:0},nb?"⏳ Basket cusub ON":"⏳ Basket cusub OFF · kan socda TP / SL ayuu ku dhammaanayaa"); });
+  gbE("gbPos").addEventListener("click",ev=>{ const x=ev.target.closest("[data-gbx]"); if(!x||x.disabled) return; const b=gbBot(); if(!b) return;
+    gbCmd(b.key,"CLOSE:"+x.dataset.gbx,"✕ Xidh trade #"+x.dataset.gbx+"?","Trade-kan oo keliya ayaa qiimaha suuqa lagu xidhayaa.","✕ XIDH"); });
+  gbE("gbSet").addEventListener("click",()=>{ GB.view="cfg"; GB.draft=null; gbSetMsg("",""); gbPaintPg(); try{ gbE("gbPg").scrollTop=0; }catch(e){} });
+  gbE("gbCfg").addEventListener("click",ev=>{
+    const st=ev.target.closest("[data-st]"); if(st){ gbStep(st.dataset.st,Number(st.dataset.d)); return; }
+    const o=ev.target.closest(".xkop[data-k] button"); if(o&&GB.draft){ const k=o.parentElement.dataset.k; GB.draft[k]=Number(o.dataset.v); gbPaintPg(); }
+  });
+  gbE("gbSave").addEventListener("click",gbSave);
+  addEventListener("popstate",()=>{ if(GB.open) gbClose(false); });
+  setInterval(()=>{ const iv=GB.open?3000:10000; if(Date.now()-GB.t>=iv) gbLoad(); },1000);
+  gbLoad();
 })();
 </script></body></html>"""
 
