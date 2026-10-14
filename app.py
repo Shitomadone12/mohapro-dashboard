@@ -20,6 +20,8 @@ Web (session auth):
   /login /register /logout /dashboard /admin
   GET  /api/state         -> xogta account-ka user-ka
   POST /api/command       -> amar loo diro EA-da
+  v13.30: 🧮 GRID BASKET = xeelad bot-ka weyn (EA v73.0 · ⚡ CORE 1 · magic +156 · chart-ka dahabka) · journal GBASKET (🧮 · CORE 1) ·
+          kaarka: '🧮 GRID BASKET · CORE 1' · tilmaan: MOHA PRO v73.0 → app-ka ka shid
   v13.29: 🧮 GRID BASKET: /update?gb=1 = jid labaad (EA v1.22: /gb ma gaadho → MOHA PRO URL-ka)
   v13.28: 🧮 GRID BASKET: kaar tilmaan ah marka EA-gu weli xidhmin · GET /gb = hubinta shubista
   v13.27: 🧮 GRID BASKET EA (MOHA_Grid_Basket_EA v1.20): EA gooni ah oo isla URL + token-ka isticmaala · POST /gb (xaalad → sitin + amarro) ·
@@ -4299,7 +4301,7 @@ def api_command():
 # --------------------------------------------------------------------------
 from datetime import timedelta as _tdelta
 
-STRAT_CORE = {"BASKET": 1, "TICK": 1, "GRID": 1, "ASIA": 0}
+STRAT_CORE = {"BASKET": 1, "TICK": 1, "GRID": 1, "GBASKET": 1, "ASIA": 0}
 
 
 def _strat_core(s):
@@ -4389,7 +4391,7 @@ def _xk_key(s):
         return "GOLD"
     if s == "QORSHE":
         return "SCAN"
-    if s == "ASIA":
+    if s in ("ASIA", "GBASKET"):                         # v13.30: 🧮 GRID BASKET -> kaarkiisa gooni ah
         return ""
     return "SR"
 
@@ -5502,7 +5504,7 @@ def _gb_text(lines, code=200):
 @app.get("/gb")
 def ea_gb_ping():
     """v13.29: browser-ka ka hubi in app-ka cusub la shubay."""
-    return _gb_text(["MOHA GRID BASKET · app v13.29 · diyaar (EA-gu POST ayuu u diraa)"])
+    return _gb_text(["MOHA GRID BASKET · app v13.30 · diyaar (EA-gu POST ayuu u diraa)"])
 
 
 @app.post("/gb")
@@ -5577,6 +5579,8 @@ def _gb_view(con, acc, u):
         c = cf.get(key) or {"v": dict(GB_DEF), "rev": 0}
         sym, mg = (key.split("|") + [""])[:2]
         age = now - float(x.get("ts") or 0)
+        if age > 6 * 3600 and not x.get("pos"):           # v13.30: EA hore (6 saac+ · trade la'aan) -> qari
+            continue
         out.append({"key": key, "sym": sym, "mg": mg, "alive": age < GB_ALIVE, "age": int(age), "st": x.get("st") or {},
                     "pos": x.get("pos") or [], "dg": x.get("dg") or 2, "ver": x.get("ver") or "", "cur": x.get("cur") or "USD",
                     "cfg": dict(GB_DEF, **(c.get("v") or {})), "rev": int(c.get("rev") or 0), "erev": int(x.get("erev") or 0),
@@ -10452,7 +10456,7 @@ body.xkon{overflow:hidden}
       <div id="xkL1"></div>
       <!-- v13.27: 🧮 GRID BASKET EA -->
       <div id="gbBox" hidden>
-        <div class="xkcore"><b style="color:#fb923c">🧮 GRID BASKET EA</b><span class="sp"></span><em id="gbHP">—</em><button class="sw" id="gbHS" type="button" aria-label="GRID BASKET shid / dami"><i></i></button></div>
+        <div class="xkcore"><b style="color:#fb923c">🧮 GRID BASKET · CORE 1</b><span class="sp"></span><em id="gbHP">—</em><button class="sw" id="gbHS" type="button" aria-label="GRID BASKET shid / dami"><i></i></button></div>
         <div id="gbL"></div>
       </div>
       <div class="xkcore" id="xkC2"><b class="c2">🎯 CORE 2 · SR/SMC</b><span class="sp"></span><em id="xkC2P">—</em><button class="sw" id="xkC2S" type="button" aria-label="CORE 2 shid / dami"><i></i></button></div>
@@ -14537,8 +14541,8 @@ try{ const s=JSON.parse(localStorage.getItem("mp_j2")||"null"); if(s){ if(["d","
 const J2_MON=["Janaayo","Febraayo","Maarso","Abriil","Maajo","Juun","Luulyo","Agoosto","Sebtembar","Oktoobar","Nofembar","Desembar"];
 const J2_MS=["Jan","Feb","Mar","Abr","May","Jun","Lul","Ago","Seb","Okt","Nof","Des"];
 const J2_DW=["IS","TA","AR","KH","JI","SA","AX"];
-const J2_IC={GRID:"🪜",TICK:"⚡",BASKET:"🥇",SR:"🎯",SMC:"🧠",LABADA:"⇄",ASIA:"🌅",EMA:"📈",BB:"📊",VSA:"📶",POC:"📍",QORSHE:"📌"};
-const J2_NM={SR:"SR/SD",ASIA:"ASIA (hore)",QORSHE:"QORSHE TOOS"};
+const J2_IC={GBASKET:"🧮",GRID:"🪜",TICK:"⚡",BASKET:"🥇",SR:"🎯",SMC:"🧠",LABADA:"⇄",ASIA:"🌅",EMA:"📈",BB:"📊",VSA:"📶",POC:"📍",QORSHE:"📌"};
+const J2_NM={GBASKET:"GRID BASKET",SR:"SR/SD",ASIA:"ASIA (hore)",QORSHE:"QORSHE TOOS"};
 function j2A(s){ return esc(s).replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
 function j2Nm(s){ return (J2_IC[s]||"•")+" "+(J2_NM[s]||s||"?"); }
 function j2Save(){ try{ localStorage.setItem("mp_j2",JSON.stringify({p:J2.p,c:J2.c})); }catch(e){} }
@@ -17339,7 +17343,7 @@ var XK_INT={TKMAXD:1,BSKN:1,BSKDAY:1,BSKTGT:1,BSKSIG:1,BSKENT:1,BSKTP:1,GRLV:1,G
 function xkN(v,d){ v=Number(v); return isFinite(v)?v:(d===undefined?0:d); }
 function xkUsd(v){ v=Number(v)||0; return (v>0?"+$":(v<0?"−$":"$"))+Math.abs(v).toFixed(2); }
 function xkCls(v){ v=Number(v)||0; return v>0?"p":(v<0?"n":""); }
-function xkKey(s){ s=String(s||"").toUpperCase(); if(s==="TICK") return "TICK"; if(s==="BASKET") return "GOLD"; if(s==="GRID") return "GRID"; if(s==="SMC") return "SMC"; if(s==="QORSHE") return "SCAN"; if(s==="ASIA") return ""; return "SR"; }
+function xkKey(s){ s=String(s||"").toUpperCase(); if(s==="TICK") return "TICK"; if(s==="BASKET") return "GOLD"; if(s==="GRID") return "GRID"; if(s==="SMC") return "SMC"; if(s==="QORSHE") return "SCAN"; if(s==="ASIA"||s==="GBASKET") return ""; return "SR"; }
 function xkTrades(k){ const x=(XK.d&&XK.d.data)||{}; return (Array.isArray(x.trades)?x.trades:[]).filter(t=>String(t.st||"OPEN").toUpperCase()==="OPEN" && xkKey(t.strat||t.strategy)===k); }
 function xkStat(k){ return (typeof CSTAT!=="undefined" && CSTAT && CSTAT.s && CSTAT.s[k])?CSTAT.s[k]:null; }
 function xkSet(){ return ((XK.d&&XK.d.data)||{}).settings||{}; }
@@ -17865,9 +17869,9 @@ function gbPaintGuud(){
   if(!bots.length){   /* v13.28: EA weli lama xidhin -> tilmaan */
     gbE("gbHP").textContent="—"; gbE("gbHP").className=""; const hs0=gbE("gbHS"); hs0.classList.remove("on"); hs0.disabled=true;
     gbE("gbL").innerHTML='<div class="xknc gbc dead off" style="--c:#fb923c"><div class="ic"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 10h16M4 14h16M4 18h16"/><path d="M8 3v18" stroke-dasharray="2 2"/></svg></div>'
-      +'<div class="tx"><b>GRID BASKET</b><small>EA WELI LAMA XIDHIN</small></div><span class="go off"></span></div>'
-      +'<div class="gbhelp"><b>Sida loo xidho</b>① MetaEditor: <i>MOHA_Grid_Basket_EA_110708030.mq5</i> → F7<br>② MT5: chart XAUUSD ku dar · AutoTrading ON<br>'
-      +'③ Chart-ka dashboard-ka hoostiisa: <span style="color:#3ddc84">APP ok</span> → kaarku halkan ayuu ka soo muuqanayaa (≤ 10s)</div>';
+      +'<div class="tx"><b>GRID BASKET</b><small>MOHA PRO v73.0 SUG</small></div><span class="go off"></span></div>'
+      +'<div class="gbhelp"><b>Xeelad cusub · bot-ka weyn</b>① MetaEditor: <i>MOHA_PRO_V73_0_110708030.mq5</i> → F7 → chart-yada ku beddel (VPS-ka sidoo kale)<br>② Chart-ka dahabka ayuu ka shaqeeyaa · ⚡ CORE 1<br>'
+      +'③ Kaarku halkan ayuu ka soo muuqanayaa (≤ 10s) · <span style="color:#3ddc84">▌ shid</span> → trade wuu bilaabaa</div>';
     return; }
   let tot=0, anyOn=false;
   gbE("gbL").innerHTML=bots.map(b=>{
