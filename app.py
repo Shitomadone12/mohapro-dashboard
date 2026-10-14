@@ -20,6 +20,7 @@ Web (session auth):
   /login /register /logout /dashboard /admin
   GET  /api/state         -> xogta account-ka user-ka
   POST /api/command       -> amar loo diro EA-da
+  v13.29: 🧮 GRID BASKET: /update?gb=1 = jid labaad (EA v1.22: /gb ma gaadho → MOHA PRO URL-ka)
   v13.28: 🧮 GRID BASKET: kaar tilmaan ah marka EA-gu weli xidhmin · GET /gb = hubinta shubista
   v13.27: 🧮 GRID BASKET EA (MOHA_Grid_Basket_EA v1.20): EA gooni ah oo isla URL + token-ka isticmaala · POST /gb (xaalad → sitin + amarro) ·
           Guud: kaar oranji (CORE 1 hoostiisa) · bogga: P/L · SL↔TP · avg · BE · TP@ · SL@ · next buy · trade-yada ✕ · xidh faa'iido / dhammaan ·
@@ -3290,6 +3291,8 @@ def _save_analysis(con, acc, d):
 
 @app.post("/update")
 def ea_update():
+    if request.args.get("gb") == "1":                    # v13.29: GRID BASKET jid labaad
+        return ea_gb()
     if not token_ok():
         return jsonify(ok=False, error="bad token"), 401
     d = _ea_body()                                         # v12.8.1: UTF-8 / cp1252
@@ -5498,8 +5501,8 @@ def _gb_text(lines, code=200):
 
 @app.get("/gb")
 def ea_gb_ping():
-    """v13.28: browser-ka ka hubi in app-ka cusub la shubay."""
-    return _gb_text(["MOHA GRID BASKET · app v13.28 · diyaar (EA-gu POST ayuu u diraa)"])
+    """v13.29: browser-ka ka hubi in app-ka cusub la shubay."""
+    return _gb_text(["MOHA GRID BASKET · app v13.29 · diyaar (EA-gu POST ayuu u diraa)"])
 
 
 @app.post("/gb")
