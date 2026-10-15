@@ -20,6 +20,7 @@ Web (session auth):
   /login /register /logout /dashboard /admin
   GET  /api/state         -> xogta account-ka user-ka
   POST /api/command       -> amar loo diro EA-da
+  v13.34: 🔵 SR + 🟣 SMC kala go'an (EA v74.3) · 4 sawir nadiif (① zone · ② taabasho · ③ gelitaan · ④ bax) · MUUJI / SCAN liiska waa la saaray · 👑 LOGO · 📨 TG · USC
   v13.33: 👑 /update jawaab: vps_age · vps_algo (EA v74.0 ROYAL GOLD dashboard · VPS shidan / damsan)
   v13.32: 🧮 GRID BASKET: BUY / SELL (EA v73.3 · jihada EMA200 H1 + H4) → kaarka · NEXT · trade-yada magacyadooda
   v13.31: 🧮 GRID BASKET: jid labaad (EA v73.1): xaaladda push-ka weyn (gbx) · sitin / amarro → GBX: (amarrada bot-ka) · EA OFFLINE 75s kadib
@@ -375,6 +376,11 @@ SET_LIMITS = {          # key: (min, max, noocaa)
     "QTTF15":    (0, 2,    "int"),   # 🧠 M15
     "QTV2E":     (0, 1,    "int"),   # 🧠 gelitaan: 0 TOOS (OB) · 1 CHoCH
     "QTV2L":     (0, 1,    "int"),   # 🧠 heer: 0 ADAG · 1 DHEXE
+    "QTSR":      (0, 1,    "int"),   # v13.34 (EA v74.3): 🔵 SR xeelad ON / OFF
+    "QTSMC":     (0, 1,    "int"),   # 🟣 SMC xeelad ON / OFF
+    "QTSMCSR":   (0, 1,    "int"),   # 🟣 SMC: SR HTF shardi
+    "QTTG":      (0, 1,    "int"),   # 📨 Telegram (4 dhacdo)
+    "LOGO":      (0, 2,    "int"),   # 👑 MOHA PRO chart: 0 OFF · 1 DHEXE · 2 GEES
     "GRAPV":     (0, 1,    "int"),   # v13.21 (EA v72.8): 🔷 GRID ALBAAB · ADIGA (✓ / ✕ app)
 }
 BSK_KEYS = ("BSK", "BSKSIG", "BSKN", "BSKENT", "BSKRISK", "BSKMAX", "BSKDAY", "BSKSPR",
@@ -389,7 +395,7 @@ TK_KEYS = ("TK", "TKONLY", "TKW", "TKK", "TKMV", "TKSEC", "TKLOT", "TKRISK", "TK
 ZN_KEYS = ("ZNON", "ZNTF", "ZNSH", "ZNT", "ZNW", "ZNMX", "ZNSL", "ZNTP")   # v12.22 (EA v70.8): 🎯 ZONE YAR
 CB_KEYS = ("CBON", "CBTF", "CBN", "CBSQ")
 CORE_KEYS = ("C1ON", "C1DL", "C2ON", "C2DL")   # v13.0 (EA v72.0): 🧩 2 CORE
-QT_KEYS = ("SCG", "QTON", "QTMODE", "QTMAX", "QTH", "QTRISK", "QTDAY", "QTDRAW", "QTALL", "QTOPN", "QTRSI", "QTSTAR", "QTOB", "QTFVG", "QTVOL", "QTNEWS", "QTBE", "QTTIME", "QTTR", "QTPT", "QTENG", "QTTF1", "QTTF5", "QTTF15", "QTV2E", "QTV2L", "GRAPV")   # v13.15 (EA v72.3): 🔍 · 📌
+QT_KEYS = ("SCG", "QTON", "QTMODE", "QTMAX", "QTH", "QTRISK", "QTDAY", "QTDRAW", "QTALL", "QTOPN", "QTRSI", "QTSTAR", "QTOB", "QTFVG", "QTVOL", "QTNEWS", "QTBE", "QTTIME", "QTTR", "QTPT", "QTENG", "QTTF1", "QTTF5", "QTTF15", "QTV2E", "QTV2L", "GRAPV", "QTSR", "QTSMC", "QTSMCSR", "QTTG", "LOGO")   # v13.15 (EA v72.3): 🔍 · 📌
 GR_KEYS = ("GRON", "GRONLY", "GRDIR", "GRSTR", "GRSTEP", "GRSATR", "GRSPX", "GRLV", "GRLOT", "GRTP", "GRLK", "GRLKP", "GRBM", "GRTPR", "GRLKR", "GRLPB", "GRSTPR", "GRLBR", "GRLBTP", "GRLBSL", "GRLKD", "GRLBM", "GRFMAX",
            "GRETF", "GREF", "GRES", "GRSTPP", "GRTPM", "GRTPX", "GRLKX", "GRSLX", "GRHGMT",
            "GRSL", "GRHL", "GRCD", "GRMD", "GRDL", "GRNW", "GRHS", "GRHE", "GRMM")   # v12.25 (EA v71.0): 🪜 GRID STOP                                  # v12.24 (EA v70.9): 📏 CABBIR LAMAANE
@@ -3454,7 +3460,22 @@ CFG_KEYS = ("RISK", "DLOSS", "MAXDD", "SNIPER", "SNDAY", "SNRR", "SNSLMAX", "NEW
             "STRAT", "EMAF", "STARS", "LOT2", "PROT", "SDPROF") + BSK_KEYS + ASIA_KEYS + TK_KEYS + ZN_KEYS + CB_KEYS + GR_KEYS + PR_KEYS + CORE_KEYS + QT_KEYS   # v13.15 · v12.6 · v12.7 GOLD BASKET · v12.8 SDPROF · v12.9 ASIA · v12.12 TICK
 
 
+def _qt_mig(vals):
+    """v13.34 (EA v74.3): MUUJI ma jiro. Sitin hore (QTALL 0 + liis madhan = 'dhammaan MUUJI') -> dhammaan ON (haddii kale qorshe ma jiro)."""
+    if not isinstance(vals, dict) or "QTSR" in vals or "QTALL" not in vals:
+        return vals
+    try:
+        al = int(float(vals.get("QTALL")))
+    except (TypeError, ValueError):
+        return vals
+    if al == 0 and str(vals.get("IN:Inp_QT_Trade", "") or "").strip() in ("", "h"):
+        v = dict(vals); v["QTALL"] = 1
+        return v
+    return vals
+
+
 def _cfg_cmds(vals, rev):
+    vals = _qt_mig(vals)
     out = []
     for k in CFG_KEYS:
         if k in vals:
@@ -5514,7 +5535,7 @@ def _gb_text(lines, code=200):
 @app.get("/gb")
 def ea_gb_ping():
     """v13.29: browser-ka ka hubi in app-ka cusub la shubay."""
-    return _gb_text(["MOHA GRID BASKET · app v13.33 · diyaar (EA-gu POST ayuu u diraa)"])
+    return _gb_text(["MOHA GRID BASKET · app v13.34 · diyaar (EA-gu POST ayuu u diraa)"])
 
 
 @app.post("/gb")
@@ -5937,6 +5958,7 @@ def _qt_plan(p):
     o["rsi"] = _qt_f(p.get("rsi"), 0, 100, 1)
     o["tr8"] = 1 if _qt_i(p.get("tr8")) else 0
     o["why"] = _qt_txt(p.get("why"), 140)
+    o["pf"] = _qt_f(p.get("pf"), -1e9, 1e9, 2)   # v13.34 (EA v74.3): faa'iido (lacagta account-ka)
     arm = _qt_i(p.get("arm"), 0, 2)   # v13.21 (EA v72.8): 1 📷 sawir · 2 adiga ayaa oggolaaday
     if arm:
         o["arm"] = arm
@@ -5997,6 +6019,8 @@ def ea_qt():
            "be": _qt_f(c.get("be"), 0, 3, 1) if c.get("be") is not None else None,
            "tm": _qt_i(c.get("tm"), 0, 48) if c.get("tm") is not None else None, "opn": _qt_i(c.get("opn"), 1, 10) if c.get("opn") is not None else None,
            **{k: (_qt_i(c.get(k), 0, 2) if c.get(k) is not None else None) for k in ("eng", "tf1", "tf5", "tf15", "v2e", "v2l")},   # v13.20
+           **{k: (_qt_i(c.get(k), 0, 1) if c.get(k) is not None else None) for k in ("sr", "smc", "smcsr", "tg")},   # v13.34 (EA v74.3)
+           "logo": _qt_i(c.get("logo"), 0, 2) if c.get("logo") is not None else None, "cur": re.sub(r"[^A-Za-z]", "", str(c.get("cur") or ""))[:6],
            "trade": _qt_txt(c.get("trade"), 200), "s0": _qt_i(c.get("s0"), 0, 24), "s1": _qt_i(c.get("s1"), 0, 24),
            "srv": _qt_i(d.get("srv"), 0, 4102444800), "ver": _qt_txt(d.get("ver"), 12), "ts": now}
     with db() as con:
@@ -6012,10 +6036,10 @@ def ea_qt():
             k = str(sn.get("k") or "")
             pid = _qt_i(sn.get("pid"), 0, 10 ** 9)
             pp = _qt_plan(sn.get("p"))
-            if k not in ("scan", "entry", "exit") or pid <= 0 or not pp:
+            if k not in ("scan", "touch", "entry", "exit", "kill") or pid <= 0 or not pp:   # v13.34: ② touch · ✕ kill
                 continue
             row = {"k": k, "t": _qt_i(sn.get("t"), 0, 4102444800), "sym": _qt_sym(sn.get("sym")), "dg": _qt_i(sn.get("dg"), 0, 8),
-                   "p": pp, "b": _qt_bars(sn.get("b"), 150), "bt": _qt_i(sn.get("bt"), 60, 3600) if sn.get("bt") else 300}
+                   "p": pp, "b": _qt_bars(sn.get("b"), 170), "bt": _qt_i(sn.get("bt"), 60, 3600) if sn.get("bt") else 300}
             con.execute("INSERT INTO qt_snaps(account,pid,kind,data,ts) VALUES(?,?,?,?,?)"
                         " ON CONFLICT(account, pid, kind) DO UPDATE SET data=excluded.data, ts=excluded.ts",
                         (acc, pid, k, json.dumps(row, separators=(",", ":")), now))
@@ -10112,6 +10136,16 @@ body.mu-on .cfab{bottom:calc(146px + env(safe-area-inset-bottom))}
 .qtth{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#0a0d11;cursor:pointer}
 .qtth .tl{display:flex;justify-content:space-between;font-size:9.5px;font-weight:900;padding:4px 5px;color:var(--ink2)}
 .qtth.na{opacity:.4;cursor:default}
+.qtths.q4{grid-template-columns:repeat(2,1fr)}
+.qtsrc{display:inline-block;font-size:9.5px;font-weight:900;color:#fff;border-radius:6px;padding:2px 6px;margin-right:2px;vertical-align:1px}
+.qt4{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-top:8px}
+.qt4>div{position:relative;border-radius:9px;overflow:hidden;border:1px solid var(--line);background:#09090c}
+.qt4>div.na{opacity:.35}
+.qt4 canvas{display:block;width:100%;height:auto}
+.qt4 i{position:absolute;left:4px;top:3px;font-style:normal;font-size:8.5px;font-weight:900;color:#e8e8ee;background:rgba(0,0,0,.6);padding:1px 5px;border-radius:5px}
+.qtkill{margin:6px 0 0;font-size:11.5px;color:#a3a3b2;background:#15151b;border-radius:8px;padding:6px 8px}
+.qtpl.dead{opacity:.75}
+.qtfs.cl .hd{background:none;justify-content:flex-end}.qtfs.cl .hd b,.qtfs.cl #qtFN{display:none}
 .qtcmp div{display:grid;grid-template-columns:1fr 1.1fr 1.3fr 18px;gap:4px;font-size:11.5px;padding:6px 0;border-bottom:1px solid #1d242d;align-items:center}
 .qtcmp div:first-child{color:var(--ink3);font-size:9.5px;font-weight:800}
 .qtfull{position:fixed;inset:0;z-index:120;background:#000;padding:0;overflow:hidden}
@@ -11505,11 +11539,11 @@ body.xkon{overflow:hidden}
   <!-- ============ v13.15: 🔍 CHART SCANNER · 📌 QORSHE TOOS ============ -->
   <section class="pane" id="pScan"><div class="qt">
     <div class="qth"><svg viewBox="0 0 24 24"><path d="M4 4v16h16"/><path d="M8 16v-4M12 16V8M16 16v-6"/></svg>
-      <div><h2>CHART SCANNER</h2><small>AI falanqeyn · MT5 + ₿ Binance</small></div><span class="qtpill" id="qtPill">—</span></div>
-    <div class="qtseg" id="qtSeg"><button type="button" data-v="scan" class="on">🔍 SCAN</button><button type="button" data-v="plan">📌 QORSHE<b id="qtPN" hidden></b></button><button type="button" data-v="set">⚙ SITIN</button></div>
+      <div><h2>SR · SMC</h2><small>4 sawir trade kasta · MT5 + ₿ Binance</small></div><span class="qtpill" id="qtPill">—</span></div>
+    <div class="qtseg" id="qtSeg"><button type="button" data-v="plan" class="on">📌 TRADE-YADA<b id="qtPN" hidden></b></button><button type="button" data-v="set">⚙ SITIN</button></div>
     <div class="qtflt" id="qtFlt"><button type="button" data-v="all" class="on">ALL</button><button type="button" data-v="mt">MT5</button><button type="button" data-v="cr">₿ CRYPTO</button></div>
 
-    <div id="qtVScan">
+    <div id="qtVScan" hidden>   <!-- v13.34: scan-ka MUUJI waa la saaray -->
       <div class="qtmode" id="qtMode"><button type="button" data-m="live" class="on">⚡ LIVE<em>MT5 xog dhab · sax ah</em></button><button type="button" data-m="shot">📷 SAWIR<em>screenshot · qiyaas</em></button></div>
       <div id="qtLiveBox">
         <div class="card" id="qtSG"></div>
@@ -11539,11 +11573,11 @@ body.xkon{overflow:hidden}
       </div>
     </div>
 
-    <div id="qtVPlan" hidden>
+    <div id="qtVPlan">
       <div class="qtstats" id="qtStats"></div>
       <p class="qtnote" id="qtCxN" hidden style="margin:-4px 0 10px">₿ natiijada crypto waa <b>virtual</b> (signal CHoCH → TP / SL) · lacag lama gelin.</p>
       <div id="qtPlans"></div>
-      <p class="qtnote">Qorshe kasta: xogta scan-ka + 3 sawir (SCAN · GELITAAN · XIDH) · riix si aad u furto.</p>
+      <p class="qtnote">Trade kasta: 4 sawir (① zone la helay · ② zone la gaadhay · ③ gelitaan · ④ laga baxay) · 🔵 SR = buluug · 🟣 SMC = guduud · riix si aad u furto.</p>
     </div>
 
     <div id="qtVSet" hidden>
@@ -11555,19 +11589,24 @@ body.xkon{overflow:hidden}
           <tr><td>OFF</td><td>1,220</td><td>$4,274</td><td>1.24</td><td>$601</td></tr><tr><td>DHEXE</td><td>905</td><td>$2,877</td><td>1.22</td><td>$759</td></tr>
           <tr><td>ADAG</td><td>640</td><td>$2,855</td><td>1.33</td><td>$502</td></tr></table>
           <p class="qtnote">tick dhab 31 bil · 0.01 lot · grid cusub oo keliya · trade-yada furan lama xidho</p></div></div>
-      <div class="card qtv2c"><p class="qtk">🧠 SCAN v2 · SR + SMC DHAB <em>v72.7 · M1 · M5 · M15</em></p>
-        <div class="qtfr" style="flex-wrap:wrap"><div style="width:100%">Maskaxda scan-ka<small>v2 = SR + sweep + BOS + OB + FVG + discount · kan ugu dhow ee 3-da TF · v1 = SR pivot + trend (hore)</small></div><div class="qtmode" id="qtEng" style="margin:0;width:100%"><button type="button" data-v="1">v2 · SR + SMC<em>cusub</em></button><button type="button" data-v="0">v1<em>hore · PF 1.36</em></button></div></div>
+      <div class="card qtv2c"><p class="qtk">🔵 SR · 🟣 SMC <em>v74.3 · laba xeeladood oo kala go'an</em></p>
+        <div class="qtfr"><div><b style="color:#4ea4ff">🔵 SR · Support / Resistance</b><small>zone pivot M15 (taabashooyin) + trend M15 · H1 · H4 → hab gelitaan (hoos · QORSHE TOOS)</small></div><div class="qtsw qtsx" data-k="sr"><i></i></div></div>
+        <div class="qtfr"><div><b style="color:#b07cf0">🟣 SMC · BOS → OB → retest</b><small>BOS → Order Block → FVG → discount / premium · SL = leg · TP = liquidity</small></div><div class="qtsw qtsx" data-k="smc"><i></i></div></div>
         <div id="qtV2B">
-        <div class="qtfr" style="flex-wrap:wrap"><div style="width:100%">M15<small>dahab 31 bil PF 1.47 (46) · laakiin 2012–22: <b style="color:#ff9a9d">PF 0.62</b> ⚠ · TRADE = lammaanaha (kor) iyo DEMO</small></div><div class="qtmode qttf" data-k="tf15" style="margin:0;width:100%"><button type="button" data-v="0">OFF</button><button type="button" data-v="1">MUUJI</button><button type="button" data-v="2">TRADE</button></div></div>
-        <div class="qtfr" style="flex-wrap:wrap"><div style="width:100%">M5<small>tijaabo PF ≤ 0.99 · TRADE = DEMO oo keliya</small></div><div class="qtmode qttf" data-k="tf5" style="margin:0;width:100%"><button type="button" data-v="0">OFF</button><button type="button" data-v="1">MUUJI</button><button type="button" data-v="2">TRADE</button></div></div>
-        <div class="qtfr" style="flex-wrap:wrap"><div style="width:100%">M1<small>tijaabo khasaare (spread) · TRADE = DEMO oo keliya</small></div><div class="qtmode qttf" data-k="tf1" style="margin:0;width:100%"><button type="button" data-v="0">OFF</button><button type="button" data-v="1">MUUJI</button><button type="button" data-v="2">TRADE</button></div></div>
-        <div class="qtfr" style="flex-wrap:wrap"><div style="width:100%">Gelitaan<small>qorshaha scan-ku diray (kan ugu dhow)</small></div><div class="qtmode" id="qtV2E" style="margin:0;width:100%"><button type="button" data-v="0">TOOS<em>OB taabasho · PF 1.47</em></button><button type="button" data-v="1">CHoCH<em>TF xidhid → CHoCH TF hoose</em></button></div></div>
-        <div class="qtfr" style="flex-wrap:wrap;border:0"><div style="width:100%">Heer<small>ADAG = SWEEP khasab · DHEXE = sweep la'aan (trade badan)</small></div><div class="qtmode" id="qtV2L" style="margin:0;width:100%"><button type="button" data-v="0">ADAG<em>talo</em></button><button type="button" data-v="1">DHEXE<em>M15 PF 1.12</em></button></div></div>
-        </div><p class="qtnote">KAYDI SITINKA (hoos) · lammaane kasta hal qorshe: kan ugu dhow qiimaha · isku dhow → TF sare.</p></div>
+        <div class="qtfr" style="flex-wrap:wrap"><div style="width:100%">🟣 SMC · M15<small>dahab 31 bil PF 1.47 · 2012–22: PF ≈ 0.9 ⚠ → cent / DEMO</small></div><div class="qtmode qttf" data-k="tf15" style="margin:0;width:100%"><button type="button" data-v="0">OFF</button><button type="button" data-v="2">TRADE</button></div></div>
+        <div class="qtfr" style="flex-wrap:wrap"><div style="width:100%">🟣 SMC · M5<small>tijaabo PF ≤ 0.99 · TRADE = DEMO oo keliya</small></div><div class="qtmode qttf" data-k="tf5" style="margin:0;width:100%"><button type="button" data-v="0">OFF</button><button type="button" data-v="2">TRADE</button></div></div>
+        <div class="qtfr" style="flex-wrap:wrap"><div style="width:100%">🟣 SMC · M1<small>tijaabo khasaare (spread) · TRADE = DEMO oo keliya</small></div><div class="qtmode qttf" data-k="tf1" style="margin:0;width:100%"><button type="button" data-v="0">OFF</button><button type="button" data-v="2">TRADE</button></div></div>
+        <div class="qtfr" style="flex-wrap:wrap"><div style="width:100%">🟣 SMC · gelitaan<small>OB-ga taabashadiisa ama CHoCH TF hoose</small></div><div class="qtmode" id="qtV2E" style="margin:0;width:100%"><button type="button" data-v="0">TOOS<em>OB taabasho · PF 1.47</em></button><button type="button" data-v="1">CHoCH<em>TF xidhid → CHoCH TF hoose</em></button></div></div>
+        <div class="qtfr" style="flex-wrap:wrap"><div style="width:100%">🟣 SMC · heer<small>ADAG = SWEEP khasab · DHEXE = sweep la'aan (trade badan)</small></div><div class="qtmode" id="qtV2L" style="margin:0;width:100%"><button type="button" data-v="0">ADAG<em>talo</em></button><button type="button" data-v="1">DHEXE<em>trade badan</em></button></div></div>
+        <div class="qtfr" style="border:0"><div>🟣 SMC + SR shardi<small>ON = OB-gu waa inuu ku dhex jiraa SR H1 (≥ 2 taabasho) · sidii v72.7 · trade yar</small></div><div class="qtsw qtsx" data-k="smcsr"><i></i></div></div>
+        </div><p class="qtnote">MUUJI ma jiro: lammaane / TF OFF = qorshe ma sameeyo · trade kasta = 4 sawir · lammaane kasta hal trade mar.</p></div>
+      <div class="card"><p class="qtk">👑 CHART · 📨 TELEGRAM</p>
+        <div class="qtfr" style="flex-wrap:wrap"><div style="width:100%">MOHA PRO chart-ka (ROYAL GOLD)<small>DHEXE = watermark weyn (shumacyada gadaashooda) · GEES = astaan yar hoos midig</small></div><div class="qtmode qttf" data-k="logo" style="margin:0;width:100%"><button type="button" data-v="0">OFF</button><button type="button" data-v="1">DHEXE</button><button type="button" data-v="2">GEES</button></div></div>
+        <div class="qtfr" style="border:0"><div>📨 Telegram<small>① zone · ② taabasho · ③ gelitaan · ④ bax (qoraal · EA: EnableTelegram + token)</small></div><div class="qtsw qtsx" data-k="tg"><i></i></div></div></div>
       <div class="card"><p class="qtk">📌 QORSHE TOOS <em>🎯 CORE 2 · SR / SMC</em></p>
         <div class="qtfr"><div>Shidan<small>scan → qorshe → gelitaan toos</small></div><div class="qtsw" id="qtSwOn"><i></i></div></div>
         <div class="qtfr" style="flex-wrap:wrap"><div style="width:100%">Hab gelitaan<small>dhammaan: shumaca taabashada xidhid = zone qabtay? · tijaabo dahab 31 bil</small></div><div class="qtmode" id="qtMd" style="margin:0;width:100%"><button type="button" data-v="0">TOOS<em>M15 xidhid · PF 1.03</em></button><button type="button" data-v="1">XAQIIJIN<em>M5 xidhid + CHoCH · PF 1.18</em></button><button type="button" data-v="2">M15 + CHoCH<em>PF 1.21 · ugu fiican</em></button></div></div>
-        <div class="qtfr" style="flex-wrap:wrap"><div style="width:100%">🌍 Lammaane kasta: TRADE / MUUJI<small>riix lammaanaha · forex + dahab · magaca broker-ka (XAUUSDm · EURUSDz …) · default dhammaan MUUJI · tijaabo 10 sano: edge ma jiro → DEMO</small></div><div class="qtpairs" id="qtPairs" style="width:100%"></div></div>
+        <div class="qtfr" style="flex-wrap:wrap"><div style="width:100%">🌍 Lammaanayaasha: ON / OFF<small>riix lammaanaha · forex + dahab · magaca broker-ka (XAUUSDm · XAUUSDc …) · OFF = qorshe ma sameeyo · default dhammaan ON</small></div><div class="qtpairs" id="qtPairs" style="width:100%"></div></div>
         <div class="qtfr"><div>Trade furan isku mar<small>lammaane kasta 1 · account-ka oo dhan</small></div><div class="qtstp" data-k="opn" data-lo="1" data-hi="10" data-st="1"><button type="button">−</button><b>—</b><button type="button">+</button></div></div>
         <div class="qtfr"><div>Qorshe ugu badan</div><div class="qtstp" data-k="max" data-lo="1" data-hi="20" data-st="1"><button type="button">−</button><b>—</b><button type="button">+</button></div></div>
         <div class="qtfr"><div>Muddo qorshe<small>saacadood</small></div><div class="qtstp" data-k="h" data-lo="1" data-hi="48" data-st="1"><button type="button">−</button><b>—</b><button type="button">+</button></div></div>
@@ -11589,7 +11628,7 @@ body.xkon{overflow:hidden}
         <p class="qtnote" id="qtTrd">Trade: —</p>
         <button class="qtgo" id="qtSave" type="button">KAYDI SITINKA</button><p class="qtnote" id="qtSaveN"></p></div>
       <div class="card qthon"><p>Tijaabo dahab 31 bil: M15 + CHoCH <b>PF 1.21</b> → + RSI · ★ lot · BE 1.5R <b>PF 1.36 · DD nus</b>. Tijaabooyin badan isla xogta → qayb waa nasiib.</p>
-        <p style="margin-top:6px"><b>🧠 SR + SMC · 10 sano (2012–22 · M15):</b> XAUUSD PF 0.62 · EURUSD 0.93 · GBPUSD 1.04 · USDJPY 0.80 → <b>edge ma jiro</b>. Sidaas darteed lammaane kasta default = <b>MUUJI</b> (qorshe + sawir + natiijo) · TRADE = adiga · DEMO marka hore.</p></div>
+        <p style="margin-top:6px"><b>⚠ Daacadnimo · 10 sano (2012–22 · 12 lammaane · M15/H1):</b> 🔵 SR PF 0.84 · 🟣 SMC PF 0.90 → <b>edge ma jiro</b>. Ku wad <b>cent account</b> (khatar 0.5%) · lacag weyn ha gelin ilaa natiijada live-ka ahi caddeyso.</p></div>
     </div>
   </div></section>
   <!-- ============ v13.19: ₿ BINANCE (spot) · 📅 DCA · 🔍 SCAN CRYPTO (MUUJI) ============ -->
@@ -16546,7 +16585,7 @@ function bnChart(){
 })();
 
 /* ======================== v13.15: 🔍 CHART SCANNER · 📌 QORSHE TOOS (EA v72.8) ======================== */
-const QT={st:null, live:null, sel:"", view:"scan", mode:"live", busy:false, reqAt:0, shot:"", ed:null, dirty:false, pl:null, t:0, flt:"all"};
+const QT={st:null, live:null, sel:"", view:"plan", mode:"live", busy:false, reqAt:0, shot:"", ed:null, dirty:false, pl:null, t:0, flt:"all"};
 function qtFok(x){ return QT.flt==="all" || (QT.flt==="cr")===!!(x&&x.cr); }   /* v13.19: ₿ */
 function qtPid(p){ return p.cr?("₿"+(p.id-1000000)):String(p.id); }
 function qtCrTag(){ return '<span class="qttag cr">₿ MUUJI</span>'; }
@@ -16590,7 +16629,7 @@ async function qtLoad(){
   QT.st=d; QT.t=Date.now();
   if(qtPendHold(d)){ } else if(!QT.ed || !QT.dirty) QT.ed={on:d.cfg.on==null?1:d.cfg.on, md:d.cfg.md==null?2:d.cfg.md, max:d.cfg.max||5, h:d.cfg.h||8, risk:d.cfg.risk||0.5, day:d.cfg.day==null?3:d.cfg.day, draw:d.cfg.draw==null?1:d.cfg.draw, scg:d.cfg.scg==null?2:d.cfg.scg, all:d.cfg.all==null?1:d.cfg.all, opn:d.cfg.opn||3,
     rsi:d.cfg.rsi==null?1:d.cfg.rsi, star:d.cfg.star==null?1:d.cfg.star, ob:d.cfg.ob==null?1:d.cfg.ob, fvg:d.cfg.fvg==null?1:d.cfg.fvg, vol:d.cfg.vol==null?1:d.cfg.vol, news:d.cfg.news==null?1:d.cfg.news, be:d.cfg.be==null?1.5:d.cfg.be, tm:d.cfg.tm||0, tr:d.cfg.tr||0, pt:d.cfg.pt||0,   /* v13.18 */
-    eng:d.cfg.eng==null?1:d.cfg.eng, tf1:d.cfg.tf1==null?1:d.cfg.tf1, tf5:d.cfg.tf5==null?1:d.cfg.tf5, tf15:d.cfg.tf15==null?2:d.cfg.tf15, v2e:d.cfg.v2e||0, v2l:d.cfg.v2l||0,   /* v13.20: 🧠 SCAN v2 */
+    eng:d.cfg.eng==null?1:d.cfg.eng, tf1:Number(d.cfg.tf1)===2?2:0, tf5:Number(d.cfg.tf5)===2?2:0, tf15:d.cfg.tf15==null?2:(Number(d.cfg.tf15)===2?2:0), v2e:d.cfg.v2e||0, v2l:d.cfg.v2l||0, sr:d.cfg.sr==null?1:d.cfg.sr, smc:d.cfg.smc==null?1:d.cfg.smc, smcsr:d.cfg.smcsr||0, tg:d.cfg.tg==null?1:d.cfg.tg, logo:d.cfg.logo==null?1:d.cfg.logo,   /* v13.34 */   /* v13.20: 🧠 SCAN v2 */
     tl:qtTL(d)};   /* v13.21: 🌍 lammaane kasta TRADE / MUUJI */
   qtPaint();
 }
@@ -16600,7 +16639,7 @@ function qtTL(d){ const c=d.cfg||{}, L=((d.scans)||[]).filter(x=>!x.cr && x.sym)
   const T=String(c.trade||"").split(",").map(x=>x.trim().toUpperCase()).filter(Boolean);
   return L.filter(s=>T.some(t=>s.toUpperCase().indexOf(t)===0)); }
 function qtPairsPaint(){ const el=qtE("qtPairs"); if(!el||!QT.ed) return; const L=qtSyms();
-  el.innerHTML=L.length?L.map(s=>{ const on=QT.ed.tl.indexOf(s)>=0; return '<button type="button" data-s="'+esc(s)+'" class="'+(on?"on":"")+'"><b>'+esc(s)+'</b><em>'+(on?"✓ TRADE":"MUUJI")+'</em></button>'; }).join("")
+  el.innerHTML=L.length?L.map(s=>{ const on=QT.ed.tl.indexOf(s)>=0; return '<button type="button" data-s="'+esc(s)+'" class="'+(on?"on":"")+'"><b>'+esc(s)+'</b><em>'+(on?"✓ ON":"OFF")+'</em></button>'; }).join("")
     :'<span class="qtnote" style="margin:0">Lammaane weli ma jiro · EA v72.8 ayaa soo diraya (charts-ka furan + liiska).</span>'; }
 function qtShSyms(){ const el=qtE("qtShSym"); if(!el) return; const L=qtSyms();
   el.innerHTML=L.length?L.map(s=>'<button type="button" data-s="'+esc(s)+'" class="'+(QT.shSym===s?"on":"")+'"><b>'+esc(s)+'</b></button>').join(""):'<span class="qtnote" style="margin:0">EA-ga xog weli ma soo dirin.</span>'; }
@@ -16797,10 +16836,12 @@ function qtPlans(){
     +'<div><span>R WADAR</span><b style="color:'+((s.R||0)>=0?"#7ff0b0":"#ff9a9d")+'">'+(s.tr?((s.R>0?"+":"")+Number(s.R).toFixed(1)):"—")+'</b></div>';
   const L=(d.plans||[]).filter(qtFok), box=qtE("qtPlans");
   if(!L.length){ box.innerHTML='<div class="card"><p class="qtnote" style="margin:0">'+(QT.flt==="cr"?"₿ Qorshe crypto weli ma jiro · server-ka ayaa M15 kasta scan gareeya (trend M15 · H1 · H4 isku raac + zone).":"Qorshe weli ma jiro. EA v72.8 (QORSHE TOOS ON) ayaa M15 kasta scan gareeya · London / NY.")+'</p></div>'; return; }
-  box.innerHTML='<p class="qtplh">📸 Kaar kasta sawirkiisa ayuu leeyahay · riix → 3 sawir (scan · gelitaan · xidh) · DHACAY / KA CARAY 2 saac kadib liiska way ka baxaan.</p>'+L.slice(0,40).map((p,ix)=>{ const dg=p.dg, b=p.s>0;
-    return '<div class="qtpl" data-p="'+p.id+'"><div class="hd"><b>#'+qtPid(p)+' · '+esc(p.sym)+' · <span style="color:'+(b?"#7ff0b0":"#ff9a9d")+'">'+(b?"BUY":"SELL")+'</span>'+(p.v2?' <span class="qttag v2">'+qtTFn(p.tf)+' · SR+SMC</span>':'')+(p.arm===1?' <span class="qttag v2">📷 SAWIR</span>':'')+(p.arm===2?' <span class="qttag arm">📌 ADIGA</span>':'')+(p.cr?qtCrTag():qtMuTag(p))+'</b>'
-      +'<span class="'+qtStC(p.st)+(p.st===1&&p.q15?" q15":"")+'">'+qtStL(p)+((p.st===3||p.st===4||p.st===8)&&p.tE?(" "+(p.r>0?"+":"")+Number(p.r).toFixed(1)+"R"):"")+'</span></div>'
-      +'<div class="ln"><span>zone '+qtF(p.lo,dg)+'–'+qtF(p.hi,dg)+'</span><span style="color:#ff9a9d">SL '+qtF(p.sl,dg)+'</span><span style="color:#7ff0b0">TP '+qtF(p.tp,dg)+'</span><span>'+qtTm(p.t)+'</span></div>'+((ix<8&&!p.cr)?'<div class="qtpth" data-th="'+p.id+'"><canvas width="720" height="260"></canvas><i>sawir…</i></div>':'')+'</div>'; }).join(""); qtThumbs(L.slice(0,8));
+  box.innerHTML='<p class="qtplh">📸 Trade kasta = 4 sawir (① zone · ② taabasho · ③ gelitaan · ④ bax) · riix kaarka → sawirrada waaweyn.</p>'+L.slice(0,40).map((p,ix)=>{ const dg=p.dg, b=p.s>0, sc=qtSrcC(p), dead=(p.st===5||p.st===6);   /* v13.34 */
+    return '<div class="qtpl'+(dead?" dead":"")+'" data-p="'+p.id+'" style="border-left:3px solid '+(p.cr?"#f0b90b":sc)+'"><div class="hd"><b>'+(p.cr?"":('<span class="qtsrc" style="background:'+sc+'">'+qtSrc(p)+'</span> '))+'#'+qtPid(p)+' · '+esc(p.sym)+' · <span style="color:'+(b?"#7ff0b0":"#ff9a9d")+'">'+(b?"BUY":"SELL")+'</span>'+(p.v2?' <span class="qttag v2">'+qtTFn(p.tf)+'</span>':'')+(p.arm===1?' <span class="qttag v2">📷 SAWIR</span>':'')+(p.arm===2?' <span class="qttag arm">📌 ADIGA</span>':'')+(p.cr?qtCrTag():'')+'</b>'
+      +'<span class="'+qtStC(p.st)+(p.st===1&&p.q15?" q15":"")+'">'+qtStL(p)+((p.st===3||p.st===4||p.st===8)&&p.tE?(" "+(p.r>0?"+":"")+Number(p.r).toFixed(1)+"R"+(p.pf?(" · "+qtMoney(p.pf,true)):"")):"")+'</span></div>'
+      +'<div class="ln"><span>zone '+qtF(p.lo,dg)+'–'+qtF(p.hi,dg)+'</span><span style="color:#ff9a9d">SL '+qtF(p.eSL||p.sl,dg)+'</span><span style="color:#7ff0b0">TP '+qtF(p.eTP||p.tp,dg)+'</span><span>'+qtTm(p.t)+'</span></div>'
+      +(dead?('<p class="qtkill">✕ '+esc(p.why||"qorshaha waa dhacay")+'</p>'):'')
+      +((ix<8&&!p.cr&&!dead)?('<div class="qt4" data-th="'+p.id+'">'+QT_K4.map(k=>'<div data-k="'+k+'"><canvas width="260" height="150"></canvas><i>'+QT_KS[k]+'</i></div>').join("")+'</div>'):'')+'</div>'; }).join(""); qtThumbs(L.slice(0,8).filter(p=>!(p.st===5||p.st===6)));
 }
 /* ---------- 📸 sawir MT5 (chart buuxa) · xogta M5 ---------- */
 function qtMT5Draw(cv,sn,kind,s,mini){
@@ -16891,18 +16932,120 @@ function qtMT5Draw(cv,sn,kind,s,mini){
   g.fillStyle="#c9ced6"; g.font="bold "+Math.round(12*s)+"px sans-serif"; const ttl=p.sym+", "+(qtTFn(Math.round(bt/60))||"M5")+(p.v2?" · SR + SMC":""); g.fillText(ttl,8*s,top-8*s); const tw=g.measureText(ttl).width;
   g.fillStyle="#7d8794"; g.font=fs+"px sans-serif"; g.fillText("scan "+qtHM(p.t)+" · zone "+F(p.lo)+"–"+F(p.hi)+" · RR 1:"+(Math.abs(p.ent-p.sl)>0?(Math.abs(p.tp-p.ent)/Math.abs(p.ent-p.sl)).toFixed(1):"—"),8*s+tw+14*s,top-8*s);
 }
+/* ---------- v13.34 (EA v74.3): 🔵 SR · 🟣 SMC · 4 sawir nadiif (① zone · ② taabasho · ③ gelitaan · ④ bax) ---------- */
+var QT_K4=["scan","touch","entry","exit"];
+var QT_KN={scan:"① ZONE LA HELAY",touch:"② ZONE LA GAADHAY",entry:"③ GELITAAN",exit:"④ LAGA BAXAY",kill:"✕ QORSHE DHACAY"};
+var QT_KS={scan:"① ZONE",touch:"② TAABTAY",entry:"③ GELITAAN",exit:"④ BAX"};
+function qtSrc(p){ return p&&p.v2?"SMC":"SR"; }
+function qtSrcC(p){ return p&&p.v2?"#b07cf0":"#4ea4ff"; }
+function qtCur(){ const c=(QT.st&&QT.st.cfg)||{}; return String(c.cur||"USD").toUpperCase(); }
+function qtMoney(v,short){ const n=Number(v)||0, sg=n>=0?"+":"−", a=Math.abs(n);
+  if(qtCur()==="USC") return sg+a.toFixed(1)+" USC"+(short?"":(" ($"+(a/100).toFixed(2)+")")); return sg+"$"+a.toFixed(2); }
+function qtDist(p,d,dg){ const s=String(p.sym||"").toUpperCase(); d=Math.abs(d);
+  if(s.indexOf("XAU")===0||s.indexOf("GOLD")===0) return "$"+d.toFixed(1);
+  const pip=(dg===3||dg===2)?0.01:0.0001; return (d/pip).toFixed(1)+" pip"; }
+function qtDur(a,b){ const m=Math.max(0,Math.round((b-a)/60)); return m>=60?(Math.floor(m/60)+"s "+(m%60)+"d"):(m+" daq"); }
+function qtCleanDraw(cv,sn,kind,s,mini){
+  const g=cv.getContext("2d"), W=cv.width, H=cv.height; s=s||1;
+  const BG="#09090c", UP="#34d399", DN="#fb7185", MU="#878796", TX="#e8e8ee";
+  g.setLineDash([]); g.textAlign="left"; g.fillStyle=BG; g.fillRect(0,0,W,H);
+  if(!sn || !sn.b || sn.b.length<3){ g.fillStyle="#4b4b58"; g.font="bold "+Math.round((mini?12:15)*s)+"px sans-serif"; g.textAlign="center"; g.fillText(kind==="scan"?"sawir ma jiro":"weli ma dhicin",W/2,H/2+4*s); g.textAlign="left"; return; }
+  const p=sn.p||{}, b=sn.b, dg=sn.dg!=null?sn.dg:p.dg, N=b.length, F=v=>qtF(v,dg), buy=p.s>0, sc=qtSrcC(p);
+  const ent=(kind==="entry"||kind==="exit")&&p.tE&&p.eP>0;
+  const hh=mini?0:Math.round(40*s), ff=mini?0:Math.round(36*s), ax=mini?0:Math.round(62*s);
+  const x0=Math.round((mini?3:12)*s), pr=W-ax, x1=pr-Math.round(({scan:0.2,touch:0.16,entry:0.24,exit:0.08,kill:0.1}[kind]||0.1)*(pr-x0)), y0=hh+Math.round((mini?6:14)*s), y1=H-ff-Math.round((mini?6:14)*s);
+  let lo=Infinity, hi=-Infinity; b.forEach(x=>{ lo=Math.min(lo,x[3]); hi=Math.max(hi,x[2]); });
+  const lv=[p.lo,p.hi]; if(ent) lv.push(p.eSL,p.eTP,p.eP); if(kind==="exit"&&p.xP) lv.push(p.xP); if(kind==="touch"&&p.ext) lv.push(p.ext);
+  lv.forEach(v=>{ if(v>0){ lo=Math.min(lo,v); hi=Math.max(hi,v); } });
+  const pad=(hi-lo)*0.08||1; lo-=pad; hi+=pad;
+  const Y=v=>y0+(y1-y0)*(hi-v)/(hi-lo), cw=(x1-x0)/N, X=i=>x0+cw*(i+0.5);
+  const bt=sn.bt||900, ti=t=>{ let q=-1; for(let i=0;i<N;i++){ if(b[i][0]<=t) q=i; } return q; };
+  const xAt=t=>{ if(!t) return x0; if(t>b[N-1][0]) return Math.min(pr-2,X(N-1)+(t-b[N-1][0])/bt*cw); const i=ti(t); return i<0?x0:X(i); };
+  const fs=Math.round(12*s);
+  /* grid + qiimaha */
+  g.lineWidth=1; g.strokeStyle="#16161d"; g.font=Math.round(11*s)+"px sans-serif";
+  for(let q=0;q<=5;q++){ const v=hi-(hi-lo)*q/5, y=Y(v); g.beginPath(); g.moveTo(x0,y); g.lineTo(pr,y); g.stroke(); if(!mini){ g.fillStyle="#5c5c6a"; g.fillText(v.toFixed(dg),pr+6*s,y+4*s); } }
+  /* zone */
+  const zx=Math.max(x0,(p.v2&&p.tob)?xAt(p.tob):x0+cw*2), zt=Y(p.hi), zb=Y(p.lo);
+  g.fillStyle=p.v2?"rgba(176,124,240,.17)":"rgba(78,164,255,.16)"; g.fillRect(zx,zt,pr-zx,Math.max(2,zb-zt));
+  g.strokeStyle=sc; g.lineWidth=Math.max(1,1.6*s); g.beginPath(); g.moveTo(zx,buy?zt:zb); g.lineTo(pr,buy?zt:zb); g.stroke();
+  if(!mini){ g.font="bold "+Math.round(11*s)+"px sans-serif"; g.fillStyle=sc;
+    const zl=(p.v2?("ORDER BLOCK"+((p.fvl||p.fvh)?" · FVG":"")):(buy?"SUPPORT":"RESISTANCE"))+" "+F(p.lo)+"–"+F(p.hi)+(p.v2?(" · "+qtTFn(p.tf)):" · M15");
+    g.fillText(zl,zx+5*s,buy?zb+13*s:zt-5*s); }
+  /* SR: taabashooyinkii hore (wareegyo) */
+  let tn=0;
+  if(!p.v2){ const tl=p.t||b[N-1][0], zh=(p.hi-p.lo)||1;
+    for(let i=2;i<N-2 && tn<5;i++){ if(b[i][0]>=tl) break; const v=buy?b[i][3]:b[i][2];
+      const ext=buy?(v<=b[i-1][3]&&v<=b[i+1][3]&&v<=b[i-2][3]&&v<=b[i+2][3]):(v>=b[i-1][2]&&v>=b[i+1][2]&&v>=b[i-2][2]&&v>=b[i+2][2]);
+      if(ext && v<=p.hi+zh*0.6 && v>=p.lo-zh*0.6){ tn++; if(!mini){ g.strokeStyle=sc; g.lineWidth=Math.max(1,1.5*s); g.beginPath(); g.arc(X(i),buy?Y(v)+9*s:Y(v)-9*s,4.5*s,0,7); g.stroke(); } } } }
+  /* SMC: BOS (gaaban) */
+  if(p.v2 && p.bos && !mini){ const xb=xAt(p.tbos), xa=Math.max(x0,xb-8*cw); g.strokeStyle="#9ec9ff"; g.lineWidth=Math.max(1,1.3*s); g.setLineDash([4*s,3*s]); g.beginPath(); g.moveTo(xa,Y(p.bos)); g.lineTo(xb,Y(p.bos)); g.stroke(); g.setLineDash([]);
+    g.fillStyle="#9ec9ff"; g.font="bold "+Math.round(10*s)+"px sans-serif"; g.fillText("BOS "+(buy?"↑":"↓"),xa,buy?Y(p.bos)-4*s:Y(p.bos)+12*s); }
+  /* natiijada (④): sanduuq gelitaan -> bax */
+  const xe=ent?xAt(p.tE):0, xx=(kind==="exit"&&p.tX)?xAt(p.tX):pr;
+  if(kind==="exit" && ent && p.xP){ g.fillStyle=(p.r>0)?"rgba(38,198,110,.16)":"rgba(235,77,75,.16)"; g.fillRect(xe,Math.min(Y(p.eP),Y(p.xP)),Math.max(2,xx-xe),Math.abs(Y(p.xP)-Y(p.eP))); }
+  /* shumacyada: kor = godan · hoos = buuxa */
+  const bw=Math.max(1,cw*0.34);
+  for(let i=0;i<N;i++){ const o=b[i][1],h=b[i][2],l=b[i][3],c=b[i][4], up=c>=o, x=X(i), col=up?UP:DN;
+    g.strokeStyle=col; g.lineWidth=Math.max(1,0.9*s); g.beginPath(); g.moveTo(x,Y(h)); g.lineTo(x,Y(l)); g.stroke();
+    const yt=Y(Math.max(o,c)), yb=Math.max(yt+1,Y(Math.min(o,c)));
+    if(up){ g.fillStyle=BG; g.fillRect(x-bw,yt,2*bw,yb-yt); g.strokeRect(x-bw+0.5,yt+0.5,2*bw-1,Math.max(1,yb-yt-1)); } else { g.fillStyle=col; g.fillRect(x-bw,yt,2*bw,yb-yt); } }
+  /* ① qiimaha -> zone */
+  if(kind==="scan"){ const lc=b[N-1][4], d=buy?(lc-p.hi):(p.lo-lc), ya=Y(lc), yz=buy?zt:zb, xa=Math.min(pr-14*s,X(N-1)+(pr-X(N-1))*0.55);
+    g.strokeStyle="#5c5c6a"; g.lineWidth=1; g.beginPath(); g.moveTo(X(N-1)+4*s,ya); g.lineTo(pr,ya); g.stroke();
+    if(d>0){ g.strokeStyle="#f5a623"; g.fillStyle="#f5a623"; g.lineWidth=Math.max(1,1.8*s); g.beginPath(); g.moveTo(xa,ya+(buy?6:-6)*s); g.lineTo(xa,yz+(buy?-8:8)*s); g.stroke();
+      g.beginPath(); if(buy){ g.moveTo(xa-6*s,yz-11*s); g.lineTo(xa+6*s,yz-11*s); g.lineTo(xa,yz-1*s); } else { g.moveTo(xa-6*s,yz+11*s); g.lineTo(xa+6*s,yz+11*s); g.lineTo(xa,yz+1*s); } g.fill();
+      if(!mini){ g.font="bold "+Math.round(12*s)+"px sans-serif"; const t=qtDist(p,d,dg)+" u jira", w=g.measureText(t).width; g.fillText(t,Math.max(x0,xa-w-8*s),(ya+yz)/2+4*s); } } }
+  /* ② taabasho */
+  if(kind==="touch" && p.tT){ const i=ti(p.tT), x=i>=0?X(i):xAt(p.tT); const yh=Y(i>=0?b[i][2]:p.hi), yl=Y(i>=0?b[i][3]:p.lo);
+    g.strokeStyle="#f5a623"; g.lineWidth=Math.max(1.5,2.4*s); g.strokeRect(x-bw-5*s,yh-5*s,2*bw+10*s,yl-yh+10*s);
+    if(!mini){ g.fillStyle="#f5a623"; g.font="bold "+Math.round(11*s)+"px sans-serif"; g.textAlign="center"; g.fillText("TAABASHO",x,buy?yl+19*s:yh-10*s); g.textAlign="left"; } }
+  /* ③ / ④ gelitaan · SL · TP */
+  if(ent){ const xEnd=(kind==="exit")?xx:pr;
+    const dl=(v,col)=>{ g.strokeStyle=col; g.lineWidth=Math.max(1,1.6*s); g.setLineDash([7*s,5*s]); g.beginPath(); g.moveTo(xe,Y(v)); g.lineTo(xEnd,Y(v)); g.stroke(); g.setLineDash([]); };
+    dl(p.eTP,"#26c66e"); dl(p.eP,"#f0f0f5"); dl(p.eSL,"#eb4d4b");
+    g.fillStyle=buy?"#26c66e":"#eb4d4b"; g.beginPath(); const ye=Y(p.eP);
+    if(buy){ g.moveTo(xe,ye+3*s); g.lineTo(xe-8*s,ye+17*s); g.lineTo(xe+8*s,ye+17*s); } else { g.moveTo(xe,ye-3*s); g.lineTo(xe-8*s,ye-17*s); g.lineTo(xe+8*s,ye-17*s); } g.fill();
+    if(!mini){ g.font="bold "+Math.round(11*s)+"px sans-serif";
+      const lab=(t,v,col)=>{ const w=g.measureText(t).width, y=Y(v); let x=pr-w-14*s;
+        g.fillStyle=BG; g.strokeStyle=col; g.lineWidth=1; g.beginPath(); if(g.roundRect) g.roundRect(x-6*s,y-10*s,w+12*s,20*s,5*s); else g.rect(x-6*s,y-10*s,w+12*s,20*s); g.fill(); g.stroke(); g.fillStyle=col; g.fillText(t,x,y+4*s); };
+      lab("TP "+F(p.eTP),p.eTP,"#26c66e"); lab("GELITAAN "+F(p.eP),p.eP,"#f0f0f5"); lab("SL "+F(p.eSL),p.eSL,"#eb4d4b"); }
+    if(kind==="exit" && p.xP){ g.fillStyle=p.r>0?"#26c66e":"#eb4d4b"; g.strokeStyle="#09090c"; g.lineWidth=2*s; g.beginPath(); g.arc(xx,Y(p.xP),(mini?4:7)*s,0,7); g.fill(); g.stroke(); } }
+  if(mini) return;
+  /* qiimaha u dambeeya */
+  const last=b[N-1][4]; g.fillStyle="#2a2a33"; g.fillRect(pr+1,Y(last)-9*s,ax-2,18*s); g.fillStyle=TX; g.font="bold "+Math.round(11*s)+"px sans-serif"; g.fillText(last.toFixed(dg),pr+5*s,Y(last)+4*s);
+  /* header */
+  const kc=kind==="touch"?"#f5a623":(kind==="entry"?"#26c66e":(kind==="exit"?(p.r>0?"#26c66e":"#eb4d4b"):(kind==="kill"?"#8b949e":sc)));
+  const hx=(c,a)=>{ const n=parseInt(c.slice(1),16); return "rgba("+((n>>16)&255)+","+((n>>8)&255)+","+(n&255)+","+a+")"; };
+  g.fillStyle=hx(kc,.16); g.fillRect(0,0,W,hh); g.fillStyle=kc; g.fillRect(0,hh-2*s,W,2*s);
+  let tt=QT_KN[kind]||kind; if(kind==="entry") tt+=" · "+(buy?"BUY":"SELL"); if(kind==="exit") tt+=" · "+qtStN(p.st)+(p.r>0?" ✓":" ✕");
+  g.font="bold "+Math.round(17*s)+"px sans-serif"; g.fillStyle=kc; g.fillText(tt,12*s,hh/2+6*s);
+  const rt=qtSrc(p)+" · "+(p.sym||"")+" · "+(p.v2?qtTFn(p.tf):"M15")+" · "+(buy?"BUY":"SELL")+" · #"+qtPid(p);
+  g.font="bold "+Math.round(12*s)+"px sans-serif"; const rw=g.measureText(rt).width; g.fillStyle=TX; g.fillText(rt,Math.max(12*s+g.measureText(" ").width,W-rw-112*s),hh/2+5*s);   /* 112: badhamada ⟲ ✕ */
+  /* footer */
+  g.fillStyle="#101016"; g.fillRect(0,H-ff,W,ff); g.strokeStyle="#22222b"; g.beginPath(); g.moveTo(0,H-ff+0.5); g.lineTo(W,H-ff+0.5); g.stroke();
+  let ft="", bd="", bc="#3a3a48";
+  if(kind==="scan"){ ft=p.v2?("BOS ✓ · OB"+((p.fvl||p.fvh)?" · FVG":"")+" · "+(buy?"discount":"premium")+(p.srn>=2?" · SR ✓":"")):((buy?"Support":"Resistance")+(tn?(" · "+tn+" taabasho"):"")+" · trend "+["M15","H1","H4"].map((n,i)=>n+" "+qtAr((p.tr||[0,0,0])[i])).join(" ")); bd="SUG"; }
+  else if(kind==="touch"){ ft="Qiimuhu zone-ka wuu taabtay ("+F(p.ext)+") · sugaya xaqiijin"; bd="TAABTAY"; bc="#f5a623"; }
+  else if(kind==="entry"){ const R=Math.abs(p.eP-p.eSL); ft="Lot "+Number(p.lot||0).toFixed(2)+" · SL "+F(p.eSL)+" · TP "+F(p.eTP)+(R>0?(" · 1:"+(Math.abs(p.eTP-p.eP)/R).toFixed(1)):""); bd="● FURAN"; bc="#26c66e"; }
+  else if(kind==="exit"){ ft="Muddo "+qtDur(p.tE,p.tX)+" · "+(p.r>0?"+":"")+Number(p.r||0).toFixed(2)+"R"; bd=qtMoney(p.pf,true); bc=p.r>0?"#26c66e":"#eb4d4b"; }
+  else { ft=String(p.why||""); bd="✕"; bc="#5b5b68"; }
+  g.font=Math.round(12*s)+"px sans-serif"; g.fillStyle=MU; g.fillText(ft.length>90?ft.slice(0,88)+"…":ft,12*s,H-ff/2+4*s);
+  g.font="bold "+Math.round(12*s)+"px sans-serif"; const bw2=g.measureText(bd).width+20*s; g.fillStyle=bc; g.beginPath(); if(g.roundRect) g.roundRect(W-bw2-10*s,H-ff/2-11*s,bw2,22*s,11*s); else g.rect(W-bw2-10*s,H-ff/2-11*s,bw2,22*s); g.fill();
+  g.fillStyle="#fff"; g.fillText(bd,W-bw2,H-ff/2+4*s);
+}
 async function qtOpen(pid){
   const d=await qtGet("/api/qt/plan/"+pid); if(!d||!d.ok) return; QT.pl=d;
   const p=d.plan, dg=p.dg, b=p.s>0, sn=d.snaps||{}, tr=p.tr||[0,0,0];
   const sh=qtE("qtSheet");
   const rows=[["Waqti scan",qtTm(p.t)],["Lammaane",esc(p.sym)+(p.cr?" · ₿ Binance · MUUJI (virtual)":(p.tr8?"":" · muuji kaliya"))],["Trend M15 · H1 · H4",'<span class="'+(tr[0]>0?"g":"r")+'">'+qtAr(tr[0])+" "+qtAr(tr[1])+" "+qtAr(tr[2])+'</span>'],
-    ["Xeelad","SR "+(b?"demand":"supply")+" (pivot M15) · "+(QT_MDN[p.md||0]||"TOOS")],["Zone",qtF(p.lo,dg)+" – "+qtF(p.hi,dg)],
+    ["Xeelad","🔵 SR "+(b?"demand":"supply")+" (pivot M15) · "+(QT_MDN[p.md||0]||"TOOS")],["Zone",qtF(p.lo,dg)+" – "+qtF(p.hi,dg)],
     ["SL (qorshe)",'<span class="r">'+qtF(p.sl,dg)+'</span>'],["TP",'<span class="g">'+qtF(p.tp,dg)+'</span>'],["Ansax ilaa",qtTm(p.exp)],["🧰 Qalab",(p.ob?'<span class="g">OB ✓</span>':'<span style="opacity:.5">OB ✕</span>')+" · "+(p.fvg?'<span class="g">FVG ✓</span>':'<span style="opacity:.5">FVG ✕</span>')+(p.tE?(" · "+(p.vol?'<span class="g">VOL ✓</span>':'<span style="opacity:.5">VOL ✕</span>')+(p.rsi?" · RSI "+Number(p.rsi).toFixed(0):"")+(p.cr?"":(" · "+(Number(p.mul||1)<1?"★ lot nus":"★★ lot buuxa")))):"")],
     ...(p.tE&&!p.cr?[["🔒 Maamul",((p.mgf||0)&1?'<span class="g">BE ✓</span>':"BE —")+((p.mgf||0)&2?' · <span class="g">½ xidhay</span>':"")]]:[]),["Xaalad",'<span class="'+qtStC(p.st)+(p.st===1&&p.q15?" q15":"")+'">'+qtStL(p)+'</span>'+(p.why?(" · "+esc(p.why)):"")]];
   if(p.v2){   /* v13.20: 🧠 SCAN v2 · SR + SMC */
     const htf={15:"H1",5:"M15",1:"M5"}[p.tf]||"";
-    rows.splice(3,1,["Xeelad","SR + SMC · "+qtTFn(p.tf)+" · "+((QT.st&&QT.st.cfg&&QT.st.cfg.v2e)?"CHoCH "+(p.tf===15?"M5":"M1"):"OB taabasho")],
-      ["🔵 SR "+(b?"support":"resistance"),htf+" · "+(p.srn||0)+" taabasho · "+qtF(p.srl,dg)+" – "+qtF(p.srh,dg)],
+    rows.splice(3,1,["Xeelad","🟣 SMC · "+qtTFn(p.tf)+" · "+((QT.st&&QT.st.cfg&&QT.st.cfg.v2e)?"CHoCH "+(p.tf===15?"M5":"M1"):"OB taabasho")],
+      ["SR "+(b?"support":"resistance")+" (ikhtiyaari)",p.srn?(htf+" · "+p.srn+" taabasho · "+qtF(p.srl,dg)+" – "+qtF(p.srh,dg)):'<span style="opacity:.6">— (SMC keli ah)</span>'],
       ["💰 Liquidity → SWEEP",p.liq?('<span class="y">'+qtF(p.liq,dg)+' → '+qtF(p.sw,dg)+' ✓</span>'):'<span style="opacity:.6">sweep la&#39;aan (DHEXE)</span>'],
       ["🟦 BOS "+(b?"↑":"↓"),qtF(p.bos,dg)],["🟩 OB (zone gelitaan)",qtF(p.lo,dg)+" – "+qtF(p.hi,dg)],
       ["🟪 FVG",(p.fvl||p.fvh)?(qtF(p.fvl,dg)+" – "+qtF(p.fvh,dg)):'<span style="opacity:.6">—</span>'],
@@ -16922,9 +17065,8 @@ async function qtOpen(pid){
   const T=d.trade;
   sh.innerHTML='<div class="hd"><h3>#'+qtPid(p)+' · '+esc(p.sym)+' · <span style="color:'+(b?"#7ff0b0":"#ff9a9d")+'">'+(b?"BUY":"SELL")+'</span></h3><button type="button" class="qtx" id="qtShX">✕</button></div>'
     +'<div class="card"><p class="qtk">🔍 XOGTA SCAN-KA <em>la kaydiyay</em></p><div class="qttb">'+rows.map(r=>'<div><span>'+r[0]+'</span><b>'+r[1]+'</b></div>').join("")+'</div></div>'
-    +'<div class="card"><p class="qtk">📸 SAWIRRADA KAYDSAN</p><div class="qtths">'
-    +[["scan","① SCAN",p.t],["entry","② GELITAAN",p.tE],["exit","③ XIDH",p.tX]].map(k=>{ const im=(d.imgs||[]).indexOf(k[0])>=0;
-      return '<div class="qtth'+(sn[k[0]]||im?"":" na")+'" data-k="'+k[0]+'"><div class="mt">'+(im?('<img alt="" loading="lazy" src="'+qtImgU(p.id,k[0])+'"><i>MT5</i>'):'<canvas width="300" height="230"></canvas>')+'</div><div class="tl"><span>'+k[1]+'</span><span>'+qtHM(k[2])+'</span></div></div>'; }).join("")
+    +'<div class="card"><p class="qtk">📸 4 SAWIR <em>'+qtSrc(p)+' · riix → shaashad buuxa</em></p>'+(sn.kill?('<p class="qtkill" style="margin:0 0 8px">✕ '+esc((sn.kill.p&&sn.kill.p.why)||p.why||"qorshaha waa dhacay")+'</p>'):'')+'<div class="qtths q4">'
+    +[["scan",QT_KS.scan,p.t],["touch",QT_KS.touch,p.tT],["entry",QT_KS.entry,p.tE],["exit",QT_KS.exit,p.tX]].map(k=>'<div class="qtth'+(sn[k[0]]?"":" na")+'" data-k="'+k[0]+'"><div class="mt"><canvas width="520" height="330"></canvas></div><div class="tl"><span>'+k[1]+'</span><span>'+qtHM(k[2])+'</span></div></div>').join("")
     +'</div></div>'
     +'<div class="card"><p class="qtk">✅ ISBARBARDHIG · SCAN ↔ GELITAAN</p><div class="qtcmp">'+cmp.map(r=>'<div><span>'+r[0]+'</span><b>'+r[1]+'</b><b>'+r[2]+'</b>'+r[3]+'</div>').join("")+'</div></div>'
     +(T?('<div class="card"><p class="qtk">☰ TRADE-KA (Journal)</p><div class="qttb"><div><span>Ticket</span><b>#'+esc(String(T.tk))+'</b></div><div><span>Lot</span><b>'+Number(T.lot||0).toFixed(2)+'</b></div>'
@@ -16933,7 +17075,7 @@ async function qtOpen(pid){
     +(!p.cr&&(p.st===0||p.st===1)&&!p.tr8&&QT.st&&QT.st.can?'<button type="button" class="qtsm" id="qtArm" style="border-color:#26a65b;color:#7ff0b0;background:rgba(38,166,91,.14);margin-right:6px">📌 QORSHE KA DHIG → EA</button>':'')
     +(!p.cr&&(p.st===0||p.st===1)&&QT.st&&QT.st.can?'<button type="button" class="qtsm" id="qtCan" style="border-color:#e5484d;color:#ffb3b5;background:rgba(229,72,77,.12)">✕ Jooji qorshahan</button>':'');
   sh.hidden=false;
-  sh.querySelectorAll(".qtth").forEach(el=>{ const k=el.dataset.k, cv=el.querySelector("canvas"); if(cv) qtMT5Draw(cv,sn[k],k,0.5,true);
+  sh.querySelectorAll(".qtth").forEach(el=>{ const k=el.dataset.k, cv=el.querySelector("canvas"); if(cv) qtCleanDraw(cv,sn[k],k,1,true);
     if(sn[k] || (d.imgs||[]).indexOf(k)>=0) el.addEventListener("click",()=>qtFull(k)); });
   qtE("qtShX").addEventListener("click",()=>{ sh.hidden=true; });
   const sb=qtE("qtShB"); if(sb) sb.addEventListener("click",()=>{ sh.hidden=true; try{ cxGoTrade(p.sym,"BUY"); }catch(e){} });
@@ -16951,16 +17093,17 @@ function qtFullRender(){
   const f=qtE("qtFull"), vw=window.innerWidth, vh=window.innerHeight;
   const rot=(QT.rot==null)?(vh>vw):QT.rot; f.classList.toggle("rot",rot);
   const W=rot?vh:vw, H=rot?vw:vh, st=qtE("qtFS"); st.style.width=W+"px"; st.style.height=H+"px";
-  const t={scan:"① SCAN · "+qtHM(p.t),entry:"② GELITAAN · "+qtHM(p.tE),exit:"③ XIDH · "+qtHM(p.tX)}[k];
-  const n={scan:p.v2?("Scan "+qtTFn(p.tf)+": SR + liquidity / SWEEP + BOS + OB"+((p.fvl||p.fvh)?" + FVG":"")+" + "+(p.s>0?"discount":"premium")+" → qorshe = OB · SL · TP — qiimuhu weli ma iman."):"Scan: zone + SL + TP ayaa horay loo calaamadeeyay — qiimuhu weli ma iman.",
+  const t={scan:QT_KN.scan+" · "+qtHM(p.t),touch:QT_KN.touch+" · "+qtHM(p.tT),entry:QT_KN.entry+" · "+qtHM(p.tE),exit:QT_KN.exit+" · "+qtHM(p.tX),kill:QT_KN.kill}[k];
+  const n={touch:"Qiimuhu zone-ka ("+(p.v2?"OB":"SR")+") wuu taabtay "+qtF(p.ext,dg)+" → sugaya xaqiijin · gelitaan = ③",kill:"✕ "+(p.why||"qorshaha waa dhacay"),scan:p.v2?("Scan "+qtTFn(p.tf)+": SR + liquidity / SWEEP + BOS + OB"+((p.fvl||p.fvh)?" + FVG":"")+" + "+(p.s>0?"discount":"premium")+" → qorshe = OB · SL · TP — qiimuhu weli ma iman."):"Scan: zone + SL + TP ayaa horay loo calaamadeeyay — qiimuhu weli ma iman.",
     entry:(p.tE&&p.v2)?("Qiimuhu OB-ga ("+qtTFn(p.tf)+") buu taabtay → "+(p.s>0?"BUY ":"SELL ")+qtF(p.eP,dg)+" · SL "+qtF(p.eSL,dg)+" (sweep) · TP "+qtF(p.eTP,dg)+" (liquidity)"):(p.tE?("Qiimuhu zone-kii buu yimid (taabtay "+qtF(p.ext,dg)+") → "+(p.md===2?"M15 ✓ → CHoCH M5 → ":(p.md===1?"M5 ✓ → CHoCH M5 → ":"M15 ✓ → "))+(p.s>0?"BUY ":"SELL ")+qtF(p.eP,dg)+" · SL "+qtF(p.eSL,dg)):("Gelitaan ma dhicin · "+(p.why||""))),
     exit:qtStN(p.st)+" · "+(p.r>0?"+":"")+Number(p.r||0).toFixed(2)+"R · xidh "+qtF(p.xP,dg)}[k];
   qtE("qtFH").textContent="#"+qtPid(p)+" · "+(p.sym||"")+" · "+t; qtE("qtFN").textContent=n;
   const hasImg=(d.imgs||[]).indexOf(k)>=0, vb=qtE("qtFV");
   vb.hidden=!(hasImg && sn); vb.textContent=QT.fimg?"📷 MT5":"✏️ chart"; vb.classList.toggle("on",!!QT.fimg);
+  st.classList.toggle("cl",!(hasImg && QT.fimg));   /* v13.34: sawir nadiif (cinwaanka canvas-ka) */
   const im=qtE("qtFI"), cv=qtE("qtFC");
   if(hasImg && QT.fimg){ im.hidden=false; cv.style.display="none"; const u=qtImgU(p.id,k); if(im.getAttribute("src")!==u) im.src=u; }
-  else { im.hidden=true; cv.style.display="block"; const r=window.devicePixelRatio||1; cv.width=Math.round(W*r); cv.height=Math.round(H*r); qtMT5Draw(cv,sn,k,r*Math.max(0.85,Math.min(1.25,Math.min(W,H)/420)),false); }
+  else { im.hidden=true; cv.style.display="block"; const r=window.devicePixelRatio||1; cv.width=Math.round(W*r); cv.height=Math.round(H*r); qtCleanDraw(cv,sn,k,r*Math.max(0.85,Math.min(1.25,Math.min(W,H)/420)),false); }
   qtE("qtFR").classList.toggle("on",rot);
 }
 /* ---------- SITIN ---------- */
@@ -16972,13 +17115,14 @@ function qtSetPaint(){
   qtE("qtMd").querySelectorAll("button").forEach(b=>b.classList.toggle("on",Number(b.dataset.v)===e.md));
   [["qtEng","eng"],["qtV2E","v2e"],["qtV2L","v2l"]].forEach(a=>{ const el=qtE(a[0]); if(el) el.querySelectorAll("button").forEach(b=>b.classList.toggle("on",Number(b.dataset.v)===Number(e[a[1]]))); });   /* v13.20 */
   document.querySelectorAll("#qtVSet .qttf").forEach(g=>g.querySelectorAll("button").forEach(b=>b.classList.toggle("on",Number(b.dataset.v)===Number(e[g.dataset.k]))));
-  const v2b=qtE("qtV2B"); if(v2b) v2b.hidden=!e.eng;
+  const v2b=qtE("qtV2B"); if(v2b) v2b.hidden=!e.smc;   /* v13.34 */
   document.querySelectorAll("#qtVSet .qtstp").forEach(s=>{ const k=s.dataset.k; s.querySelector("b").textContent=(k==="risk")?(Number(e[k]).toFixed(1)+"%"):(k==="h"?(e[k]+" saac"):(k==="be"?(Number(e[k])>0?Number(e[k]).toFixed(1)+"R":"OFF"):(k==="tm"?(Number(e[k])>0?e[k]+" saac":"OFF"):String(e[k])))); });
-  const c=(QT.st&&QT.st.cfg)||{}; qtE("qtTrd").textContent="Trade: "+((e.tl&&e.tl.length)?e.tl.join(" · "):"midna · dhammaan MUUJI")+" · ugu badnaan "+e.opn+" furan"+" · qorshe cusub: saacadda server-ka "+(c.s0||9)+"–"+(c.s1||21)+(c.ver?(" · EA v"+c.ver):" · EA v72.8 weli xog ma soo dirin");
+  const c=(QT.st&&QT.st.cfg)||{}; qtE("qtTrd").textContent="Trade: "+((e.tl&&e.tl.length)?e.tl.join(" · "):"midna · dhammaan OFF")+" · ugu badnaan "+e.opn+" furan"+" · qorshe cusub: saacadda server-ka "+(c.s0||9)+"–"+(c.s1||21)+(c.ver?(" · EA v"+c.ver):" · EA v72.8 weli xog ma soo dirin");
 }
 async function qtSave(){
   const e=QT.ed, b=qtE("qtSave"); if(!e) return; b.disabled=true;
-  const values={QTENG:e.eng?1:0,QTTF1:e.tf1,QTTF5:e.tf5,QTTF15:e.tf15,QTV2E:e.v2e,QTV2L:e.v2l,SCG:e.scg,QTON:e.on?1:0,QTMODE:e.md,QTMAX:e.max,QTH:e.h,QTRISK:Number(e.risk).toFixed(2),QTDAY:e.day,QTDRAW:e.draw?1:0,QTALL:0,QTOPN:e.opn,QTRSI:e.rsi?1:0,QTSTAR:e.star,QTOB:e.ob?1:0,QTFVG:e.fvg?1:0,QTVOL:e.vol?1:0,QTNEWS:e.news?1:0,QTBE:Number(e.be).toFixed(1),QTTIME:e.tm,QTTR:e.tr?1:0,QTPT:e.pt?1:0};
+  const SY=qtSyms(), ALL=(!SY.length||SY.every(s=>(e.tl||[]).indexOf(s)>=0))?1:0;   /* v13.34 */
+  const values={QTSR:e.sr?1:0,QTSMC:e.smc?1:0,QTSMCSR:e.smcsr?1:0,QTTG:e.tg?1:0,LOGO:Number(e.logo)||0,QTENG:e.eng?1:0,QTTF1:e.tf1===2?2:0,QTTF5:e.tf5===2?2:0,QTTF15:e.tf15===2?2:0,QTV2E:e.v2e,QTV2L:e.v2l,SCG:e.scg,QTON:e.on?1:0,QTMODE:e.md,QTMAX:e.max,QTH:e.h,QTRISK:Number(e.risk).toFixed(2),QTDAY:e.day,QTDRAW:e.draw?1:0,QTALL:ALL,QTOPN:e.opn,QTRSI:e.rsi?1:0,QTSTAR:e.star,QTOB:e.ob?1:0,QTFVG:e.fvg?1:0,QTVOL:e.vol?1:0,QTNEWS:e.news?1:0,QTBE:Number(e.be).toFixed(1),QTTIME:e.tm,QTTR:e.tr?1:0,QTPT:e.pt?1:0};
   values["IN:Inp_QT_Trade"]="h"+Array.from(new TextEncoder().encode((e.tl||[]).join(","))).map(x=>x.toString(16).padStart(2,"0")).join("");   /* v13.21: 🌍 lammaane kasta */
   const body={values:values}; if(accSel) body.account=accSel.value;
   let err=""; try{ const r=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); const d=await r.json(); if(!d.ok) err=d.error||"Lama kaydin."; }catch(x){ err="Internet ma jiro."; }
@@ -17700,21 +17844,17 @@ function xkBalPaint(){
 
 /* v13.23: 📸 sawirka qorshaha kaarka dhexdiisa (8-da ugu dambeeya) */
 var QT_TH={}, QT_THF={};
-function qtMuTag(p){ if(p.cr||p.tr8) return ""; const c=(QT.st&&QT.st.cfg)||{}, m=p.tf?Number(c["tf"+p.tf]):2;
-  return ' <small class="qtmu">👁 MUUJI · '+((p.tf && m!==2)?(qtTFn(p.tf)+" = MUUJI"):"lammaanaha")+'</small>'; }
-function qtThDraw(p){ const box=qtE("qtPlans"); if(!box) return; const el=box.querySelector('[data-th="'+p.id+'"]'); if(!el) return;
-  const d=QT_TH[p.id+":"+p.st]; if(!d) return; const sn=d.sn||{}, k=sn.exit?"exit":(sn.entry?"entry":"scan"), im=(d.imgs||[]).indexOf(k)>=0;
-  const L={scan:"① SCAN",entry:"② GELITAAN",exit:"③ XIDH"};
-  if(im){ if(!el.querySelector("img")) el.innerHTML='<img alt="" loading="lazy" src="'+qtImgU(p.id,k)+'"><i>'+L[k]+' · MT5 · riix → 3 sawir</i>'; return; }
-  const cv=el.querySelector("canvas"); if(!cv) return; qtMT5Draw(cv,sn[k],k,1,true);
-  const i=el.querySelector("i"); if(i) i.textContent=(sn[k]?L[k]:"sawir weli ma iman")+" · riix → 3 sawir"; }
+function qtMuTag(p){ return ""; }   /* v13.34: MUUJI ma jiro */
+function qtThDraw(p){ const box=qtE("qtPlans"); if(!box) return; const el=box.querySelector('[data-th="'+p.id+'"]'); if(!el) return;   /* v13.34: 4 sawir */
+  const d=QT_TH[p.id+":"+p.st]; if(!d) return; const sn=d.sn||{};
+  el.querySelectorAll("[data-k]").forEach(c=>{ const k=c.dataset.k, cv=c.querySelector("canvas"); c.classList.toggle("na",!sn[k]); if(cv) qtCleanDraw(cv,sn[k],k,1,true); }); }
 function qtThumbs(L){ (L||[]).forEach(p=>{ if(p.cr) return; const key=p.id+":"+p.st;
   if(QT_TH[key]){ qtThDraw(p); return; }
   if(QT_THF[key] && Date.now()-QT_THF[key]<60000) return; QT_THF[key]=Date.now();
   qtGet("/api/qt/plan/"+p.id).then(d=>{ if(!d||!d.ok) return; QT_TH[key]={sn:d.snaps||{},imgs:d.imgs||[]}; qtThDraw(p); }).catch(()=>{}); }); }
 
 /* v13.23: ⏳ sitinka scan-ka -> EA xaqiijin (M5 / M1 TRADE dib uma noqonayo MUUJI inta EA-gu qaadanayo) */
-var QT_PK=["tf1","tf5","tf15","eng","v2e","v2l","scg","on","md"];
+var QT_PK=["tf1","tf5","tf15","v2e","v2l","scg","on","md","sr","smc","logo"];   /* v13.34 */
 function qtPendNote(){ const el=qtE("qtSaveN"); if(!el) return; const P=QT.pend, S=QT.pst;
   if(P){ const s=Math.round((Date.now()-P.t)/1000); el.innerHTML='<span class="qtpw">⏳ La kaydiyay · EA-ga ayaa la sugayaa inuu xaqiijiyo ('+s+'s · ilaa 2 daqiiqo) · sitinkaagu sidiisa ayuu u sii jiraa</span>'; return; }
   if(S && S.c==="ok" && Date.now()-S.at<60000){ el.innerHTML='<span class="qtpo">✓ EA-gu wuu xaqiijiyay · M15 '+qtTfN(QT.ed&&QT.ed.tf15)+' · M5 '+qtTfN(QT.ed&&QT.ed.tf5)+' · M1 '+qtTfN(QT.ed&&QT.ed.tf1)+'</span>'; return; }
